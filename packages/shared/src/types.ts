@@ -185,3 +185,62 @@ export interface Notification {
   read: boolean;
   created_at: string;
 }
+
+export const NOTIFICATION_KINDS = [
+  "invitation",
+  "role_assigned",
+  "role_unassigned",
+  "member_removed",
+] as const;
+
+export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
+
+export interface NotificationChannelPreferences {
+  in_app: boolean;
+  email: boolean;
+}
+
+export interface NotificationChannelPreferencesPatch {
+  in_app?: boolean;
+  email?: boolean;
+}
+
+export interface NotificationPreferences {
+  default: NotificationChannelPreferences;
+  by_kind: Partial<Record<NotificationKind, NotificationChannelPreferences>>;
+}
+
+export interface NotificationPreferencesPatch {
+  default?: NotificationChannelPreferencesPatch;
+  by_kind?: Partial<
+    Record<NotificationKind, NotificationChannelPreferencesPatch>
+  >;
+}
+
+export interface InvitationPayload {
+  invitation_id: string;
+  organization_id: string;
+  organization_name?: string;
+  role: string;
+}
+
+export interface RoleAssignedPayload {
+  role: string;
+  assigned_by_user_id: string;
+}
+
+export interface RoleUnassignedPayload {
+  role: string;
+  unassigned_by_user_id: string;
+}
+
+export interface MemberRemovedPayload {
+  removed_by_user_id: string;
+}
+
+export interface NotificationPayloads {
+  invitation: InvitationPayload;
+  role_assigned: RoleAssignedPayload;
+  role_unassigned: RoleUnassignedPayload;
+  member_removed: MemberRemovedPayload;
+}

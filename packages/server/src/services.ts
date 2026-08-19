@@ -5,11 +5,18 @@ import { dirname, resolve } from "node:path";
 
 import type { AppConfig } from "./config";
 import { createAuth, type Auth, type AuthEmailSender } from "./auth";
+import {
+  createNotificationServices,
+  type NotificationDispatcher,
+  type NotificationQueue,
+} from "./notifications";
 
 export interface AppServices {
   database: Database;
   prisma: PrismaClient;
   auth: Auth;
+  notifications: NotificationDispatcher;
+  notificationQueue: NotificationQueue;
 }
 
 function sqlitePath(databaseUrl: string): string {
@@ -34,7 +41,8 @@ export function createServices(
   database.exec("PRAGMA foreign_keys = ON");
   const prisma = new PrismaClient({ datasourceUrl: config.databaseUrl });
   const auth = createAuth(prisma, config, sendAuthEmail);
-  return { database, prisma, auth };
+  const notificationServices = createNotificationServices(prisma, config);
+  return { database, prisma, auth, ...notificationServices };
 }
 
 export async function closeServices(services: AppServices): Promise<void> {
