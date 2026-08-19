@@ -90,6 +90,7 @@ describe("browser auth pages", () => {
       ["/auth/magic-link", "Magic Link"],
       ["/auth/forgot-password", "Forgot Password"],
       ["/auth/reset-password?token=test-token", "Reset Password"],
+      ["/auth/install", "Install CLI"],
     ]) {
       const response = await app.request(`http://localhost:3000${path}`);
       expect(response.status).toBe(200);

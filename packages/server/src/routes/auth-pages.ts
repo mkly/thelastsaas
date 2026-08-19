@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 
 import type { AppEnvironment } from "../env";
-import { escapeHtml, htmlPage } from "../html";
+import { escapeHtml, getExternalOrigin, htmlPage } from "../html";
 
 export const authPagesRouter = new Hono<AppEnvironment>();
 
@@ -324,6 +324,42 @@ authPagesRouter.get("/dashboard", async (context) => {
     <p>Logged in as <strong>${escapeHtml(session.user.name)}</strong> (${escapeHtml(session.user.email)})</p>
     <p>Active Org: ${escapeHtml(session.session.activeOrganizationId ?? "none")}</p>
     <p><a href="/auth/logout">Logout</a></p>`,
+    ),
+  );
+});
+
+authPagesRouter.get("/install", (context) => {
+  const server = getExternalOrigin(context.req.raw);
+  const oneLiner = `curl -fsSL ${server}/install.sh | sh`;
+  const binaries = [
+    ["Linux x64", "saas-linux-x64"],
+    ["Linux arm64", "saas-linux-arm64"],
+    ["macOS x64 (Intel)", "saas-darwin-x64"],
+    ["macOS arm64 (Apple Silicon)", "saas-darwin-arm64"],
+    ["Windows x64", "saas-windows-x64.exe"],
+  ]
+    .map(
+      ([label, file]) =>
+        `<li><a href="/dl/${file}">${escapeHtml(label)}</a> — <code>${escapeHtml(file)}</code></li>`,
+    )
+    .join("");
+
+  return context.html(
+    htmlPage(
+      "Install CLI",
+      `<p>The <code>saas</code> CLI lets you manage your Last SaaS account from a terminal.</p>
+
+    <h2>Quick install (Linux / macOS)</h2>
+    <pre><code>${escapeHtml(oneLiner)}</code></pre>
+    <p>This detects your OS and architecture, downloads the matching binary, and installs it to <code>/usr/local/bin/saas</code> when that directory is writable. Otherwise it falls back to <code>$HOME/.local/bin/saas</code>. Override the destination with <code>LASTSAAS_INSTALL_DIR=~/bin</code>.</p>
+
+    <h2>Manual download</h2>
+    <ul>${binaries}</ul>
+    <p>After downloading, make it executable (<code>chmod +x saas-*</code>) and move it somewhere on your <code>$PATH</code>.</p>
+
+    <h2>First run</h2>
+    <pre><code>saas login --server ${escapeHtml(server)}</code></pre>
+    <p>This opens a browser window to complete authentication. See <a href="/auth/dashboard">your dashboard</a> once signed in.</p>`,
     ),
   );
 });

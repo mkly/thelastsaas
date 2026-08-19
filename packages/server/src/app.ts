@@ -5,6 +5,7 @@ import type { AppEnvironment } from "./env";
 import { createAuthMiddleware } from "./middleware/auth";
 import { domainRouters } from "./routes";
 import { authPagesRouter } from "./routes/auth-pages";
+import { downloadsRouter } from "./routes/downloads";
 import { homeRouter } from "./routes/home";
 import type { AppServices } from "./services";
 
@@ -30,6 +31,7 @@ export function createApp({
   );
 
   app.route("/auth", authPagesRouter);
+  app.route("/", downloadsRouter);
   app.route("/", homeRouter);
 
   const authMiddleware = createAuthMiddleware({
