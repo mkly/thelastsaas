@@ -74,20 +74,30 @@ export function createAuthMiddleware({
         400,
       );
     }
-    const membership = await prisma.member.findUnique({
-      where: {
-        organizationId_userId: {
-          organizationId: orgId,
-          userId: session.user.id,
+    const segments = context.req.path.split("/").filter(Boolean);
+    const acceptsInvitation =
+      context.req.method === "POST" &&
+      segments.length === 5 &&
+      segments[0] === "v1" &&
+      segments[1] === "orgs" &&
+      segments[3] === "invitations" &&
+      segments[4] === "accept";
+    if (!acceptsInvitation) {
+      const membership = await prisma.member.findUnique({
+        where: {
+          organizationId_userId: {
+            organizationId: orgId,
+            userId: session.user.id,
+          },
         },
-      },
-      select: { id: true },
-    });
-    if (!membership) {
-      return context.json(
-        errorResponse("Forbidden", "Organization membership required"),
-        403,
-      );
+        select: { id: true },
+      });
+      if (!membership) {
+        return context.json(
+          errorResponse("Forbidden", "Organization membership required"),
+          403,
+        );
+      }
     }
 
     context.set("orgId", orgId);
