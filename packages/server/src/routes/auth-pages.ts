@@ -329,7 +329,10 @@ authPagesRouter.get("/dashboard", async (context) => {
 });
 
 authPagesRouter.get("/install", (context) => {
-  const server = getExternalOrigin(context.req.raw);
+  const server = getExternalOrigin(
+    context.req.raw,
+    context.get("config")?.betterAuthUrl,
+  );
   const oneLiner = `curl -fsSL ${server}/install.sh | sh`;
   const binaries = [
     ["Linux x64", "saas-linux-x64"],

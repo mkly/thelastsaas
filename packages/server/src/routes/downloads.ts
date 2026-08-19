@@ -152,7 +152,10 @@ downloadsRouter.get("/dl/:file", async (context) => {
 });
 
 downloadsRouter.get("/install.sh", (context) => {
-  const server = getExternalOrigin(context.req.raw);
+  const server = getExternalOrigin(
+    context.req.raw,
+    context.get("config")?.betterAuthUrl,
+  );
   const script = `#!/bin/sh
 set -e
 

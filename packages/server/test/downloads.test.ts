@@ -1,10 +1,18 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { Hono } from "hono";
 
+import type { AppConfig } from "../src/config";
+import type { AppEnvironment } from "../src/env";
 import { downloadsRouter } from "../src/routes/downloads";
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
@@ -13,21 +21,41 @@ const SERVER_DIST_DIR = resolve(TEST_DIR, "../dist");
 const TEST_BINARY = "saas-linux-x64";
 const TEST_CONTENT = "hello binary";
 
-function createApp() {
-  const app = new Hono();
+function createApp(config?: Partial<AppConfig>) {
+  const app = new Hono<AppEnvironment>();
+  if (config) {
+    app.use("*", async (context, next) => {
+      context.set("config", config as AppConfig);
+      await next();
+    });
+  }
   app.route("/", downloadsRouter);
   return app;
 }
 
+// The routes read the real repo-root dist directory, which may already hold a
+// developer's compiled binaries: move those aside for the test and restore them
+// afterwards instead of deleting them.
+const MANAGED_FILES = [
+  resolve(DIST_DIR, TEST_BINARY),
+  resolve(DIST_DIR, "saas"),
+  resolve(SERVER_DIST_DIR, TEST_BINARY),
+  resolve(SERVER_DIST_DIR, "saas"),
+];
+
 beforeEach(() => {
   mkdirSync(DIST_DIR, { recursive: true });
+  for (const path of MANAGED_FILES) {
+    if (existsSync(path)) renameSync(path, `${path}.review-backup`);
+  }
 });
 
 afterEach(() => {
-  rmSync(resolve(DIST_DIR, TEST_BINARY), { force: true });
-  rmSync(resolve(DIST_DIR, "saas"), { force: true });
-  rmSync(resolve(SERVER_DIST_DIR, TEST_BINARY), { force: true });
-  rmSync(resolve(SERVER_DIST_DIR, "saas"), { force: true });
+  for (const path of MANAGED_FILES) {
+    rmSync(path, { force: true });
+    const backup = `${path}.review-backup`;
+    if (existsSync(backup)) renameSync(backup, path);
+  }
 });
 
 describe("download routes", () => {
@@ -134,5 +162,32 @@ describe("download routes", () => {
     expect(script).toContain("Installing to $HOME/.local/bin by default.");
     expect(script).toContain("Re-run with sudo for a system-wide install");
     expect(script).toContain('"server": "$SERVER"');
+  });
+
+  test("prefers the configured server URL over forwarded headers", async () => {
+    const response = await createApp({
+      betterAuthUrl: "https://saas.example.org",
+    }).request("http://internal/install.sh", {
+      headers: {
+        "x-forwarded-proto": "https",
+        "x-forwarded-host": "attacker.example.net",
+      },
+    });
+
+    const script = await response.text();
+    expect(script).toContain(
+      'SERVER="${LASTSAAS_SERVER:-https://saas.example.org}"',
+    );
+    expect(script).not.toContain("attacker.example.net");
+  });
+
+  test("rejects a forwarded host carrying shell metacharacters", async () => {
+    const response = await createApp().request("http://localhost/install.sh", {
+      headers: { "x-forwarded-host": 'example.com";id;"' },
+    });
+
+    const script = await response.text();
+    expect(script).not.toContain("id;");
+    expect(script).toContain('SERVER="${LASTSAAS_SERVER:-http://localhost}"');
   });
 });
