@@ -49,6 +49,12 @@ export const invitationRouter = new Hono<AppEnvironment>()
           },
           headers: context.req.raw.headers,
         });
+      await context.get("audit")(
+        "create_invitation",
+        "invitation",
+        invitation.id,
+        { email: parsed.data.email, role: parsed.data.role },
+      );
       return context.json(
         {
           status: "ok" as const,
@@ -143,6 +149,12 @@ export const invitationRouter = new Hono<AppEnvironment>()
       );
     }
 
+    await context.get("audit")(
+      "accept_invitation",
+      "invitation",
+      parsed.data.invitation_id,
+      { role: invitation.role },
+    );
     return context.json({ status: "ok" as const });
   })
   .post("/cancel", manageMembers, async (context) => {
@@ -186,5 +198,11 @@ export const invitationRouter = new Hono<AppEnvironment>()
       );
     }
 
+    await context.get("audit")(
+      "cancel_invitation",
+      "invitation",
+      parsed.data.invitation_id,
+      {},
+    );
     return context.json({ status: "ok" as const });
   });

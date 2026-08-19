@@ -132,6 +132,12 @@ export const notificationScheduleRouter = new Hono<AppEnvironment>()
             : {}),
         },
       });
+    await context.get("audit")(
+      "create_notification_schedule",
+      "notification_schedule",
+      schedule.id,
+      { type: parsed.data.type },
+    );
     return context.json(
       { status: "ok" as const, ...scheduleResponse(schedule) },
       201,
@@ -155,6 +161,12 @@ export const notificationScheduleRouter = new Hono<AppEnvironment>()
         404,
       );
     }
+    await context.get("audit")(
+      "cancel_notification_schedule",
+      "notification_schedule",
+      context.req.param("id"),
+      {},
+    );
     return context.json({
       status: "ok" as const,
       message: "Notification schedule cancelled",

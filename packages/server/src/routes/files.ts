@@ -285,6 +285,9 @@ export const fileRouter = new Hono<AppEnvironment>()
         sizeBytes: upload.sizeBytes,
         uploadedBy: context.get("userId"),
       });
+      await context.get("audit")("upload_file", "file", fileId, {
+        path: upload.path,
+      });
       return context.json({ status: "ok" as const, ...file }, 201);
     } catch (error) {
       await storage.delete(key).catch(() => undefined);
@@ -374,6 +377,9 @@ export const fileRouter = new Hono<AppEnvironment>()
       const file = await getFile(prisma, orgId, fileId);
       await storage.delete(storageKey(orgId, file.id));
       await deleteFile(prisma, orgId, file.id);
+      await context.get("audit")("delete_file", "file", file.id, {
+        path: file.path,
+      });
       return context.json({ status: "ok" as const, message: "File deleted" });
     } catch (error) {
       if (error instanceof FileMissingError) {

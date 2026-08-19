@@ -140,6 +140,11 @@ export const memberRouter = new Hono<AppEnvironment>()
       );
     }
 
+    await context.get("audit")("update_member_role", "member", member.id, {
+      user_id: member.userId,
+      previous_role: previousRole,
+      role: parsed.data.role,
+    });
     return context.json({
       status: "ok" as const,
       user_id: member.userId,
@@ -173,5 +178,8 @@ export const memberRouter = new Hono<AppEnvironment>()
       );
     }
 
+    await context.get("audit")("remove_member", "member", member.id, {
+      user_id: member.userId,
+    });
     return context.json({ status: "ok" as const });
   });

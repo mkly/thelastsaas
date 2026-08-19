@@ -35,6 +35,7 @@ function createScheduleApp(prisma: unknown) {
     context.set("orgId", "org_123");
     context.set("userId", "user_123");
     context.set("services", { prisma } as never);
+    context.set("audit", async () => undefined);
     await next();
   });
   app.route("/", notificationScheduleRouter);

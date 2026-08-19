@@ -10,6 +10,7 @@ function createRouterApp(services: Record<string, unknown>) {
     context.set("orgId", "org_1");
     context.set("userId", "user_1");
     context.set("services", services as never);
+    context.set("audit", async () => undefined);
     await next();
   });
   app.route("/v1/orgs/:orgId/notifications", notificationRouter);

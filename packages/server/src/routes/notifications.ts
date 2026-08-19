@@ -94,6 +94,12 @@ export const notificationRouter = new Hono<AppEnvironment>()
       context.get("userId"),
       patch,
     );
+    await context.get("audit")(
+      "update_notification_preferences",
+      "notification",
+      null,
+      {},
+    );
     return context.json({ status: "ok" as const, preferences });
   })
   .post("/queue", async (context) => {
@@ -126,6 +132,9 @@ export const notificationRouter = new Hono<AppEnvironment>()
         ...(body.dedupe_key ? { dedupeKey: body.dedupe_key } : {}),
       },
     );
+    await context.get("audit")("queue_notification", "notification", id, {
+      subject: body.subject,
+    });
     return context.json(
       { status: "ok" as const, id, message: "Notification queued" },
       201,
@@ -179,5 +188,11 @@ export const notificationRouter = new Hono<AppEnvironment>()
         404,
       );
     }
+    await context.get("audit")(
+      "delete_notification",
+      "notification",
+      context.req.param("id"),
+      {},
+    );
     return context.json({ status: "ok" as const });
   });

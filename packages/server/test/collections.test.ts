@@ -45,6 +45,7 @@ async function createCollectionsApp() {
     context.set("services", services);
     context.set("orgId", context.req.param("orgId")!);
     context.set("userId", "user_test");
+    context.set("audit", async () => undefined);
     await next();
   });
   app.route("/v1/orgs/:orgId/collections", collectionsRouter);

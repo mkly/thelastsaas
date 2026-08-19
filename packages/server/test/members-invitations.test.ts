@@ -251,6 +251,7 @@ function createFixture() {
     context.set("orgId", "org_123");
     context.set("userId", context.req.header("x-user-id") ?? "user_admin");
     context.set("services", { prisma, auth } as never);
+    context.set("audit", async () => undefined);
     await next();
   });
   app.route("/v1/orgs/:orgId/members", memberRouter);

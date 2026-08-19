@@ -137,6 +137,7 @@ function createPermissionApp(prisma: unknown) {
     context.set("orgId", "org_123");
     context.set("userId", "user_admin");
     context.set("services", { prisma } as never);
+    context.set("audit", async () => undefined);
     await next();
   });
   app.route("/v1/orgs/:orgId/permissions", permissionRouter);

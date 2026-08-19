@@ -128,6 +128,7 @@ function createFilesApp(storage: Storage, maxUploadSize = 50 * 1024 * 1024) {
     } as never);
     context.set("orgId", "org_1");
     context.set("userId", "user_1");
+    context.set("audit", async () => undefined);
     await next();
   });
   app.route("/v1/orgs/:orgId/files", fileRouter);

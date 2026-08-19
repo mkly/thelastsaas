@@ -216,6 +216,11 @@ export const permissionRouter = new Hono<AppEnvironment>()
         409,
       );
     }
+    await context.get("audit")("add_policy", "permission", null, {
+      subject,
+      resource,
+      action,
+    });
     return context.json(
       { status: "ok" as const, subject, resource, action },
       201,
@@ -249,6 +254,11 @@ export const permissionRouter = new Hono<AppEnvironment>()
     if (!(await removePolicy(prisma, orgId, expanded.id, resource, action))) {
       return context.json(errorResponse("NotFound", "Policy not found"), 404);
     }
+    await context.get("audit")("remove_policy", "permission", null, {
+      subject,
+      resource,
+      action,
+    });
     return context.json({ status: "ok" as const });
   })
   .post("/roles", managePermissions, async (context) => {
@@ -278,6 +288,10 @@ export const permissionRouter = new Hono<AppEnvironment>()
       );
     }
 
+    await context.get("audit")("assign_role", "permission", null, {
+      user_id: userId,
+      role: parsed.data.role,
+    });
     return context.json(
       {
         status: "ok" as const,
@@ -313,6 +327,10 @@ export const permissionRouter = new Hono<AppEnvironment>()
         404,
       );
     }
+    await context.get("audit")("unassign_role", "permission", null, {
+      user_id: userId,
+      role: parsed.data.role,
+    });
     return context.json({ status: "ok" as const });
   })
   .post("/check", managePermissions, async (context) => {

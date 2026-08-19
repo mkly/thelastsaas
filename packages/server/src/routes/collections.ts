@@ -96,6 +96,9 @@ export const collectionsRouter = new Hono<AppEnvironment>()
         body.data.schema as Schema,
         body.data.description,
       );
+      await context.get("audit")("create_collection", "collection", null, {
+        collection: body.data.name,
+      });
       return context.json({ status: "ok" as const, ...collection });
     } catch (error) {
       return collectionError(context, error);
@@ -132,6 +135,12 @@ export const collectionsRouter = new Hono<AppEnvironment>()
         body.data.remove_fields,
         body.data.update_fields,
       );
+      await context.get("audit")(
+        "update_collection_schema",
+        "collection",
+        null,
+        { collection: context.req.param("name") },
+      );
       return context.json({ status: "ok" as const, ...collection });
     } catch (error) {
       return collectionError(context, error);
@@ -154,6 +163,9 @@ export const collectionsRouter = new Hono<AppEnvironment>()
         context.get("orgId"),
         name,
       );
+      await context.get("audit")("delete_collection", "collection", null, {
+        collection: name,
+      });
       return context.json({
         status: "ok" as const,
         message: `Collection '${name}' deleted.`,

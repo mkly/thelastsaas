@@ -149,6 +149,7 @@ export const systemRouter = new Hono<AppEnvironment>()
       context.get("services").prisma,
       context.get("orgId"),
     );
+    await context.get("audit")("export_data", "system", null, {});
     return context.json({ status: "ok" as const, ...data });
   })
   .post("/import", manageImport, async (context) => {
