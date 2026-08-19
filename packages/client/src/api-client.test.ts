@@ -13,12 +13,12 @@ describe("API client conventions", () => {
 
   test("turns HTTP 401 into a clear re-authentication error", async () => {
     const response = Response.json({ status: "error" }, { status: 401 });
-    expect(handleResponse(response)).rejects.toBeInstanceOf(
+    await expect(handleResponse(response)).rejects.toBeInstanceOf(
       ReauthenticationRequiredError,
     );
-    expect(handleResponse(Response.json({}, { status: 401 }))).rejects.toThrow(
-      "saas login",
-    );
+    await expect(
+      handleResponse(Response.json({}, { status: 401 })),
+    ).rejects.toThrow("saas login");
   });
 
   test("uses server error-envelope messages", async () => {
@@ -26,7 +26,9 @@ describe("API client conventions", () => {
       { status: "error", message: "collection not found" },
       { status: 404 },
     );
-    expect(handleResponse(response)).rejects.toThrow("collection not found");
+    await expect(handleResponse(response)).rejects.toThrow(
+      "collection not found",
+    );
   });
 
   test("labels invalid JSON arguments", () => {

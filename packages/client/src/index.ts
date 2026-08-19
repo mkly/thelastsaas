@@ -3,7 +3,7 @@
 import { Command } from "commander";
 
 import { commandRegistrars, type CommandRegistrar } from "./commands";
-import { formatCliError } from "./errors";
+import { CliError, formatCliError } from "./errors";
 
 export const CLI_VERSION = "0.1.0";
 
@@ -46,6 +46,6 @@ if (import.meta.main) {
     await runCli();
   } catch (error) {
     console.error(formatCliError(error));
-    process.exitCode = 1;
+    process.exitCode = error instanceof CliError ? error.exitCode : 1;
   }
 }
