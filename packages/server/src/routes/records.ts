@@ -1,5 +1,6 @@
 import {
   CollectionNotFoundError,
+  FieldPermissionDeniedError,
   InvalidQueryError,
   LastSaasError,
   RecordNotFoundError,
@@ -28,13 +29,7 @@ import {
   RecurrenceRecordLimitError,
   RecurrenceWindowLimitError,
 } from "../lib/recurrence";
-import {
-  requireCollectionPermission,
-  requirePermission,
-} from "../middleware/permission";
-
-const collectionResource = (context: Context<AppEnvironment>) =>
-  `/collections/${context.req.param("name")}`;
+import { requireCollectionPermission } from "../middleware/permission";
 
 const dataSchema = z.record(z.string(), z.unknown());
 const insertSchema = z.object({ data: dataSchema }).strict();
@@ -128,6 +123,9 @@ function recordsError(
   ) {
     return context.json(error.toResponse(), 400);
   }
+  if (error instanceof FieldPermissionDeniedError) {
+    return context.json(error.toResponse(), 403);
+  }
   if (error instanceof LastSaasError) {
     return context.json(error.toResponse(), 400);
   }
@@ -143,30 +141,27 @@ function recordsError(
 }
 
 export const recordsRouter = new Hono<AppEnvironment>()
-  .post(
-    "/batch",
-    requirePermission("write", collectionResource),
-    async (context) => {
-      const body = await parseJson(context, batchSchema);
-      if (!body.success) return body.response;
-      try {
-        const result = await insertRecords(
-          context.get("services").prisma,
-          context.get("orgId"),
-          context.req.param("name")!,
-          body.data.records,
-          context.get("userId"),
-        );
-        await context.get("audit")("insert_records", "record", null, {
-          collection: context.req.param("name")!,
-          count: result.inserted,
-        });
-        return context.json({ status: "ok" as const, ...result });
-      } catch (error) {
-        return recordsError(context, error);
-      }
-    },
-  )
+  .post("/batch", requireCollectionPermission("write"), async (context) => {
+    const body = await parseJson(context, batchSchema);
+    if (!body.success) return body.response;
+    try {
+      const result = await insertRecords(
+        context.get("services").prisma,
+        context.get("orgId"),
+        context.req.param("name")!,
+        body.data.records,
+        context.get("userId"),
+        context.get("fieldFilter"),
+      );
+      await context.get("audit")("insert_records", "record", null, {
+        collection: context.req.param("name")!,
+        count: result.inserted,
+      });
+      return context.json({ status: "ok" as const, ...result });
+    } catch (error) {
+      return recordsError(context, error);
+    }
+  })
   .post("/query", requireCollectionPermission("read"), async (context) => {
     const body = await parseJson(context, querySchema);
     if (!body.success) return body.response;
@@ -180,6 +175,7 @@ export const recordsRouter = new Hono<AppEnvironment>()
         body.data.limit,
         body.data.offset,
         context.get("rowFilter"),
+        context.get("fieldFilter"),
       );
       return context.json({ status: "ok" as const, ...result });
     } catch (error) {
@@ -196,6 +192,7 @@ export const recordsRouter = new Hono<AppEnvironment>()
         context.req.param("name")!,
         body.data.where,
         context.get("rowFilter"),
+        context.get("fieldFilter"),
       );
       return context.json({ status: "ok" as const, count });
     } catch (error) {
@@ -212,35 +209,33 @@ export const recordsRouter = new Hono<AppEnvironment>()
         context.req.param("name")!,
         body.data as AggregateRequest,
         context.get("rowFilter"),
+        context.get("fieldFilter"),
       );
       return context.json({ status: "ok" as const, ...result });
     } catch (error) {
       return recordsError(context, error);
     }
   })
-  .post(
-    "/",
-    requirePermission("write", collectionResource),
-    async (context) => {
-      const body = await parseJson(context, insertSchema);
-      if (!body.success) return body.response;
-      try {
-        const result = await insertRecord(
-          context.get("services").prisma,
-          context.get("orgId"),
-          context.req.param("name")!,
-          body.data.data,
-          context.get("userId"),
-        );
-        await context.get("audit")("insert_record", "record", result.id, {
-          collection: context.req.param("name")!,
-        });
-        return context.json({ status: "ok" as const, ...result });
-      } catch (error) {
-        return recordsError(context, error);
-      }
-    },
-  )
+  .post("/", requireCollectionPermission("write"), async (context) => {
+    const body = await parseJson(context, insertSchema);
+    if (!body.success) return body.response;
+    try {
+      const result = await insertRecord(
+        context.get("services").prisma,
+        context.get("orgId"),
+        context.req.param("name")!,
+        body.data.data,
+        context.get("userId"),
+        context.get("fieldFilter"),
+      );
+      await context.get("audit")("insert_record", "record", result.id, {
+        collection: context.req.param("name")!,
+      });
+      return context.json({ status: "ok" as const, ...result });
+    } catch (error) {
+      return recordsError(context, error);
+    }
+  })
   .get("/:id", requireCollectionPermission("read"), async (context) => {
     try {
       const result = await getRecord(
@@ -249,6 +244,7 @@ export const recordsRouter = new Hono<AppEnvironment>()
         context.req.param("name")!,
         context.req.param("id"),
         context.get("rowFilter"),
+        context.get("fieldFilter"),
       );
       return context.json({ status: "ok" as const, ...result });
     } catch (error) {
@@ -266,6 +262,7 @@ export const recordsRouter = new Hono<AppEnvironment>()
         context.req.param("id"),
         body.data.data,
         context.get("rowFilter"),
+        context.get("fieldFilter"),
       );
       await context.get("audit")("update_record", "record", result.id, {
         collection: context.req.param("name")!,

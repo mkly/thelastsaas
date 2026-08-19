@@ -97,6 +97,9 @@ function createPrismaFixture() {
     rowFilter: {
       findMany: async () => [],
     },
+    fieldFilter: {
+      findMany: async () => [],
+    },
     member: {
       findMany: async ({ where }: { where: { organizationId: string } }) =>
         members.filter(

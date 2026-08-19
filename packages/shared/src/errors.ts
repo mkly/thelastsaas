@@ -5,6 +5,7 @@ export const ErrorCode = {
   SchemaValidation: "SchemaValidationError",
   FileMissing: "FileMissingError",
   PermissionDenied: "PermissionDeniedError",
+  FieldPermissionDenied: "FieldPermissionDeniedError",
   InvalidQuery: "InvalidQueryError",
   Unauthorized: "Unauthorized",
 } as const;
@@ -71,6 +72,17 @@ export class FileMissingError extends LastSaasError {
 export class PermissionDeniedError extends LastSaasError {
   constructor(message = "Permission denied") {
     super(ErrorCode.PermissionDenied, message);
+  }
+}
+
+export class FieldPermissionDeniedError extends LastSaasError {
+  constructor(fields: string[]) {
+    super(
+      ErrorCode.FieldPermissionDenied,
+      `Write access denied for field${fields.length === 1 ? "" : "s"}: ${fields
+        .map((field) => `'${field}'`)
+        .join(", ")}`,
+    );
   }
 }
 

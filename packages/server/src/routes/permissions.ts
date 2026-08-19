@@ -1,4 +1,8 @@
-import { CollectionNotFoundError, errorResponse } from "@lastsaas/shared";
+import {
+  CollectionNotFoundError,
+  errorResponse,
+  isPlainObject,
+} from "@lastsaas/shared";
 import type { PrismaClient } from "@prisma/client";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -12,6 +16,11 @@ import {
   unassignRole,
 } from "../db/casbin";
 import { getCollection } from "../db/collections";
+import {
+  deleteFieldFilter,
+  listFieldFilters,
+  setFieldFilter,
+} from "../db/fieldFilters";
 import {
   deleteRowFilter,
   listRowFilters,
@@ -52,6 +61,20 @@ const rowFilterSchema = z
     role: roleSchema.shape.role,
     action: z.enum(["read", "write", "delete"]),
     condition: whereSchema,
+  })
+  .strict();
+const fieldNameSchema = z
+  .string()
+  .min(1)
+  .max(128)
+  .regex(/^[a-zA-Z][a-zA-Z0-9_]*$/);
+const fieldFilterSchema = z
+  .object({
+    collection: z.string().min(1),
+    role: roleSchema.shape.role,
+    action: z.enum(["read", "write", "delete"]),
+    readable_fields: z.array(fieldNameSchema).max(512),
+    writable_fields: z.array(fieldNameSchema).max(512),
   })
   .strict();
 
@@ -407,5 +430,112 @@ export const permissionRouter = new Hono<AppEnvironment>()
       );
     }
     await context.get("audit")("delete_row_filter", "permission", id, {});
+    return context.json({ status: "ok" as const });
+  })
+  .get("/field-filters", managePermissions, async (context) => {
+    const orgId = context.get("orgId");
+    const prisma = context.get("services").prisma;
+    const collectionName = context.req.query("collection");
+    let collectionId: string | undefined;
+
+    if (collectionName) {
+      try {
+        collectionId = (await getCollection(prisma, orgId, collectionName)).id;
+      } catch (error) {
+        if (error instanceof CollectionNotFoundError) {
+          return context.json({ status: "ok" as const, field_filters: [] });
+        }
+        throw error;
+      }
+    }
+
+    const rows = await listFieldFilters(prisma, orgId, collectionId);
+    return context.json({
+      status: "ok" as const,
+      field_filters: rows.map((row) => ({
+        id: row.id,
+        collection: row.collection.name,
+        collection_id: row.collectionId,
+        role: row.role,
+        action: row.action,
+        readable_fields: row.readableFields,
+        writable_fields: row.writableFields,
+        created_at: row.createdAt.toISOString(),
+        updated_at: row.updatedAt.toISOString(),
+      })),
+    });
+  })
+  .post("/field-filters", managePermissions, async (context) => {
+    const parsed = fieldFilterSchema.safeParse(
+      await context.req.json().catch(() => null),
+    );
+    if (!parsed.success) {
+      return context.json(invalidRequest(validationMessage(parsed.error)), 400);
+    }
+
+    const orgId = context.get("orgId");
+    const prisma = context.get("services").prisma;
+    try {
+      const collection = await getCollection(
+        prisma,
+        orgId,
+        parsed.data.collection,
+      );
+      const collectionSchema = collection.schema;
+      if (!isPlainObject(collectionSchema)) {
+        return context.json(
+          invalidRequest("Collection schema is corrupt"),
+          400,
+        );
+      }
+      const configuredFields = new Set([
+        ...parsed.data.readable_fields,
+        ...parsed.data.writable_fields,
+      ]);
+      const unknownFields = [...configuredFields].filter(
+        (field) => !(field in collectionSchema),
+      );
+      if (unknownFields.length > 0) {
+        return context.json(
+          invalidRequest(
+            `Unknown collection field${unknownFields.length === 1 ? "" : "s"}: ${unknownFields
+              .map((field) => `'${field}'`)
+              .join(", ")}`,
+          ),
+          400,
+        );
+      }
+      const row = await setFieldFilter(
+        prisma,
+        orgId,
+        collection.id,
+        parsed.data.role,
+        parsed.data.action,
+        [...new Set(parsed.data.readable_fields)],
+        [...new Set(parsed.data.writable_fields)],
+      );
+      await context.get("audit")("set_field_filter", "permission", row.id, {
+        collection: parsed.data.collection,
+        role: parsed.data.role,
+        action: parsed.data.action,
+      });
+      return context.json({ status: "ok" as const, id: row.id });
+    } catch (error) {
+      if (error instanceof CollectionNotFoundError) {
+        return context.json(error.toResponse(), 404);
+      }
+      throw error;
+    }
+  })
+  .delete("/field-filters/:id", managePermissions, async (context) => {
+    const id = context.req.param("id");
+    const orgId = context.get("orgId");
+    if (!(await deleteFieldFilter(context.get("services").prisma, orgId, id))) {
+      return context.json(
+        errorResponse("NotFound", "Field filter not found"),
+        404,
+      );
+    }
+    await context.get("audit")("delete_field_filter", "permission", id, {});
     return context.json({ status: "ok" as const });
   });
