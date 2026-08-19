@@ -1,5 +1,6 @@
 import type { Command } from "commander";
 
+import { registerAccessCommands } from "./commands/access";
 import { registerAuthCommands } from "./commands/auth";
 import { registerCollections } from "./commands/collections";
 import { registerRecords } from "./commands/records";
@@ -11,4 +12,5 @@ export const commandRegistrars: readonly CommandRegistrar[] = [
   registerAuthCommands,
   registerCollections,
   registerRecords,
+  registerAccessCommands,
 ];
