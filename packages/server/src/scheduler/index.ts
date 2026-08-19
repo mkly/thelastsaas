@@ -3,6 +3,7 @@ import { Cron } from "croner";
 
 import type { AppConfig } from "../config";
 import { databaseProvider } from "../config";
+import { expandRecurrence, parseRecurrence } from "../lib/recurrence";
 import type { NotificationQueue } from "../notifications/queue";
 
 const SQLITE_POLL_PATTERN = "*/10 * * * * *";
@@ -10,6 +11,8 @@ const POSTGRES_POLL_PATTERN = "* * * * *";
 const POSTGRES_QUEUE = "lastsaas-background";
 const DEFAULT_BATCH_SIZE = 25;
 const PROCESSING_STALE_AFTER_MS = 5 * 60_000;
+const RECURRENCE_CHUNK_DAYS = 731;
+const DAY_MS = 24 * 60 * 60_000;
 
 function dataObject(value: Prisma.JsonValue | null): object | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -42,6 +45,9 @@ interface ScheduleRow {
   inApp: boolean;
   channel: string;
   deliverAt: Date | null;
+  recurrence: string | null;
+  nextOccurrenceAt: Date | null;
+  lastEnqueuedAt: Date | null;
   user: { email: string };
 }
 
@@ -68,10 +74,22 @@ export class NotificationScheduleProcessor {
       where: {
         status: "scheduled",
         lockedAt: null,
-        recurrence: null,
-        deliverAt: { not: null, lte: now },
+        OR: [
+          { recurrence: null, deliverAt: { not: null, lte: now } },
+          {
+            recurrence: { not: null },
+            OR: [
+              { nextOccurrenceAt: null },
+              { nextOccurrenceAt: { lte: now } },
+            ],
+          },
+        ],
       },
-      orderBy: [{ deliverAt: "asc" }, { createdAt: "asc" }],
+      orderBy: [
+        { nextOccurrenceAt: "asc" },
+        { deliverAt: "asc" },
+        { createdAt: "asc" },
+      ],
       take: batchSize,
       select: {
         id: true,
@@ -83,59 +101,39 @@ export class NotificationScheduleProcessor {
         inApp: true,
         channel: true,
         deliverAt: true,
+        recurrence: true,
+        nextOccurrenceAt: true,
+        lastEnqueuedAt: true,
         user: { select: { email: true } },
       },
     });
 
     let materialized = 0;
     for (const row of rows) {
-      if (await this.processRow(row, now)) materialized += 1;
+      materialized += await this.processRow(row, now);
     }
     return materialized;
   }
 
-  private async processRow(row: ScheduleRow, now: Date): Promise<boolean> {
-    if (!row.deliverAt) return false;
-
+  private async processRow(row: ScheduleRow, now: Date): Promise<number> {
     const claimed = await this.prisma.notificationSchedule.updateMany({
       where: {
         id: row.id,
         status: "scheduled",
         lockedAt: null,
-        recurrence: null,
-        deliverAt: { not: null, lte: now },
+        recurrence: row.recurrence,
+        ...(row.recurrence !== null
+          ? { nextOccurrenceAt: row.nextOccurrenceAt }
+          : { deliverAt: row.deliverAt }),
       },
       data: { status: "processing", lockedAt: now },
     });
-    if (claimed.count === 0) return false;
+    if (claimed.count === 0) return 0;
 
     try {
-      await this.queue.enqueue({
-        orgId: row.orgId,
-        userId: row.userId,
-        scheduleId: row.id,
-        occurrenceAt: row.deliverAt,
-        type: row.type,
-        message: row.message,
-        ...(dataObject(row.data) ? { data: dataObject(row.data) } : {}),
-        inApp: row.inApp,
-        dedupeKey: `notification-schedule:${row.id}:${row.deliverAt.toISOString()}`,
-        delivery: {
-          to: row.user.email,
-          subject: row.message,
-          text: row.message,
-          ...(channels(row.channel) ? { channels: channels(row.channel) } : {}),
-        },
-      });
-      await this.prisma.notificationSchedule.update({
-        where: { id: row.id },
-        data: {
-          status: "sent",
-          lockedAt: null,
-          lastEnqueuedAt: row.deliverAt,
-        },
-      });
-      return true;
+      return row.recurrence !== null
+        ? await this.processRecurringRow(row, row.recurrence, now)
+        : await this.processOneShotRow(row);
     } catch (error) {
       await this.prisma.notificationSchedule.updateMany({
         where: { id: row.id, status: "processing", lockedAt: now },
@@ -143,6 +141,110 @@ export class NotificationScheduleProcessor {
       });
       throw error;
     }
+  }
+
+  private async processOneShotRow(row: ScheduleRow): Promise<number> {
+    if (!row.deliverAt) return 0;
+
+    await this.enqueueOccurrence(row, row.deliverAt);
+    await this.prisma.notificationSchedule.update({
+      where: { id: row.id },
+      data: {
+        status: "sent",
+        lockedAt: null,
+        lastEnqueuedAt: row.deliverAt,
+      },
+    });
+    return 1;
+  }
+
+  private async processRecurringRow(
+    row: ScheduleRow,
+    recurrence: string,
+    now: Date,
+  ): Promise<number> {
+    const parsed = parseRecurrence(recurrence);
+    const firstUnprocessed =
+      row.nextOccurrenceAt ??
+      parsed.rule.after(
+        row.lastEnqueuedAt ?? parsed.startsAt,
+        row.lastEnqueuedAt === null,
+      );
+
+    if (!firstUnprocessed || firstUnprocessed > now) {
+      await this.finishRecurringClaim(
+        row.id,
+        row.lastEnqueuedAt,
+        firstUnprocessed,
+      );
+      return 0;
+    }
+
+    // Bound each expansion to the recurrence library's supported window. A
+    // schedule with a large backlog advances its persisted cursor on each poll.
+    const chunkEnd = new Date(
+      Math.min(
+        now.getTime(),
+        firstUnprocessed.getTime() + RECURRENCE_CHUNK_DAYS * DAY_MS,
+      ),
+    );
+    const occurrences = expandRecurrence(recurrence, {
+      from: firstUnprocessed,
+      to: chunkEnd,
+    });
+
+    for (const occurrence of occurrences) {
+      await this.enqueueOccurrence(row, occurrence);
+    }
+
+    const nextOccurrence = parsed.rule.after(chunkEnd, false);
+    await this.finishRecurringClaim(
+      row.id,
+      occurrences.at(-1) ?? row.lastEnqueuedAt,
+      nextOccurrence,
+    );
+    return occurrences.length;
+  }
+
+  private async finishRecurringClaim(
+    id: string,
+    lastEnqueuedAt: Date | null,
+    nextOccurrenceAt: Date | null,
+  ): Promise<void> {
+    await this.prisma.notificationSchedule.update({
+      where: { id },
+      data: {
+        status: nextOccurrenceAt ? "scheduled" : "sent",
+        lockedAt: null,
+        lastEnqueuedAt,
+        nextOccurrenceAt,
+      },
+    });
+  }
+
+  private async enqueueOccurrence(
+    row: ScheduleRow,
+    occurrenceAt: Date,
+  ): Promise<void> {
+    const data = dataObject(row.data);
+    const deliveryChannels = channels(row.channel);
+    await this.queue.enqueue({
+      orgId: row.orgId,
+      userId: row.userId,
+      scheduleId: row.id,
+      occurrenceAt,
+      type: row.type,
+      message: row.message,
+      ...(data ? { data } : {}),
+      inApp: row.inApp,
+      dedupeKey: `notification-schedule:${row.id}:${occurrenceAt.toISOString()}`,
+      delivery: {
+        to: row.user.email,
+        subject: row.message,
+        text: row.message,
+        ...(deliveryChannels ? { channels: deliveryChannels } : {}),
+      },
+    });
   }
 }
 
