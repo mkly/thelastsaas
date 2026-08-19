@@ -11,6 +11,11 @@
   "dependencies": {
     "@lastsaas/shared": "workspace:*",
     "hono": "^4.9.8",
+    "luxon": "^3.7.2",
+    "rrule": "^2.8.1",
     "zod": "^4.1.11"
+  },
+  "devDependencies": {
+    "@types/luxon": "^3.7.1"
   }
 }
