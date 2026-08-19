@@ -11,6 +11,7 @@ describe("auth configuration", () => {
     expect(config.betterAuthUrl).toBe("http://localhost:9000");
     expect(config.betterAuthSecret).not.toBe("");
     expect(config.googleClientId).toBe("");
+    expect(config.maxUploadSize).toBe(50 * 1024 * 1024);
   });
 
   test("requires a BetterAuth secret in production", () => {
@@ -46,5 +47,12 @@ describe("auth configuration", () => {
     expect(() => loadConfig({ GOOGLE_CLIENT_ID: "client-id" })).toThrow(
       "GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be provided together",
     );
+  });
+
+  test("parses a positive upload limit in bytes", () => {
+    expect(loadConfig({ MAX_UPLOAD_SIZE: "1048576" }).maxUploadSize).toBe(
+      1_048_576,
+    );
+    expect(() => loadConfig({ MAX_UPLOAD_SIZE: "0" })).toThrow();
   });
 });

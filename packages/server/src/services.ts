@@ -4,12 +4,14 @@ import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
 import type { AppConfig } from "./config";
+import { createStorage } from "./config";
 import { createAuth, type Auth, type AuthEmailSender } from "./auth";
 import {
   createNotificationServices,
   type NotificationDispatcher,
   type NotificationQueue,
 } from "./notifications";
+import type { Storage } from "./storage/interface";
 
 export interface AppServices {
   database: Database;
@@ -17,6 +19,7 @@ export interface AppServices {
   auth: Auth;
   notifications: NotificationDispatcher;
   notificationQueue: NotificationQueue;
+  storage: Storage;
 }
 
 function sqlitePath(databaseUrl: string): string {
@@ -30,10 +33,10 @@ function sqlitePath(databaseUrl: string): string {
   return resolve(path);
 }
 
-export function createServices(
+export async function createServices(
   config: AppConfig,
   sendAuthEmail?: AuthEmailSender,
-): AppServices {
+): Promise<AppServices> {
   const path = sqlitePath(config.databaseUrl);
   if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
 
@@ -42,7 +45,8 @@ export function createServices(
   const prisma = new PrismaClient({ datasourceUrl: config.databaseUrl });
   const auth = createAuth(prisma, config, sendAuthEmail);
   const notificationServices = createNotificationServices(prisma, config);
-  return { database, prisma, auth, ...notificationServices };
+  const storage = await createStorage(config);
+  return { database, prisma, auth, storage, ...notificationServices };
 }
 
 export async function closeServices(services: AppServices): Promise<void> {

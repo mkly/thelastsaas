@@ -19,6 +19,12 @@ const environmentSchema = z.object({
   SMTP_FROM: z.string().default("Last SaaS <notifications@localhost>"),
   STORAGE_TYPE: z.enum(["local", "s3"]).default("local"),
   STORAGE_PATH: z.string().default("./data/files"),
+  MAX_UPLOAD_SIZE: z.coerce
+    .number()
+    .int()
+    .positive()
+    .max(2_147_483_647)
+    .default(50 * 1024 * 1024),
   S3_ENDPOINT: z.string().default(""),
   S3_REGION: z.string().default("us-east-1"),
   S3_BUCKET: z.string().default(""),
@@ -41,6 +47,7 @@ export interface AppConfig {
   smtpFrom: string;
   storageType: "local" | "s3";
   storagePath: string;
+  maxUploadSize: number;
   s3Endpoint: string;
   s3Region: string;
   s3Bucket: string;
@@ -82,6 +89,7 @@ export function loadConfig(
     smtpFrom: parsed.SMTP_FROM,
     storageType: parsed.STORAGE_TYPE,
     storagePath: parsed.STORAGE_PATH,
+    maxUploadSize: parsed.MAX_UPLOAD_SIZE,
     s3Endpoint: parsed.S3_ENDPOINT,
     s3Region: parsed.S3_REGION,
     s3Bucket: parsed.S3_BUCKET,
