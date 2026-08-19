@@ -21,7 +21,7 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0)) await cleanup();
 });
 
-function createAuthPageApp(options: { google?: boolean } = {}) {
+async function createAuthPageApp(options: { google?: boolean } = {}) {
   const directory = mkdtempSync(join(tmpdir(), "lastsaas-auth-pages-"));
   const emails: AuthEmail[] = [];
   const config = loadConfig({
@@ -33,7 +33,7 @@ function createAuthPageApp(options: { google?: boolean } = {}) {
     GOOGLE_CLIENT_ID: options.google ? "google-client-id" : "",
     GOOGLE_CLIENT_SECRET: options.google ? "google-client-secret" : "",
   });
-  const services = createServices(config, async (email) => {
+  const services = await createServices(config, async (email) => {
     emails.push(email);
   });
   services.database.exec(migration);
@@ -50,7 +50,7 @@ function formBody(fields: Record<string, string>): URLSearchParams {
 }
 
 async function signUp(
-  app: ReturnType<typeof createAuthPageApp>["app"],
+  app: Awaited<ReturnType<typeof createAuthPageApp>>["app"],
   password = "initial-password",
 ) {
   return app.request("http://localhost:3000/auth/signup", {
@@ -65,7 +65,7 @@ async function signUp(
 }
 
 async function login(
-  app: ReturnType<typeof createAuthPageApp>["app"],
+  app: Awaited<ReturnType<typeof createAuthPageApp>>["app"],
   password: string,
 ) {
   return app.request("http://localhost:3000/auth/login", {
@@ -77,7 +77,7 @@ async function login(
 
 describe("browser auth pages", () => {
   test("renders the root and auth forms before protected routes", async () => {
-    const { app } = createAuthPageApp();
+    const { app } = await createAuthPageApp();
 
     const root = await app.request("http://localhost:3000/");
     expect(root.status).toBe(200);
@@ -97,7 +97,7 @@ describe("browser auth pages", () => {
   });
 
   test("signs up, logs in, renders the dashboard, and logs out", async () => {
-    const { app } = createAuthPageApp();
+    const { app } = await createAuthPageApp();
 
     const signup = await signUp(app);
     expect(signup.status).toBe(302);
@@ -126,7 +126,7 @@ describe("browser auth pages", () => {
   });
 
   test("sends and verifies a magic link without revealing unknown users", async () => {
-    const { app, emails } = createAuthPageApp();
+    const { app, emails } = await createAuthPageApp();
     await signUp(app);
 
     const sent = await app.request("http://localhost:3000/auth/magic-link", {
@@ -146,7 +146,7 @@ describe("browser auth pages", () => {
   });
 
   test("completes password reset and accepts only the new password", async () => {
-    const { app, emails } = createAuthPageApp();
+    const { app, emails } = await createAuthPageApp();
     await signUp(app);
 
     const requested = await app.request(
@@ -191,7 +191,7 @@ describe("browser auth pages", () => {
   });
 
   test("starts configured Google OAuth and preserves a safe auth next path", async () => {
-    const { app } = createAuthPageApp({ google: true });
+    const { app } = await createAuthPageApp({ google: true });
 
     const loginPage = await app.request("http://localhost:3000/auth/login");
     expect(await loginPage.text()).toContain("Continue with Google");
@@ -207,7 +207,7 @@ describe("browser auth pages", () => {
   });
 
   test("escapes auth-page query values and rejects external next redirects", async () => {
-    const { app } = createAuthPageApp();
+    const { app } = await createAuthPageApp();
     const page = await app.request(
       "http://localhost:3000/auth/signup?email=%22%3E%3Cscript%3Ebad%3C%2Fscript%3E&error=%3Cb%3Ebad%3C%2Fb%3E&next=https%3A%2F%2Fexample.com",
     );

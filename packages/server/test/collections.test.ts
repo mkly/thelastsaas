@@ -25,7 +25,7 @@ async function createCollectionsApp() {
     PORT: "0",
     DATABASE_URL: `file:${databasePath}`,
   });
-  const services = createServices(config);
+  const services = await createServices(config);
   services.database.exec(
     readFileSync(
       new URL(
