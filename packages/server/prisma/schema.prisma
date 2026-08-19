@@ -1,0 +1,339 @@
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// --- BetterAuth core models ---
+
+model User {
+  id                      String                 @id
+  email                   String                 @unique
+  emailVerified           Boolean                @default(false)
+  name                    String
+  image                   String?
+  notificationPreferences Json?                  @map("notification_preferences")
+  createdAt               DateTime               @default(now())
+  updatedAt               DateTime               @updatedAt
+  sessions                Session[]
+  accounts                Account[]
+  members                 Member[]
+  invitations             Invitation[]
+  deviceAuthCodes         DeviceAuthCode[]
+  notifications           Notification[]
+  notificationSchedules   NotificationSchedule[]
+
+  @@map("user")
+}
+
+model Session {
+  id        String   @id
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id
+  userId                String
+  providerId            String
+  accountId             String
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verification")
+}
+
+// --- BetterAuth organization plugin models ---
+
+model Organization {
+  id                    String                 @id
+  name                  String
+  slug                  String                 @unique
+  logo                  String?
+  metadata              String?
+  createdAt             DateTime               @default(now())
+  members               Member[]
+  invitations           Invitation[]
+  collections           Collection[]
+  records               Record[]
+  rowFilters            RowFilter[]
+  fieldFilters          FieldFilter[]
+  files                 File[]
+  notifications         Notification[]
+  notificationSchedules NotificationSchedule[]
+  casbinRules           CasbinRule[]
+  auditLogs             AuditLog[]
+
+  @@map("organization")
+}
+
+model Member {
+  id             String       @id
+  organizationId String
+  userId         String
+  role           String       @default("member")
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@index([organizationId])
+  @@index([userId])
+  @@map("member")
+}
+
+model Invitation {
+  id             String       @id
+  organizationId String
+  email          String
+  role           String?
+  status         String       @default("pending")
+  inviterId      String
+  expiresAt      DateTime
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  inviter        User         @relation(fields: [inviterId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([email])
+  @@map("invitation")
+}
+
+// --- Application models ---
+
+model Collection {
+  id           String        @id
+  orgId        String        @map("org_id")
+  name         String
+  schema       Json
+  description  String        @default("")
+  createdAt    DateTime      @default(now()) @map("created_at")
+  updatedAt    DateTime      @updatedAt @map("updated_at")
+  org          Organization  @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  records      Record[]
+  files        File[]
+  rowFilters   RowFilter[]
+  fieldFilters FieldFilter[]
+
+  @@unique([orgId, name])
+  @@unique([orgId, id])
+  @@index([orgId])
+  @@map("collections")
+}
+
+model Record {
+  id           String       @id
+  orgId        String       @map("org_id")
+  collectionId String       @map("collection_id")
+  data         Json
+  createdBy    String       @default("system") @map("created_by")
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
+  org          Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  collection   Collection   @relation(fields: [orgId, collectionId], references: [orgId, id], onDelete: Cascade)
+  files        File[]
+
+  @@unique([orgId, id])
+  @@index([orgId, collectionId])
+  @@map("records")
+}
+
+model RowFilter {
+  id           String       @id
+  orgId        String       @map("org_id")
+  collectionId String       @map("collection_id")
+  role         String
+  action       String
+  condition    Json
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
+  org          Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  collection   Collection   @relation(fields: [orgId, collectionId], references: [orgId, id], onDelete: Cascade)
+
+  @@unique([orgId, collectionId, role, action])
+  @@index([orgId, collectionId, action])
+  @@map("row_filters")
+}
+
+model FieldFilter {
+  id             String       @id
+  orgId          String       @map("org_id")
+  collectionId   String       @map("collection_id")
+  role           String
+  action         String
+  readableFields Json         @map("readable_fields")
+  writableFields Json         @map("writable_fields")
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+  org            Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  collection     Collection   @relation(fields: [orgId, collectionId], references: [orgId, id], onDelete: Cascade)
+
+  @@unique([orgId, collectionId, role, action])
+  @@index([orgId, collectionId, action])
+  @@map("field_filters")
+}
+
+model File {
+  id           String       @id
+  orgId        String       @map("org_id")
+  path         String
+  filename     String
+  mimeType     String?      @map("mime_type")
+  sizeBytes    Int?         @map("size_bytes")
+  collectionId String?      @map("collection_id")
+  recordId     String?      @map("record_id")
+  uploadedBy   String       @default("system") @map("uploaded_by")
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
+  org          Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  collection   Collection?  @relation(fields: [orgId, collectionId], references: [orgId, id], onDelete: Restrict)
+  record       Record?      @relation(fields: [orgId, recordId], references: [orgId, id], onDelete: Restrict)
+
+  @@unique([orgId, path])
+  @@index([orgId, collectionId])
+  @@index([orgId, recordId])
+  @@map("files")
+}
+
+model Notification {
+  id            String                @id
+  orgId         String                @map("org_id")
+  userId        String                @map("user_id")
+  scheduleId    String?               @map("schedule_id")
+  occurrenceAt  DateTime?             @map("occurrence_at")
+  dedupeKey     String?               @map("dedupe_key")
+  type          String
+  message       String
+  data          Json?
+  read          Boolean               @default(false)
+  inApp         Boolean               @default(true) @map("in_app")
+  channel       String                @default("console")
+  status        String                @default("pending")
+  lockedAt      DateTime?             @map("locked_at")
+  errorLogs     Json?                 @map("error_logs")
+  attempts      Int                   @default(0)
+  nextAttemptAt DateTime?             @map("next_attempt_at")
+  createdAt     DateTime              @default(now()) @map("created_at")
+  updatedAt     DateTime              @updatedAt @map("updated_at")
+  org           Organization          @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user          User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  schedule      NotificationSchedule? @relation(fields: [orgId, scheduleId], references: [orgId, id], onDelete: Restrict)
+
+  @@unique([orgId, userId, dedupeKey])
+  @@unique([orgId, scheduleId, occurrenceAt])
+  @@index([orgId, userId, read])
+  @@index([status, nextAttemptAt])
+  @@map("notifications")
+}
+
+model NotificationSchedule {
+  id               String         @id
+  orgId            String         @map("org_id")
+  userId           String         @map("user_id")
+  dedupeKey        String         @map("dedupe_key")
+  type             String
+  message          String
+  data             Json?
+  inApp            Boolean        @default(true) @map("in_app")
+  channel          String         @default("console")
+  deliverAt        DateTime?      @map("deliver_at")
+  recurrence       String?
+  nextOccurrenceAt DateTime?      @map("next_occurrence_at")
+  status           String         @default("scheduled")
+  lockedAt         DateTime?      @map("locked_at")
+  lastEnqueuedAt   DateTime?      @map("last_enqueued_at")
+  createdAt        DateTime       @default(now()) @map("created_at")
+  updatedAt        DateTime       @updatedAt @map("updated_at")
+  org              Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user             User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  notifications    Notification[]
+
+  @@unique([orgId, id])
+  @@unique([orgId, dedupeKey])
+  @@index([status, deliverAt])
+  @@index([status, nextOccurrenceAt])
+  @@index([orgId, userId, status])
+  @@map("notification_schedules")
+}
+
+model CasbinRule {
+  id    Int          @id @default(autoincrement())
+  orgId String       @map("org_id")
+  ptype String
+  v0    String?
+  v1    String?
+  v2    String?
+  v3    String?
+  v4    String?
+  v5    String?
+  org   Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, ptype])
+  @@index([orgId, v0])
+  @@map("casbin_rule")
+}
+
+model DeviceAuthCode {
+  id            String   @id
+  code          String   @unique
+  codeChallenge String   @map("code_challenge")
+  redirectUri   String   @map("redirect_uri")
+  userId        String?  @map("user_id")
+  expiresAt     DateTime @map("expires_at")
+  used          Boolean  @default(false)
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+  user          User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
+  @@map("device_auth_codes")
+}
+
+model AuditLog {
+  id           String       @id
+  orgId        String       @map("org_id")
+  userId       String       @default("system") @map("user_id")
+  action       String
+  resourceType String       @map("resource_type")
+  resourceId   String?      @map("resource_id")
+  details      Json?
+  createdAt    DateTime     @default(now()) @map("created_at")
+  org          Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, createdAt])
+  @@index([orgId, resourceType, resourceId])
+  @@map("audit_log")
+}
