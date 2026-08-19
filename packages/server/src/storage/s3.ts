@@ -1,10 +1,10 @@
 import {
   DeleteObjectCommand,
   GetObjectCommand,
-  PutObjectCommand,
   S3Client,
   type S3ClientConfig,
 } from "@aws-sdk/client-s3";
+import { Upload } from "@aws-sdk/lib-storage";
 import { Readable } from "node:stream";
 
 import type { Storage, StorageInput } from "./interface";
@@ -51,14 +51,21 @@ export class S3Storage implements Storage {
     this.client = new S3Client(clientConfig);
   }
 
+  /**
+   * PutObject requires a known Content-Length, so a stream of unknown size
+   * fails with NotImplemented; lib-storage's Upload streams it as a multipart
+   * upload instead, holding only one part in memory at a time.
+   */
   async write(key: string, content: StorageInput): Promise<void> {
-    await this.client.send(
-      new PutObjectCommand({
+    const upload = new Upload({
+      client: this.client,
+      params: {
         Bucket: this.bucket,
         Key: key,
         Body: Readable.from(content as AsyncIterable<Uint8Array>),
-      }),
-    );
+      },
+    });
+    await upload.done();
   }
 
   async read(key: string): Promise<ReadableStream<Uint8Array> | null> {

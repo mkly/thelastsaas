@@ -63,7 +63,7 @@ export class LocalStorage implements Storage {
   async read(key: string): Promise<ReadableStream<Uint8Array> | null> {
     const path = this.keyToPath(key);
     try {
-      await stat(path);
+      if (!(await stat(path)).isFile()) return null;
     } catch (error) {
       if (isMissingFile(error)) return null;
       throw error;
