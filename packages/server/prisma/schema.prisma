@@ -30,15 +30,16 @@ model User {
 }
 
 model Session {
-  id        String   @id
-  userId    String
-  token     String   @unique
-  expiresAt DateTime
-  ipAddress String?
-  userAgent String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id                   String   @id
+  userId               String
+  token                String   @unique
+  expiresAt            DateTime
+  ipAddress            String?
+  userAgent            String?
+  activeOrganizationId String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@map("session")
@@ -219,8 +220,8 @@ model File {
   createdAt    DateTime     @default(now()) @map("created_at")
   updatedAt    DateTime     @updatedAt @map("updated_at")
   org          Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  collection   Collection?  @relation(fields: [orgId, collectionId], references: [orgId, id], onDelete: Restrict)
-  record       Record?      @relation(fields: [orgId, recordId], references: [orgId, id], onDelete: Restrict)
+  collection   Collection?  @relation(fields: [collectionId], references: [id], onDelete: SetNull)
+  record       Record?      @relation(fields: [recordId], references: [id], onDelete: SetNull)
 
   @@unique([orgId, path])
   @@index([orgId, collectionId])

@@ -18,6 +18,7 @@ CREATE TABLE "session" (
     "expiresAt" DATETIME NOT NULL,
     "ipAddress" TEXT,
     "userAgent" TEXT,
+    "activeOrganizationId" TEXT,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" DATETIME NOT NULL,
     CONSTRAINT "session_userId_fkey" FOREIGN KEY ("userId") REFERENCES "user" ("id") ON DELETE CASCADE ON UPDATE CASCADE
@@ -154,8 +155,8 @@ CREATE TABLE "files" (
     "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" DATETIME NOT NULL,
     CONSTRAINT "files_org_id_fkey" FOREIGN KEY ("org_id") REFERENCES "organization" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
-    CONSTRAINT "files_org_id_collection_id_fkey" FOREIGN KEY ("org_id", "collection_id") REFERENCES "collections" ("org_id", "id") ON DELETE RESTRICT ON UPDATE CASCADE,
-    CONSTRAINT "files_org_id_record_id_fkey" FOREIGN KEY ("org_id", "record_id") REFERENCES "records" ("org_id", "id") ON DELETE RESTRICT ON UPDATE CASCADE
+    CONSTRAINT "files_collection_id_fkey" FOREIGN KEY ("collection_id") REFERENCES "collections" ("id") ON DELETE SET NULL ON UPDATE CASCADE,
+    CONSTRAINT "files_record_id_fkey" FOREIGN KEY ("record_id") REFERENCES "records" ("id") ON DELETE SET NULL ON UPDATE CASCADE
 );
 
 -- CreateTable
