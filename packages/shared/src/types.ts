@@ -131,6 +131,7 @@ export interface QueryResult {
 }
 
 export interface ExportData {
+  version: 1;
   collections: Array<{
     name: string;
     schema: Schema;
@@ -143,11 +144,68 @@ export interface ExportData {
       updated_at: string;
     }>;
   }>;
+  files: Array<{
+    id: string;
+    path: string;
+    filename: string;
+    mime_type: string | null;
+    size_bytes: number | null;
+    collection: string | null;
+    record_id: string | null;
+    uploaded_by: string;
+    created_at: string;
+    updated_at: string;
+  }>;
+  policies: Array<{
+    subject: string;
+    resource: string;
+    action: string;
+  }>;
+  role_assignments: Array<{
+    user_id: string;
+    role: string;
+  }>;
+  row_filters: Array<{
+    collection: string;
+    role: string;
+    action: string;
+    condition: Where;
+  }>;
+  field_filters: Array<{
+    collection: string;
+    role: string;
+    action: string;
+    readable_fields: string[];
+    writable_fields: string[];
+  }>;
+  notification_schedules: Array<{
+    id: string;
+    user_id: string;
+    dedupe_key: string;
+    type: string;
+    message: string;
+    data: Record<string, unknown> | null;
+    in_app: boolean;
+    channel: string;
+    deliver_at: string | null;
+    recurrence: string | null;
+    next_occurrence_at: string | null;
+    status: string;
+    last_enqueued_at: string | null;
+    created_at: string;
+    updated_at: string;
+  }>;
 }
 
 export interface ImportResult {
   imported_collections: number;
   imported_records: number;
+  imported_files: number;
+  imported_policies: number;
+  imported_role_assignments: number;
+  imported_row_filters: number;
+  imported_field_filters: number;
+  imported_notification_schedules: number;
   skipped_records?: number;
   warnings?: string[];
 }
