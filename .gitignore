@@ -1,6 +1,4 @@
 .envrc
-EXISTING_APP_REPORT.md
-REWRITE_DECISIONS.md
 node_modules/
 .env
 .env.*
