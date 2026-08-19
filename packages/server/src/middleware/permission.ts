@@ -3,6 +3,7 @@ import type { Context, MiddlewareHandler } from "hono";
 
 import { createOrgEnforcer, hasPermission } from "../db/casbin";
 import { getCollection } from "../db/collections";
+import { getFieldFilter } from "../db/fieldFilters";
 import { getRowFilter } from "../db/rowFilters";
 import type { AppEnvironment } from "../env";
 
@@ -58,28 +59,40 @@ export function requireCollectionPermission(
     }
 
     let rowFilter = null;
+    let fieldFilter = null;
     try {
       const collection = await getCollection(prisma, orgId, collectionName);
-      rowFilter = await getRowFilter(
-        prisma,
-        enforcer,
-        { userId, userEmail: "", orgId },
-        collection.id,
-        resource,
-        action,
-        async () => {
-          const user = await prisma.user.findUnique({
-            where: { id: userId },
-            select: { email: true },
-          });
-          return user?.email ?? "";
-        },
-      );
+      [rowFilter, fieldFilter] = await Promise.all([
+        getRowFilter(
+          prisma,
+          enforcer,
+          { userId, userEmail: "", orgId },
+          collection.id,
+          resource,
+          action,
+          async () => {
+            const user = await prisma.user.findUnique({
+              where: { id: userId },
+              select: { email: true },
+            });
+            return user?.email ?? "";
+          },
+        ),
+        getFieldFilter(
+          prisma,
+          enforcer,
+          { userId, userEmail: "", orgId },
+          collection.id,
+          resource,
+          action,
+        ),
+      ]);
     } catch (error) {
       if (!(error instanceof CollectionNotFoundError)) throw error;
     }
 
     context.set("rowFilter", rowFilter);
+    context.set("fieldFilter", fieldFilter);
     await next();
   };
 }

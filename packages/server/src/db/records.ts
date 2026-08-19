@@ -12,6 +12,12 @@ import {
 import { Prisma, type PrismaClient } from "@prisma/client";
 
 import { getCollection, validateCollectionRecordData } from "./collections";
+import {
+  assertWritableFields,
+  filterReadableData,
+  isFieldReadable,
+  type ResolvedFieldFilter,
+} from "./fieldFilters";
 import { expandRecurrences } from "../lib/recurrence";
 import {
   applyOrgScope,
@@ -92,11 +98,12 @@ function serializedRecord(
     updatedAt: Date;
   },
   collection?: string,
+  fieldFilter?: ResolvedFieldFilter | null,
 ) {
   return {
     id: row.id,
     ...(collection === undefined ? {} : { collection }),
-    data: dataObject(row.data),
+    data: filterReadableData(dataObject(row.data), fieldFilter),
     created_by: row.createdBy,
     created_at: row.createdAt.toISOString(),
     updated_at: row.updatedAt.toISOString(),
@@ -134,10 +141,11 @@ function serializedQueryRecord(
   row: QueryRow,
   data: Record<string, unknown>,
   occurrences?: Date[],
+  fieldFilter?: ResolvedFieldFilter | null,
 ) {
   return {
     id: row.id,
-    data,
+    data: filterReadableData(data, fieldFilter),
     created_by: row.created_by,
     created_at: new Date(row.created_at).toISOString(),
     updated_at: new Date(row.updated_at).toISOString(),
@@ -153,8 +161,10 @@ export async function insertRecord(
   collectionName: string,
   data: Record<string, unknown>,
   createdBy = "system",
+  fieldFilter?: ResolvedFieldFilter | null,
 ) {
   const collection = await getCollection(prisma, orgId, collectionName);
+  assertWritableFields(data, fieldFilter);
   const normalized = validatedData(data, schemaFromCollection(collection));
   const now = new Date();
   const row = await prisma.record.create({
@@ -168,7 +178,7 @@ export async function insertRecord(
       updatedAt: now,
     },
   });
-  return serializedRecord(row, collectionName);
+  return serializedRecord(row, collectionName, fieldFilter);
 }
 
 export async function insertRecords(
@@ -177,12 +187,15 @@ export async function insertRecords(
   collectionName: string,
   records: Record<string, unknown>[],
   createdBy = "system",
+  fieldFilter?: ResolvedFieldFilter | null,
 ) {
   const collection = await getCollection(prisma, orgId, collectionName);
   const schema = schemaFromCollection(collection);
   const ids: string[] = [];
   const errors: Array<{ index: number; errors: string[] }> = [];
   const creates: Prisma.PrismaPromise<unknown>[] = [];
+
+  for (const data of records) assertWritableFields(data, fieldFilter);
 
   for (const [index, data] of records.entries()) {
     try {
@@ -224,6 +237,7 @@ export async function getRecord(
   collectionName: string,
   recordId: string,
   rowFilter?: Where | null,
+  fieldFilter?: ResolvedFieldFilter | null,
 ) {
   const collection = await getCollection(prisma, orgId, collectionName);
   if (rowFilter) {
@@ -270,13 +284,14 @@ export async function getRecord(
         updatedAt: new Date(filtered.updated_at),
       },
       collectionName,
+      fieldFilter,
     );
   }
   const row = await prisma.record.findFirst({
     where: { id: recordId, orgId, collectionId: collection.id },
   });
   if (!row) throw new RecordNotFoundError(recordId);
-  return serializedRecord(row, collectionName);
+  return serializedRecord(row, collectionName, fieldFilter);
 }
 
 export async function updateRecord(
@@ -286,8 +301,10 @@ export async function updateRecord(
   recordId: string,
   data: Record<string, unknown>,
   rowFilter?: Where | null,
+  fieldFilter?: ResolvedFieldFilter | null,
 ) {
   const collection = await getCollection(prisma, orgId, collectionName);
+  assertWritableFields(data, fieldFilter);
   const schema = schemaFromCollection(collection);
   let existing: { data: Prisma.JsonValue } | null;
   if (rowFilter) {
@@ -336,7 +353,7 @@ export async function updateRecord(
     where: { id: recordId },
     data: { data: jsonObject(normalized), updatedAt: new Date() },
   });
-  return serializedRecord(row, collectionName);
+  return serializedRecord(row, collectionName, fieldFilter);
 }
 
 export async function deleteRecord(
@@ -386,11 +403,13 @@ export async function queryRecords(
   limit = 50,
   offset = 0,
   rowFilter?: Where | null,
+  fieldFilter?: ResolvedFieldFilter | null,
 ) {
   const collection = await getCollection(prisma, orgId, collectionName);
   const schema = schemaFromCollection(collection);
   const compiled = compileWhere(where, schema, PROVIDER, {
     extraWhere: rowFilter,
+    isFieldAllowed: (field) => isFieldReadable(field, fieldFilter),
   });
   const recurrenceFilters = compiled.postFilters.filter(
     (filter) => filter.kind === "occurs_between",
@@ -406,7 +425,9 @@ export async function queryRecords(
     compiled.sql,
     compiled.params,
   );
-  const order = compileOrderBy(orderBy, schema, PROVIDER);
+  const order = compileOrderBy(orderBy, schema, PROVIDER, {
+    isFieldAllowed: (field) => isFieldReadable(field, fieldFilter),
+  });
   const safeLimit = Math.max(1, Math.min(Math.trunc(limit), 1000));
   const safeOffset = Math.max(0, Math.trunc(offset));
   const recurrenceFilter = recurrenceFilters[0];
@@ -437,7 +458,14 @@ export async function queryRecords(
       const occurrences = expanded[index] ?? [];
       return occurrences.length === 0
         ? []
-        : [serializedQueryRecord(candidate.row, candidate.data, occurrences)];
+        : [
+            serializedQueryRecord(
+              candidate.row,
+              candidate.data,
+              occurrences,
+              fieldFilter,
+            ),
+          ];
     });
 
     return {
@@ -471,7 +499,7 @@ export async function queryRecords(
 
   return {
     records: rows.map((row) =>
-      serializedQueryRecord(row, queryRecordData(row)),
+      serializedQueryRecord(row, queryRecordData(row), undefined, fieldFilter),
     ),
     total: Number(counts[0]?.count ?? 0),
     limit: safeLimit,
@@ -485,6 +513,7 @@ export async function countRecords(
   collectionName: string,
   where?: Where,
   rowFilter?: Where | null,
+  fieldFilter?: ResolvedFieldFilter | null,
 ): Promise<number> {
   const result = await queryRecords(
     prisma,
@@ -495,6 +524,7 @@ export async function countRecords(
     1,
     0,
     rowFilter,
+    fieldFilter,
   );
   return result.total;
 }
@@ -505,6 +535,7 @@ export async function aggregateRecords(
   collectionName: string,
   request: AggregateRequest,
   rowFilter?: Where | null,
+  fieldFilter?: ResolvedFieldFilter | null,
 ) {
   const collection = await getCollection(prisma, orgId, collectionName);
   const compiled = compileAggregate(
@@ -513,7 +544,10 @@ export async function aggregateRecords(
     PROVIDER,
     orgId,
     collection.id,
-    { extraWhere: rowFilter },
+    {
+      extraWhere: rowFilter,
+      isFieldAllowed: (field) => isFieldReadable(field, fieldFilter),
+    },
   );
   rejectDeferredFilters(compiled.postFilters);
   const rows = await prisma.$queryRawUnsafe<Array<Record<string, unknown>>>(
