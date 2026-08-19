@@ -48,9 +48,14 @@ export function createAuthMiddleware({
         400,
       );
     }
+    const segments = context.req.path.split("/").filter(Boolean);
     const acceptsInvitation =
       context.req.method === "POST" &&
-      context.req.path.endsWith("/invitations/accept");
+      segments.length === 5 &&
+      segments[0] === "v1" &&
+      segments[1] === "orgs" &&
+      segments[3] === "invitations" &&
+      segments[4] === "accept";
     if (!acceptsInvitation) {
       const membership = await prisma.member.findUnique({
         where: {
