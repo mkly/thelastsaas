@@ -1,6 +1,7 @@
 import type { PrismaClient } from "@prisma/client";
 import { genId } from "@lastsaas/shared";
 import { Hono } from "hono";
+import { csrf } from "hono/csrf";
 import { randomBytes } from "node:crypto";
 
 import { SESSION_EXPIRES_IN_SECONDS } from "../auth";
@@ -227,7 +228,10 @@ deviceAuthRouter.get("/authorize", async (context) => {
   );
 });
 
-deviceAuthRouter.post("/authorize", async (context) => {
+// The approval form is the only state-changing browser-driven endpoint here:
+// without an origin check an attacker who created a code could have a victim's
+// browser approve it and then exchange it for that victim's CLI session.
+deviceAuthRouter.post("/authorize", csrf(), async (context) => {
   const { auth, prisma } = context.get("services");
   const session = await auth.api
     .getSession({ headers: context.req.raw.headers })

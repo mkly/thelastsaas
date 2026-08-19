@@ -271,11 +271,24 @@ describe("device authorization flow", () => {
       error: "authorization_pending",
     });
 
+    const forged = await harness.app.request("/auth/device/authorize", {
+      method: "POST",
+      headers: {
+        ...browserHeaders,
+        "content-type": "application/x-www-form-urlencoded",
+        origin: "http://attacker.example",
+      },
+      body: new URLSearchParams({ code, state }),
+    });
+    expect(forged.status).toBe(403);
+    expect(harness.authCode()?.userId).toBe(null);
+
     const approval = await harness.app.request("/auth/device/authorize", {
       method: "POST",
       headers: {
         ...browserHeaders,
         "content-type": "application/x-www-form-urlencoded",
+        origin: "http://localhost",
       },
       body: new URLSearchParams({ code, state }),
     });
