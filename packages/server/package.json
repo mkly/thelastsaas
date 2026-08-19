@@ -14,6 +14,8 @@
     "@lastsaas/shared": "workspace:*",
     "@prisma/client": "^6.16.2",
     "hono": "^4.9.8",
+    "luxon": "^3.7.2",
+    "rrule": "^2.8.1",
     "zod": "^4.1.11"
   },
   "optionalDependencies": {
@@ -21,6 +23,7 @@
     "@aws-sdk/lib-storage": "^3.1103.0"
   },
   "devDependencies": {
+    "@types/luxon": "^3.7.1",
     "prisma": "^6.16.2"
   }
 }
