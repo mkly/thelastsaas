@@ -190,11 +190,16 @@ export function validateCollectionRecordData(
     if (extractFieldType(fieldDefinition) !== "recurrence") continue;
     const value = data[fieldName];
     if (typeof value !== "string") continue;
+    // The engine, not the shared shape check, is authoritative here: it accepts
+    // folded lines and repeated EXDATEs that the cheap regex rejects. Drop the
+    // shape verdict for this field and re-decide with the parser.
+    const message = `Field '${fieldName}': invalid recurrence value`;
+    const shapeIndex = errors.indexOf(message);
+    if (shapeIndex !== -1) errors.splice(shapeIndex, 1);
     try {
       validateRecurrence(value);
     } catch {
-      const message = `Field '${fieldName}': invalid recurrence value`;
-      if (!errors.includes(message)) errors.push(message);
+      errors.push(message);
     }
   }
   return errors;

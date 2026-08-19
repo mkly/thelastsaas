@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { validateRecordData } from "@lastsaas/shared";
 import { Hono } from "hono";
 
 import { loadConfig } from "../src/config";
@@ -237,5 +238,22 @@ describe("collection record validation", () => {
     expect(validateCollectionRecordData({ schedule: invalid }, schema)).toEqual(
       ["Field 'schedule': invalid recurrence value"],
     );
+  });
+
+  test("accepts engine-valid recurrences the shape check rejects", () => {
+    const schema = { schedule: "recurrence" };
+    const repeatedExdates = [
+      "DTSTART;TZID=America/Los_Angeles:20260819T090000",
+      "RRULE:FREQ=DAILY;COUNT=5",
+      "EXDATE;TZID=America/Los_Angeles:20260820T090000",
+      "EXDATE;TZID=America/Los_Angeles:20260821T090000",
+    ].join("\n");
+
+    expect(validateRecordData({ schedule: repeatedExdates }, schema)).toEqual([
+      "Field 'schedule': invalid recurrence value",
+    ]);
+    expect(
+      validateCollectionRecordData({ schedule: repeatedExdates }, schema),
+    ).toEqual([]);
   });
 });
