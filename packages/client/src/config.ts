@@ -13,6 +13,7 @@ import { CliError } from "./errors";
 export const DEFAULT_SERVER_URL = "http://localhost:8787";
 
 export interface ClientConfig {
+  expires_at?: string;
   org?: string;
   server: string;
   session_token?: string;
@@ -91,6 +92,8 @@ function isClientConfig(value: unknown): value is ClientConfig {
   const config = value as Record<string, unknown>;
   return (
     typeof config.server === "string" &&
+    (config.expires_at === undefined ||
+      typeof config.expires_at === "string") &&
     (config.session_token === undefined ||
       typeof config.session_token === "string") &&
     (config.org === undefined || typeof config.org === "string")
