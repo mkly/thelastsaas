@@ -85,6 +85,25 @@ describe("exchangeDeviceToken", () => {
     expect(result.tokenData.session_token).toBe("lst_123");
   });
 
+  test("keeps a path-prefixed server base in the effective server URL", async () => {
+    const fetchImpl = async (input: Request | string | URL) => {
+      expect(String(input)).toBe("https://example.com/api/auth/device/token");
+      return Response.json({
+        expires_at: "2026-05-01T00:00:00.000Z",
+        session_token: "lst_123",
+        status: "ok",
+      });
+    };
+
+    const result = await exchangeDeviceToken(
+      "https://example.com/api",
+      payload,
+      fetchImpl,
+    );
+
+    expect(result.effectiveServerUrl).toBe("https://example.com/api");
+  });
+
   test("throws a clearer error for non-JSON token responses", async () => {
     const fetchImpl = async () =>
       new Response("<html>Moved</html>", {

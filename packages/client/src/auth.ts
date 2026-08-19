@@ -11,6 +11,7 @@ import {
 import { CliError } from "./errors";
 
 const CALLBACK_TIMEOUT_MS = 10 * 60 * 1000;
+const TOKEN_PATH = "/auth/device/token";
 
 export interface DeviceTokenResponse {
   error?: string;
@@ -60,6 +61,18 @@ export async function generateCodeChallenge(verifier: string): Promise<string> {
   return base64Url(new Uint8Array(digest));
 }
 
+// The server base may live under a path prefix, so the effective base is the
+// token URL minus its well-known suffix rather than the bare origin.
+function serverUrlFromTokenUrl(tokenUrl: string): string {
+  const url = new URL(tokenUrl);
+  url.search = "";
+  url.hash = "";
+  if (url.pathname.endsWith(TOKEN_PATH)) {
+    url.pathname = url.pathname.slice(0, -TOKEN_PATH.length);
+  }
+  return normalizeServerUrl(url.toString());
+}
+
 export async function exchangeDeviceToken(
   serverUrl: string,
   payload: {
@@ -72,7 +85,7 @@ export async function exchangeDeviceToken(
   effectiveServerUrl: string;
   tokenData: DeviceTokenResponse;
 }> {
-  let tokenUrl = `${normalizeServerUrl(serverUrl)}/auth/device/token`;
+  let tokenUrl = `${normalizeServerUrl(serverUrl)}${TOKEN_PATH}`;
   const requestBody = JSON.stringify(payload);
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -120,7 +133,7 @@ export async function exchangeDeviceToken(
       });
     }
     return {
-      effectiveServerUrl: new URL(tokenUrl).origin,
+      effectiveServerUrl: serverUrlFromTokenUrl(tokenUrl),
       tokenData,
     };
   }
