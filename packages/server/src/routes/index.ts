@@ -1,6 +1,7 @@
 import type { Hono } from "hono";
 
 import type { AppEnvironment } from "../env";
+import { fileRouter } from "./files";
 import { healthRouter } from "./health";
 
 export interface DomainRouter {
@@ -11,4 +12,5 @@ export interface DomainRouter {
 // Domain tasks register their router by adding one entry to this list.
 export const domainRouters: readonly DomainRouter[] = [
   { basePath: "/health", router: healthRouter },
+  { basePath: "/v1/orgs/:orgId/files", router: fileRouter },
 ];

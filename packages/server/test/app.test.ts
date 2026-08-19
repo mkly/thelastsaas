@@ -9,7 +9,7 @@ afterEach(async () => {
 
 describe("server skeleton", () => {
   test("serves the health endpoint without a network listener", async () => {
-    const testApp = createTestApp();
+    const testApp = await createTestApp();
     cleanups.push(testApp.close);
 
     const response = await testApp.app.request("/health");
@@ -18,9 +18,9 @@ describe("server skeleton", () => {
     expect(await response.json()).toEqual({ status: "ok" });
   });
 
-  test("isolates SQLite services between test app instances", () => {
-    const first = createTestApp();
-    const second = createTestApp();
+  test("isolates SQLite services between test app instances", async () => {
+    const first = await createTestApp();
+    const second = await createTestApp();
     cleanups.push(first.close, second.close);
 
     first.services.database.exec(
