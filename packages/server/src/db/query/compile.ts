@@ -62,12 +62,19 @@ export interface CompiledFragment {
 // Identifier and field safety
 // ---------------------------------------------------------------------------
 
-/** Validate that a field is a safe identifier present in the collection schema. */
+const RECORD_METADATA_TYPES: Readonly<Record<string, string>> = {
+  id: "string",
+  created_by: "string",
+  created_at: "datetime",
+  updated_at: "datetime",
+};
+
+/** Validate that a field is a safe record field or metadata column. */
 export function validateField(fieldName: string, schema: Schema): void {
   if (!isValidFieldName(fieldName)) {
     throw new InvalidQueryError(`Invalid field name: '${fieldName}'`);
   }
-  if (!(fieldName in schema)) {
+  if (!(fieldName in schema) && !(fieldName in RECORD_METADATA_TYPES)) {
     throw new InvalidQueryError(`Unknown field '${fieldName}' (not in schema)`);
   }
 }
@@ -90,6 +97,9 @@ function validateFieldReference(
 const NUMERIC_TYPES = new Set(["number", "integer", "float"]);
 
 function fieldType(fieldName: string, schema: Schema): string | undefined {
+  if (fieldName in RECORD_METADATA_TYPES) {
+    return RECORD_METADATA_TYPES[fieldName];
+  }
   const definition = schema[fieldName];
   return typeof definition === "string" ? definition : definition?.type;
 }
@@ -103,8 +113,9 @@ function isNumericField(fieldName: string, schema: Schema): boolean {
 // Dialect helpers
 // ---------------------------------------------------------------------------
 
-/** Extract a JSON field as text. Caller is responsible for casting. */
+/** Extract a JSON field as text, or return a safe native record column. */
 export function extractField(field: string, provider: DbProvider): string {
+  if (field in RECORD_METADATA_TYPES) return field;
   if (provider === "postgresql") return `data->>'${field}'`;
   return `json_extract(data, '$.${field}')`;
 }

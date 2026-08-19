@@ -28,6 +28,13 @@ import {
   RecurrenceRecordLimitError,
   RecurrenceWindowLimitError,
 } from "../lib/recurrence";
+import {
+  requireCollectionPermission,
+  requirePermission,
+} from "../middleware/permission";
+
+const collectionResource = (context: Context<AppEnvironment>) =>
+  `/collections/${context.req.param("name")}`;
 
 const dataSchema = z.record(z.string(), z.unknown());
 const insertSchema = z.object({ data: dataSchema }).strict();
@@ -136,27 +143,31 @@ function recordsError(
 }
 
 export const recordsRouter = new Hono<AppEnvironment>()
-  .post("/batch", async (context) => {
-    const body = await parseJson(context, batchSchema);
-    if (!body.success) return body.response;
-    try {
-      const result = await insertRecords(
-        context.get("services").prisma,
-        context.get("orgId"),
-        context.req.param("name")!,
-        body.data.records,
-        context.get("userId"),
-      );
-      await context.get("audit")("insert_records", "record", null, {
-        collection: context.req.param("name")!,
-        count: result.inserted,
-      });
-      return context.json({ status: "ok" as const, ...result });
-    } catch (error) {
-      return recordsError(context, error);
-    }
-  })
-  .post("/query", async (context) => {
+  .post(
+    "/batch",
+    requirePermission("write", collectionResource),
+    async (context) => {
+      const body = await parseJson(context, batchSchema);
+      if (!body.success) return body.response;
+      try {
+        const result = await insertRecords(
+          context.get("services").prisma,
+          context.get("orgId"),
+          context.req.param("name")!,
+          body.data.records,
+          context.get("userId"),
+        );
+        await context.get("audit")("insert_records", "record", null, {
+          collection: context.req.param("name")!,
+          count: result.inserted,
+        });
+        return context.json({ status: "ok" as const, ...result });
+      } catch (error) {
+        return recordsError(context, error);
+      }
+    },
+  )
+  .post("/query", requireCollectionPermission("read"), async (context) => {
     const body = await parseJson(context, querySchema);
     if (!body.success) return body.response;
     try {
@@ -168,13 +179,14 @@ export const recordsRouter = new Hono<AppEnvironment>()
         body.data.order_by,
         body.data.limit,
         body.data.offset,
+        context.get("rowFilter"),
       );
       return context.json({ status: "ok" as const, ...result });
     } catch (error) {
       return recordsError(context, error);
     }
   })
-  .post("/count", async (context) => {
+  .post("/count", requireCollectionPermission("read"), async (context) => {
     const body = await parseJson(context, countSchema);
     if (!body.success) return body.response;
     try {
@@ -183,13 +195,14 @@ export const recordsRouter = new Hono<AppEnvironment>()
         context.get("orgId"),
         context.req.param("name")!,
         body.data.where,
+        context.get("rowFilter"),
       );
       return context.json({ status: "ok" as const, count });
     } catch (error) {
       return recordsError(context, error);
     }
   })
-  .post("/aggregate", async (context) => {
+  .post("/aggregate", requireCollectionPermission("read"), async (context) => {
     const body = await parseJson(context, aggregateSchema);
     if (!body.success) return body.response;
     try {
@@ -198,45 +211,51 @@ export const recordsRouter = new Hono<AppEnvironment>()
         context.get("orgId"),
         context.req.param("name")!,
         body.data as AggregateRequest,
+        context.get("rowFilter"),
       );
       return context.json({ status: "ok" as const, ...result });
     } catch (error) {
       return recordsError(context, error);
     }
   })
-  .post("/", async (context) => {
-    const body = await parseJson(context, insertSchema);
-    if (!body.success) return body.response;
-    try {
-      const result = await insertRecord(
-        context.get("services").prisma,
-        context.get("orgId"),
-        context.req.param("name")!,
-        body.data.data,
-        context.get("userId"),
-      );
-      await context.get("audit")("insert_record", "record", result.id, {
-        collection: context.req.param("name")!,
-      });
-      return context.json({ status: "ok" as const, ...result });
-    } catch (error) {
-      return recordsError(context, error);
-    }
-  })
-  .get("/:id", async (context) => {
+  .post(
+    "/",
+    requirePermission("write", collectionResource),
+    async (context) => {
+      const body = await parseJson(context, insertSchema);
+      if (!body.success) return body.response;
+      try {
+        const result = await insertRecord(
+          context.get("services").prisma,
+          context.get("orgId"),
+          context.req.param("name")!,
+          body.data.data,
+          context.get("userId"),
+        );
+        await context.get("audit")("insert_record", "record", result.id, {
+          collection: context.req.param("name")!,
+        });
+        return context.json({ status: "ok" as const, ...result });
+      } catch (error) {
+        return recordsError(context, error);
+      }
+    },
+  )
+  .get("/:id", requireCollectionPermission("read"), async (context) => {
     try {
       const result = await getRecord(
         context.get("services").prisma,
         context.get("orgId"),
         context.req.param("name")!,
         context.req.param("id"),
+        context.get("rowFilter"),
       );
       return context.json({ status: "ok" as const, ...result });
     } catch (error) {
       return recordsError(context, error);
     }
   })
-  .patch("/:id", async (context) => {
+  .patch("/:id", requireCollectionPermission("write"), async (context) => {
     const body = await parseJson(context, insertSchema);
     if (!body.success) return body.response;
     try {
@@ -246,6 +265,7 @@ export const recordsRouter = new Hono<AppEnvironment>()
         context.req.param("name")!,
         context.req.param("id"),
         body.data.data,
+        context.get("rowFilter"),
       );
       await context.get("audit")("update_record", "record", result.id, {
         collection: context.req.param("name")!,
@@ -255,7 +275,7 @@ export const recordsRouter = new Hono<AppEnvironment>()
       return recordsError(context, error);
     }
   })
-  .delete("/:id", async (context) => {
+  .delete("/:id", requireCollectionPermission("delete"), async (context) => {
     const id = context.req.param("id");
     try {
       await deleteRecord(
@@ -263,6 +283,7 @@ export const recordsRouter = new Hono<AppEnvironment>()
         context.get("orgId"),
         context.req.param("name")!,
         id,
+        context.get("rowFilter"),
       );
       await context.get("audit")("delete_record", "record", id, {
         collection: context.req.param("name")!,

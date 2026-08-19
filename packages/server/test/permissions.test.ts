@@ -86,6 +86,17 @@ function createPrismaFixture() {
   const transaction = { casbinRule };
   const prisma = {
     casbinRule,
+    collection: {
+      findUnique: async () => ({
+        id: "collection_tasks",
+        orgId: "org_123",
+        name: "tasks",
+        schema: { title: "string" },
+      }),
+    },
+    rowFilter: {
+      findMany: async () => [],
+    },
     member: {
       findMany: async ({ where }: { where: { organizationId: string } }) =>
         members.filter(

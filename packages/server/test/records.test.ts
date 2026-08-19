@@ -45,6 +45,23 @@ async function createRecordsApp(schema: Schema) {
       schema,
     },
   });
+  await services.prisma.casbinRule.createMany({
+    data: [
+      {
+        orgId: "org_test",
+        ptype: "p",
+        v0: "org:org_test:user:admin",
+        v1: "/*",
+        v2: "*",
+      },
+      {
+        orgId: "org_test",
+        ptype: "g",
+        v0: "user_test",
+        v1: "org:org_test:user:admin",
+      },
+    ],
+  });
 
   const app = new Hono<AppEnvironment>();
   app.use("/v1/orgs/:orgId/*", async (context, next) => {

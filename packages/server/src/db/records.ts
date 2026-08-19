@@ -223,8 +223,55 @@ export async function getRecord(
   orgId: string,
   collectionName: string,
   recordId: string,
+  rowFilter?: Where | null,
 ) {
   const collection = await getCollection(prisma, orgId, collectionName);
+  if (rowFilter) {
+    const compiled = compileWhere(
+      undefined,
+      schemaFromCollection(collection),
+      PROVIDER,
+      { extraWhere: rowFilter },
+    );
+    rejectDeferredFilters(compiled.postFilters);
+    const scoped = applyOrgScope(
+      orgId,
+      collection.id,
+      compiled.sql,
+      compiled.params,
+    );
+    const rows = await prisma.$queryRawUnsafe<
+      Array<{
+        id: string;
+        data: string | Prisma.JsonObject;
+        created_by: string;
+        created_at: Date;
+        updated_at: Date;
+      }>
+    >(
+      dialectSql(
+        `SELECT id, data, created_by, created_at, updated_at FROM records WHERE id = ? AND ${scoped.sql}`,
+        PROVIDER,
+      ),
+      recordId,
+      ...scoped.params,
+    );
+    const filtered = rows[0];
+    if (!filtered) throw new RecordNotFoundError(recordId);
+    return serializedRecord(
+      {
+        id: filtered.id,
+        data:
+          typeof filtered.data === "string"
+            ? (JSON.parse(filtered.data) as Prisma.JsonObject)
+            : filtered.data,
+        createdBy: filtered.created_by,
+        createdAt: new Date(filtered.created_at),
+        updatedAt: new Date(filtered.updated_at),
+      },
+      collectionName,
+    );
+  }
   const row = await prisma.record.findFirst({
     where: { id: recordId, orgId, collectionId: collection.id },
   });
@@ -238,16 +285,52 @@ export async function updateRecord(
   collectionName: string,
   recordId: string,
   data: Record<string, unknown>,
+  rowFilter?: Where | null,
 ) {
   const collection = await getCollection(prisma, orgId, collectionName);
-  const existing = await prisma.record.findFirst({
-    where: { id: recordId, orgId, collectionId: collection.id },
-  });
+  const schema = schemaFromCollection(collection);
+  let existing: { data: Prisma.JsonValue } | null;
+  if (rowFilter) {
+    const compiled = compileWhere(undefined, schema, PROVIDER, {
+      extraWhere: rowFilter,
+    });
+    rejectDeferredFilters(compiled.postFilters);
+    const scoped = applyOrgScope(
+      orgId,
+      collection.id,
+      compiled.sql,
+      compiled.params,
+    );
+    const rows = await prisma.$queryRawUnsafe<
+      Array<{ data: string | Prisma.JsonObject }>
+    >(
+      dialectSql(
+        `SELECT data FROM records WHERE id = ? AND ${scoped.sql}`,
+        PROVIDER,
+      ),
+      recordId,
+      ...scoped.params,
+    );
+    const filtered = rows[0];
+    existing = filtered
+      ? {
+          data:
+            typeof filtered.data === "string"
+              ? (JSON.parse(filtered.data) as Prisma.JsonObject)
+              : filtered.data,
+        }
+      : null;
+  } else {
+    existing = await prisma.record.findFirst({
+      where: { id: recordId, orgId, collectionId: collection.id },
+      select: { data: true },
+    });
+  }
   if (!existing) throw new RecordNotFoundError(recordId);
 
   const normalized = validatedData(
     { ...dataObject(existing.data), ...data },
-    schemaFromCollection(collection),
+    schema,
   );
   const row = await prisma.record.update({
     where: { id: recordId },
@@ -261,8 +344,33 @@ export async function deleteRecord(
   orgId: string,
   collectionName: string,
   recordId: string,
+  rowFilter?: Where | null,
 ): Promise<void> {
   const collection = await getCollection(prisma, orgId, collectionName);
+  if (rowFilter) {
+    const compiled = compileWhere(
+      undefined,
+      schemaFromCollection(collection),
+      PROVIDER,
+      { extraWhere: rowFilter },
+    );
+    rejectDeferredFilters(compiled.postFilters);
+    const scoped = applyOrgScope(
+      orgId,
+      collection.id,
+      compiled.sql,
+      compiled.params,
+    );
+    const rows = await prisma.$queryRawUnsafe<Array<{ id: string }>>(
+      dialectSql(
+        `SELECT id FROM records WHERE id = ? AND ${scoped.sql}`,
+        PROVIDER,
+      ),
+      recordId,
+      ...scoped.params,
+    );
+    if (rows.length === 0) throw new RecordNotFoundError(recordId);
+  }
   const result = await prisma.record.deleteMany({
     where: { id: recordId, orgId, collectionId: collection.id },
   });
@@ -277,10 +385,13 @@ export async function queryRecords(
   orderBy?: string,
   limit = 50,
   offset = 0,
+  rowFilter?: Where | null,
 ) {
   const collection = await getCollection(prisma, orgId, collectionName);
   const schema = schemaFromCollection(collection);
-  const compiled = compileWhere(where, schema, PROVIDER);
+  const compiled = compileWhere(where, schema, PROVIDER, {
+    extraWhere: rowFilter,
+  });
   const recurrenceFilters = compiled.postFilters.filter(
     (filter) => filter.kind === "occurs_between",
   );
@@ -373,6 +484,7 @@ export async function countRecords(
   orgId: string,
   collectionName: string,
   where?: Where,
+  rowFilter?: Where | null,
 ): Promise<number> {
   const result = await queryRecords(
     prisma,
@@ -382,6 +494,7 @@ export async function countRecords(
     undefined,
     1,
     0,
+    rowFilter,
   );
   return result.total;
 }
@@ -391,6 +504,7 @@ export async function aggregateRecords(
   orgId: string,
   collectionName: string,
   request: AggregateRequest,
+  rowFilter?: Where | null,
 ) {
   const collection = await getCollection(prisma, orgId, collectionName);
   const compiled = compileAggregate(
@@ -399,6 +513,7 @@ export async function aggregateRecords(
     PROVIDER,
     orgId,
     collection.id,
+    { extraWhere: rowFilter },
   );
   rejectDeferredFilters(compiled.postFilters);
   const rows = await prisma.$queryRawUnsafe<Array<Record<string, unknown>>>(
