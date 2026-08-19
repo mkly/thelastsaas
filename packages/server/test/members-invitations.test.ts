@@ -308,6 +308,7 @@ describe("organization members and invitations", () => {
     expect(
       listed.members.find(({ user_id }) => user_id === "user_agent"),
     ).toMatchObject({
+      member_id: "member_agent",
       user_id: "user_agent",
       member_role: "member",
       casbin_roles: ["member"],
@@ -326,6 +327,7 @@ describe("organization members and invitations", () => {
     expect(
       updated.members.find(({ user_id }) => user_id === "user_agent"),
     ).toMatchObject({
+      member_id: "member_agent",
       user_id: "user_agent",
       member_role: "admin",
       casbin_roles: ["admin"],
