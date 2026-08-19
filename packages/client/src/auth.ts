@@ -1,6 +1,4 @@
-import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
-import { createServer } from "node:http";
 
 import {
   loadConfig,
@@ -10,26 +8,34 @@ import {
 } from "./config";
 import { CliError } from "./errors";
 
-const CALLBACK_TIMEOUT_MS = 10 * 60 * 1000;
-const TOKEN_PATH = "/auth/device/token";
+const CLIENT_ID = "lastsaas-cli";
+const DEVICE_CODE_PATH = "/api/auth/device/code";
+const DEVICE_TOKEN_PATH = "/api/auth/device/token";
+const DEVICE_GRANT_TYPE =
+  "urn:ietf:params:oauth:grant-type:device_code" as const;
+
+export interface DeviceCodeResponse {
+  device_code: string;
+  expires_in: number;
+  interval: number;
+  user_code: string;
+  verification_uri: string;
+  verification_uri_complete: string;
+}
 
 export interface DeviceTokenResponse {
+  access_token?: string;
   error?: string;
-  expires_at?: string;
-  session_token?: string;
-  status: string;
+  error_description?: string;
+  expires_in?: number;
+  scope?: string;
+  token_type?: string;
 }
 
 export interface LoginResult {
   expiresAt?: string;
   server: string;
   sessionToken: string;
-}
-
-export interface CallbackServer {
-  close(): void;
-  port: number;
-  waitForCode(): Promise<{ code: string; state: string }>;
 }
 
 export type FetchImplementation = (
@@ -40,56 +46,42 @@ export type FetchImplementation = (
 export interface LoginDependencies {
   configPath?: string;
   fetchImpl?: FetchImplementation;
+  now?: () => number;
   onStatus?: (message: string) => void;
   openBrowser?: (url: string) => void;
-  startCallbackServer?: () => Promise<CallbackServer>;
+  sleep?: (milliseconds: number) => Promise<void>;
 }
 
-function base64Url(bytes: Uint8Array): string {
-  return Buffer.from(bytes).toString("base64url");
+interface JsonPostResult<T> {
+  effectiveServerUrl: string;
+  response: Response;
+  value: T;
 }
 
-export function generateCodeVerifier(): string {
-  return base64Url(randomBytes(32));
-}
-
-export async function generateCodeChallenge(verifier: string): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(verifier),
-  );
-  return base64Url(new Uint8Array(digest));
-}
-
-// The server base may live under a path prefix, so the effective base is the
-// token URL minus its well-known suffix rather than the bare origin.
-function serverUrlFromTokenUrl(tokenUrl: string): string {
-  const url = new URL(tokenUrl);
+function serverUrlFromEndpoint(
+  endpointUrl: string,
+  endpointPath: string,
+): string {
+  const url = new URL(endpointUrl);
   url.search = "";
   url.hash = "";
-  if (url.pathname.endsWith(TOKEN_PATH)) {
-    url.pathname = url.pathname.slice(0, -TOKEN_PATH.length);
+  if (url.pathname.endsWith(endpointPath)) {
+    url.pathname = url.pathname.slice(0, -endpointPath.length);
   }
   return normalizeServerUrl(url.toString());
 }
 
-export async function exchangeDeviceToken(
+async function postJson<T>(
   serverUrl: string,
-  payload: {
-    code: string;
-    code_verifier: string;
-    redirect_uri: string;
-  },
-  fetchImpl: FetchImplementation = fetch,
-): Promise<{
-  effectiveServerUrl: string;
-  tokenData: DeviceTokenResponse;
-}> {
-  let tokenUrl = `${normalizeServerUrl(serverUrl)}${TOKEN_PATH}`;
-  const requestBody = JSON.stringify(payload);
+  endpointPath: string,
+  body: unknown,
+  fetchImpl: FetchImplementation,
+): Promise<JsonPostResult<T>> {
+  let endpointUrl = `${normalizeServerUrl(serverUrl)}${endpointPath}`;
+  const requestBody = JSON.stringify(body);
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const response = await fetchImpl(tokenUrl, {
+    const response = await fetchImpl(endpointUrl, {
       body: requestBody,
       headers: { "Content-Type": "application/json" },
       method: "POST",
@@ -99,46 +91,42 @@ export async function exchangeDeviceToken(
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get("location");
       if (!location) {
-        throw new CliError(
-          "Token exchange redirected without a usable location.",
-        );
+        throw new CliError("Authentication redirected without a location.");
       }
-
-      const current = new URL(tokenUrl);
+      const current = new URL(endpointUrl);
       const redirected = new URL(location, current);
       if (
         !["http:", "https:"].includes(redirected.protocol) ||
         redirected.hostname !== current.hostname ||
         (current.protocol === "https:" && redirected.protocol !== "https:")
       ) {
-        throw new CliError("Token exchange refused an unsafe redirect.");
+        throw new CliError("Authentication refused an unsafe redirect.");
       }
-      tokenUrl = redirected.toString();
+      endpointUrl = redirected.toString();
       continue;
     }
 
     const contentType = response.headers.get("content-type") ?? "";
     if (!contentType.toLowerCase().includes("application/json")) {
       throw new CliError(
-        `Token exchange returned ${response.status} with non-JSON response.`,
+        `Authentication returned ${response.status} with a non-JSON response.`,
       );
     }
 
-    let tokenData: DeviceTokenResponse;
     try {
-      tokenData = (await response.json()) as DeviceTokenResponse;
+      return {
+        effectiveServerUrl: serverUrlFromEndpoint(endpointUrl, endpointPath),
+        response,
+        value: (await response.json()) as T,
+      };
     } catch (error) {
-      throw new CliError("Token exchange returned invalid JSON.", 1, {
+      throw new CliError("Authentication returned invalid JSON.", 1, {
         cause: error,
       });
     }
-    return {
-      effectiveServerUrl: serverUrlFromTokenUrl(tokenUrl),
-      tokenData,
-    };
   }
 
-  throw new CliError("Token exchange redirected too many times.");
+  throw new CliError("Authentication redirected too many times.");
 }
 
 export function openBrowser(url: string): void {
@@ -150,8 +138,6 @@ export function openBrowser(url: string): void {
         : ["xdg-open", url];
 
   const child = spawn(command, args, { detached: true, stdio: "ignore" });
-  // The URL is printed before this runs, so a missing opener should not crash
-  // the CLI or prevent the user from completing the flow manually.
   child.once("error", () => undefined);
   child.unref();
 }
@@ -160,147 +146,83 @@ export async function login(
   serverUrl: string,
   dependencies: LoginDependencies = {},
 ): Promise<LoginResult> {
-  const baseServerUrl = normalizeServerUrl(serverUrl);
-  const codeVerifier = generateCodeVerifier();
-  const codeChallenge = await generateCodeChallenge(codeVerifier);
-  const state = base64Url(randomBytes(16));
-  const callback = await (
-    dependencies.startCallbackServer ?? startCallbackServer
-  )();
+  const fetchImpl = dependencies.fetchImpl ?? fetch;
+  const now = dependencies.now ?? Date.now;
   const onStatus = dependencies.onStatus ?? console.error;
+  const sleep =
+    dependencies.sleep ??
+    ((milliseconds: number) =>
+      new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
 
-  try {
-    const redirectUri = `http://127.0.0.1:${callback.port}/callback`;
-    const params = new URLSearchParams({
-      code_challenge: codeChallenge,
-      code_challenge_method: "S256",
-      redirect_uri: redirectUri,
-      state,
-    });
-    const authorizeUrl = `${baseServerUrl}/auth/device/authorize?${params.toString()}`;
-
-    onStatus("Opening browser for authentication...");
-    onStatus(`If the browser doesn't open, visit: ${authorizeUrl}`);
-    (dependencies.openBrowser ?? openBrowser)(authorizeUrl);
-
-    const result = await callback.waitForCode();
-    if (!result.code) {
-      throw new CliError("Authentication callback did not include a code.");
-    }
-    if (result.state !== state) {
-      throw new CliError("State mismatch - possible CSRF attack.");
-    }
-
-    const { effectiveServerUrl, tokenData } = await exchangeDeviceToken(
-      baseServerUrl,
-      {
-        code: result.code,
-        code_verifier: codeVerifier,
-        redirect_uri: redirectUri,
-      },
-      dependencies.fetchImpl,
-    );
-
-    if (
-      tokenData.status !== "ok" ||
-      !tokenData.session_token?.startsWith("lst_")
-    ) {
-      throw new CliError(
-        `Token exchange failed: ${tokenData.error ?? "Invalid response"}`,
-      );
-    }
-
-    const previousConfig = loadConfig(dependencies.configPath);
-    const config: ClientConfig = {
-      ...previousConfig,
-      expires_at: tokenData.expires_at,
-      server: effectiveServerUrl,
-      session_token: tokenData.session_token,
-    };
-    saveConfig(config, dependencies.configPath);
-
-    return {
-      expiresAt: tokenData.expires_at,
-      server: effectiveServerUrl,
-      sessionToken: tokenData.session_token,
-    };
-  } finally {
-    callback.close();
+  const codeResult = await postJson<DeviceCodeResponse>(
+    serverUrl,
+    DEVICE_CODE_PATH,
+    { client_id: CLIENT_ID },
+    fetchImpl,
+  );
+  if (!codeResult.response.ok || !codeResult.value.device_code) {
+    throw new CliError("The server could not start device authorization.");
   }
-}
 
-export function startCallbackServer(
-  timeoutMs = CALLBACK_TIMEOUT_MS,
-): Promise<CallbackServer> {
-  return new Promise((resolve, reject) => {
-    let resolveCode: (value: { code: string; state: string }) => void;
-    let rejectCode: (reason: Error) => void;
-    let settled = false;
-    const codePromise = new Promise<{ code: string; state: string }>(
-      (resolveCallback, rejectCallback) => {
-        resolveCode = resolveCallback;
-        rejectCode = rejectCallback;
+  const device = codeResult.value;
+  onStatus(`Device code: ${device.user_code}`);
+  onStatus(`Open this URL to authorize the CLI: ${device.verification_uri}`);
+  (dependencies.openBrowser ?? openBrowser)(device.verification_uri_complete);
+
+  const deadline = now() + device.expires_in * 1000;
+  let intervalMilliseconds = device.interval * 1000;
+  let tokenData: DeviceTokenResponse | undefined;
+  let effectiveServerUrl = codeResult.effectiveServerUrl;
+
+  while (now() < deadline) {
+    await sleep(intervalMilliseconds);
+    const tokenResult = await postJson<DeviceTokenResponse>(
+      effectiveServerUrl,
+      DEVICE_TOKEN_PATH,
+      {
+        client_id: CLIENT_ID,
+        device_code: device.device_code,
+        grant_type: DEVICE_GRANT_TYPE,
       },
+      fetchImpl,
     );
-    const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      rejectCode(new CliError("Timed out waiting for browser authentication."));
-    }, timeoutMs);
+    effectiveServerUrl = tokenResult.effectiveServerUrl;
+    tokenData = tokenResult.value;
+    if (tokenResult.response.ok && tokenData.access_token) break;
+    if (tokenData.error === "authorization_pending") continue;
+    if (tokenData.error === "slow_down") {
+      intervalMilliseconds += 5_000;
+      continue;
+    }
+    throw new CliError(
+      `Device authorization failed: ${tokenData.error_description ?? tokenData.error ?? "Invalid response"}`,
+    );
+  }
 
-    const server = createServer((request, response) => {
-      const url = new URL(request.url ?? "/", "http://127.0.0.1");
-      if (url.pathname !== "/callback") {
-        response.writeHead(404);
-        response.end("Not found");
-        return;
-      }
+  if (
+    !tokenData?.access_token ||
+    tokenData.token_type?.toLowerCase() !== "bearer"
+  ) {
+    throw new CliError(
+      "Device authorization timed out or returned an invalid token.",
+    );
+  }
 
-      const code = url.searchParams.get("code") ?? "";
-      const state = url.searchParams.get("state") ?? "";
-      if (!code || !state) {
-        response.writeHead(400, {
-          "Content-Type": "text/plain; charset=utf-8",
-        });
-        response.end("Authentication callback is missing code or state.");
-        return;
-      }
+  const expiresAt = tokenData.expires_in
+    ? new Date(now() + tokenData.expires_in * 1000).toISOString()
+    : undefined;
+  const previousConfig = loadConfig(dependencies.configPath);
+  const config: ClientConfig = {
+    ...previousConfig,
+    expires_at: expiresAt,
+    server: effectiveServerUrl,
+    session_token: tokenData.access_token,
+  };
+  saveConfig(config, dependencies.configPath);
 
-      response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      response.end(
-        "<!doctype html><html><body><h1>Authentication successful</h1><p>You can close this tab and return to the CLI.</p></body></html>",
-      );
-      if (!settled) {
-        settled = true;
-        clearTimeout(timer);
-        resolveCode({ code, state });
-      }
-    });
-
-    server.once("error", (error) => {
-      clearTimeout(timer);
-      reject(
-        new CliError("Could not start the login callback server.", 1, {
-          cause: error,
-        }),
-      );
-    });
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      if (!address || typeof address === "string") {
-        clearTimeout(timer);
-        server.close();
-        reject(new CliError("Could not determine the login callback port."));
-        return;
-      }
-      resolve({
-        close: () => {
-          clearTimeout(timer);
-          server.close();
-        },
-        port: address.port,
-        waitForCode: () => codePromise,
-      });
-    });
-  });
+  return {
+    expiresAt,
+    server: effectiveServerUrl,
+    sessionToken: tokenData.access_token,
+  };
 }

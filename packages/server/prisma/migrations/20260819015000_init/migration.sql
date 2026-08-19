@@ -223,17 +223,17 @@ CREATE TABLE "casbin_rule" (
 );
 
 -- CreateTable
-CREATE TABLE "device_auth_codes" (
+CREATE TABLE "deviceCode" (
     "id" TEXT NOT NULL PRIMARY KEY,
-    "code" TEXT NOT NULL,
-    "code_challenge" TEXT NOT NULL,
-    "redirect_uri" TEXT NOT NULL,
-    "user_id" TEXT,
-    "expires_at" DATETIME NOT NULL,
-    "used" BOOLEAN NOT NULL DEFAULT false,
-    "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updated_at" DATETIME NOT NULL,
-    CONSTRAINT "device_auth_codes_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "user" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+    "deviceCode" TEXT NOT NULL,
+    "userCode" TEXT NOT NULL,
+    "userId" TEXT,
+    "expiresAt" DATETIME NOT NULL,
+    "status" TEXT NOT NULL,
+    "lastPolledAt" DATETIME,
+    "pollingInterval" INTEGER,
+    "clientId" TEXT,
+    "scope" TEXT
 );
 
 -- CreateTable
@@ -284,7 +284,7 @@ CREATE UNIQUE INDEX "notification_schedules_org_id_id_key" ON "notification_sche
 CREATE UNIQUE INDEX "notification_schedules_org_id_dedupe_key_key" ON "notification_schedules"("org_id", "dedupe_key");
 CREATE INDEX "casbin_rule_org_id_ptype_idx" ON "casbin_rule"("org_id", "ptype");
 CREATE INDEX "casbin_rule_org_id_v0_idx" ON "casbin_rule"("org_id", "v0");
-CREATE UNIQUE INDEX "device_auth_codes_code_key" ON "device_auth_codes"("code");
-CREATE INDEX "device_auth_codes_expires_at_idx" ON "device_auth_codes"("expires_at");
+CREATE UNIQUE INDEX "deviceCode_deviceCode_key" ON "deviceCode"("deviceCode");
+CREATE UNIQUE INDEX "deviceCode_userCode_key" ON "deviceCode"("userCode");
 CREATE INDEX "audit_log_org_id_created_at_idx" ON "audit_log"("org_id", "created_at");
 CREATE INDEX "audit_log_org_id_resource_type_resource_id_idx" ON "audit_log"("org_id", "resource_type", "resource_id");

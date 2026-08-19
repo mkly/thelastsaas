@@ -18,28 +18,8 @@ interface AuthenticatedSession {
 
 async function resolveSession(
   context: Parameters<MiddlewareHandler<AppEnvironment>>[0],
-  { auth, prisma }: AuthMiddlewareDependencies,
+  { auth }: AuthMiddlewareDependencies,
 ): Promise<AuthenticatedSession | null> {
-  const authorization = context.req.header("authorization");
-  const cliToken = authorization?.startsWith("Bearer lst_")
-    ? authorization.slice("Bearer lst_".length)
-    : null;
-  const cliSession = cliToken
-    ? await prisma.session.findUnique({
-        where: { token: cliToken },
-        select: {
-          id: true,
-          expiresAt: true,
-          user: { select: { id: true, name: true } },
-        },
-      })
-    : null;
-
-  if (cliToken) {
-    return cliSession && cliSession.expiresAt > new Date()
-      ? { session: cliSession, user: cliSession.user }
-      : null;
-  }
   return auth.api
     .getSession({ headers: context.req.raw.headers })
     .catch(() => null);

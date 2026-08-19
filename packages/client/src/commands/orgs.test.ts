@@ -29,7 +29,7 @@ const organizations: OrganizationSummary[] = [
 function harness(initialOrg?: string) {
   const config: ClientConfig = {
     server: "https://saas.example",
-    session_token: "lst_secret",
+    session_token: "better-auth-token",
     ...(initialOrg ? { org: initialOrg } : {}),
   };
   const get = mock().mockImplementation(async () =>
@@ -87,7 +87,7 @@ describe("organization commands", () => {
     });
     expect(saveConfig).toHaveBeenCalledWith({
       server: "https://saas.example",
-      session_token: "lst_secret",
+      session_token: "better-auth-token",
       org: "org_acme",
     });
   });

@@ -2,8 +2,8 @@
 
 Organization membership discovery and creation use the account-scoped
 `/v1/orgs` route. All organization data routes are explicitly scoped through
-`/v1/orgs/:orgId`. They require a BetterAuth session cookie or the bearer session
-issued by the device PKCE flow.
+`/v1/orgs/:orgId`. They require a Better Auth session cookie or the bearer
+session issued by the RFC 8628 device authorization flow.
 
 ```text
 # System and authentication
@@ -23,9 +23,14 @@ GET    /auth/reset-password
 POST   /auth/reset-password
 GET    /auth/logout
 GET    /auth/dashboard
-GET    /auth/device/authorize
-POST   /auth/device/authorize
-POST   /auth/device/token
+POST   /api/auth/device/code
+GET    /api/auth/device?user_code=...
+POST   /api/auth/device/approve
+POST   /api/auth/device/deny
+POST   /api/auth/device/token
+GET    /auth/device?user_code=...
+POST   /auth/device/approve
+POST   /auth/device/deny
 
 # Collections
 POST   /v1/orgs/:orgId/collections

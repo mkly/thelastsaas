@@ -1,4 +1,5 @@
 import { Hono, type Context } from "hono";
+import { csrf } from "hono/csrf";
 
 import type { AppEnvironment } from "../env";
 import { escapeHtml, getExternalOrigin, htmlPage } from "../html";
@@ -400,4 +401,126 @@ authPagesRouter.get("/install", async (context) => {
       { authenticated: await isAuthenticated(context) },
     ),
   );
+});
+
+authPagesRouter.get("/device", async (context) => {
+  const userCode = context.req.query("user_code") ?? "";
+  const next = authPath("/auth/device", { user_code: userCode });
+  if (!(await isAuthenticated(context))) {
+    return context.redirect(authPath("/auth/login", { next }));
+  }
+
+  if (!userCode) {
+    return context.html(
+      htmlPage("Authorize Device", "<p>The device code is missing.</p>"),
+      400,
+    );
+  }
+
+  try {
+    const result = await context
+      .get("services")
+      .auth.api.deviceVerify({ query: { user_code: userCode } });
+    if (result.status !== "pending") {
+      return context.html(
+        htmlPage(
+          "Authorize Device",
+          `<p>This device request has already been ${escapeHtml(result.status)}.</p>`,
+          { authenticated: true },
+        ),
+        400,
+      );
+    }
+  } catch {
+    return context.html(
+      htmlPage(
+        "Authorize Device",
+        "<p>This device code is invalid or has expired.</p>",
+        { authenticated: true },
+      ),
+      400,
+    );
+  }
+
+  return context.html(
+    htmlPage(
+      "Authorize Device",
+      `<p>A command-line client is requesting access to your account.</p>
+      <p>Confirm that this code matches the one shown in your terminal:</p>
+      <p><strong><code>${escapeHtml(userCode)}</code></strong></p>
+      <form method="POST" action="/auth/device/approve">
+        <input type="hidden" name="user_code" value="${escapeHtml(userCode)}">
+        <button type="submit">Authorize</button>
+      </form>
+      <form method="POST" action="/auth/device/deny">
+        <input type="hidden" name="user_code" value="${escapeHtml(userCode)}">
+        <button type="submit">Deny</button>
+      </form>`,
+      { authenticated: true },
+    ),
+  );
+});
+
+authPagesRouter.post("/device/approve", csrf(), async (context) => {
+  const form = await context.req.parseBody();
+  const userCode = String(form.user_code ?? "");
+  if (!(await isAuthenticated(context))) {
+    const next = authPath("/auth/device", { user_code: userCode });
+    return context.redirect(authPath("/auth/login", { next }));
+  }
+
+  try {
+    await context.get("services").auth.api.deviceApprove({
+      body: { userCode },
+      headers: context.req.raw.headers,
+    });
+    return context.html(
+      htmlPage(
+        "Device Authorized",
+        "<p>The device is authorized. You can close this tab and return to the CLI.</p>",
+        { authenticated: true },
+      ),
+    );
+  } catch {
+    return context.html(
+      htmlPage(
+        "Authorize Device",
+        "<p>This device request could not be authorized. It may have expired or already been processed.</p>",
+        { authenticated: true },
+      ),
+      400,
+    );
+  }
+});
+
+authPagesRouter.post("/device/deny", csrf(), async (context) => {
+  const form = await context.req.parseBody();
+  const userCode = String(form.user_code ?? "");
+  if (!(await isAuthenticated(context))) {
+    const next = authPath("/auth/device", { user_code: userCode });
+    return context.redirect(authPath("/auth/login", { next }));
+  }
+
+  try {
+    await context.get("services").auth.api.deviceDeny({
+      body: { userCode },
+      headers: context.req.raw.headers,
+    });
+    return context.html(
+      htmlPage(
+        "Device Denied",
+        "<p>The device request was denied. You can close this tab.</p>",
+        { authenticated: true },
+      ),
+    );
+  } catch {
+    return context.html(
+      htmlPage(
+        "Authorize Device",
+        "<p>This device request could not be denied. It may have expired or already been processed.</p>",
+        { authenticated: true },
+      ),
+      400,
+    );
+  }
 });

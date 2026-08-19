@@ -27,7 +27,7 @@ describe("client config", () => {
     const config: ClientConfig = {
       org: "org_default",
       server: "https://saas.example",
-      session_token: "lst_secret",
+      session_token: "better-auth-token",
     };
 
     saveConfig(config, path);

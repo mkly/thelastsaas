@@ -71,7 +71,7 @@ async function createHarness() {
     app,
     services,
     headers: { Cookie: cookie },
-    cliHeaders: { Authorization: "Bearer lst_cli-orgs-token" },
+    cliHeaders: { Authorization: "Bearer cli-orgs-token" },
   };
 }
 

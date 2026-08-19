@@ -22,7 +22,6 @@ model User {
   accounts                Account[]
   members                 Member[]
   invitations             Invitation[]
-  deviceAuthCodes         DeviceAuthCode[]
   notifications           Notification[]
   notificationSchedules   NotificationSchedule[]
 
@@ -307,20 +306,19 @@ model CasbinRule {
   @@map("casbin_rule")
 }
 
-model DeviceAuthCode {
-  id            String   @id
-  code          String   @unique
-  codeChallenge String   @map("code_challenge")
-  redirectUri   String   @map("redirect_uri")
-  userId        String?  @map("user_id")
-  expiresAt     DateTime @map("expires_at")
-  used          Boolean  @default(false)
-  createdAt     DateTime @default(now()) @map("created_at")
-  updatedAt     DateTime @updatedAt @map("updated_at")
-  user          User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+model DeviceCode {
+  id              String    @id
+  deviceCode      String    @unique
+  userCode        String    @unique
+  userId          String?
+  expiresAt       DateTime
+  status          String
+  lastPolledAt    DateTime?
+  pollingInterval Int?
+  clientId        String?
+  scope           String?
 
-  @@index([expiresAt])
-  @@map("device_auth_codes")
+  @@map("deviceCode")
 }
 
 model AuditLog {

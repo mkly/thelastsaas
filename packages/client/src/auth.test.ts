@@ -3,12 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import {
-  exchangeDeviceToken,
-  generateCodeChallenge,
-  generateCodeVerifier,
-  login,
-} from "./auth";
+import { login } from "./auth";
 import { loadConfig, saveConfig } from "./config";
 
 const temporaryDirectories: string[] = [];
@@ -19,106 +14,8 @@ afterEach(() => {
   }
 });
 
-describe("generateCodeVerifier", () => {
-  test("produces unique base64url values of at least 43 characters", () => {
-    const first = generateCodeVerifier();
-    const second = generateCodeVerifier();
-
-    expect(first).toMatch(/^[A-Za-z0-9_-]+$/);
-    expect(first.length).toBeGreaterThanOrEqual(43);
-    expect(first).not.toBe(second);
-  });
-});
-
-describe("generateCodeChallenge", () => {
-  test("matches the RFC 7636 Appendix B test vector", async () => {
-    const verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
-
-    expect(await generateCodeChallenge(verifier)).toBe(
-      "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
-    );
-    expect(await generateCodeChallenge(verifier)).toBe(
-      await generateCodeChallenge(verifier),
-    );
-  });
-});
-
-describe("exchangeDeviceToken", () => {
-  const payload = {
-    code: "code-123",
-    code_verifier: "verifier-123",
-    redirect_uri: "http://127.0.0.1:44501/callback",
-  };
-
-  test("replays POST to an HTTPS redirect and returns its effective origin", async () => {
-    let callCount = 0;
-    const fetchImpl = async (
-      input: Request | string | URL,
-      init?: RequestInit,
-    ) => {
-      callCount += 1;
-      if (callCount === 1) {
-        expect(String(input)).toBe("http://example.com/auth/device/token");
-        expect(init?.method).toBe("POST");
-        return new Response(null, {
-          headers: { location: "https://example.com/auth/device/token" },
-          status: 301,
-        });
-      }
-
-      expect(String(input)).toBe("https://example.com/auth/device/token");
-      expect(init?.method).toBe("POST");
-      return Response.json({
-        expires_at: "2026-05-01T00:00:00.000Z",
-        session_token: "lst_123",
-        status: "ok",
-      });
-    };
-
-    const result = await exchangeDeviceToken(
-      "http://example.com",
-      payload,
-      fetchImpl,
-    );
-
-    expect(result.effectiveServerUrl).toBe("https://example.com");
-    expect(result.tokenData.session_token).toBe("lst_123");
-  });
-
-  test("keeps a path-prefixed server base in the effective server URL", async () => {
-    const fetchImpl = async (input: Request | string | URL) => {
-      expect(String(input)).toBe("https://example.com/api/auth/device/token");
-      return Response.json({
-        expires_at: "2026-05-01T00:00:00.000Z",
-        session_token: "lst_123",
-        status: "ok",
-      });
-    };
-
-    const result = await exchangeDeviceToken(
-      "https://example.com/api",
-      payload,
-      fetchImpl,
-    );
-
-    expect(result.effectiveServerUrl).toBe("https://example.com/api");
-  });
-
-  test("throws a clearer error for non-JSON token responses", async () => {
-    const fetchImpl = async () =>
-      new Response("<html>Moved</html>", {
-        headers: { "content-type": "text/html" },
-        status: 200,
-      });
-
-    await expect(
-      exchangeDeviceToken("http://example.com", payload, fetchImpl),
-    ).rejects.toThrow("Token exchange returned 200 with non-JSON response.");
-  });
-});
-
 describe("login", () => {
-  test("runs the PKCE flow and stores the lst_ token without losing org config", async () => {
+  test("runs RFC 8628 device authorization and stores the access token unchanged", async () => {
     const directory = mkdtempSync(join(tmpdir(), "lastsaas-auth-"));
     temporaryDirectories.push(directory);
     const configPath = join(directory, "config.json");
@@ -126,53 +23,134 @@ describe("login", () => {
       { org: "org_default", server: "http://example.com" },
       configPath,
     );
-    let authorizeUrl: URL | undefined;
-    let callbackClosed = false;
+
+    const requests: Array<{ path: string; body: Record<string, string> }> = [];
+    const sleeps: number[] = [];
+    let openedUrl = "";
+    let tokenPolls = 0;
+    const now = Date.parse("2026-08-19T12:00:00.000Z");
 
     const result = await login("http://example.com/", {
       configPath,
-      fetchImpl: async (_input, init) => {
-        const payload = JSON.parse(String(init?.body)) as Record<
-          string,
-          string
-        >;
-        const expectedChallenge =
-          authorizeUrl?.searchParams.get("code_challenge");
-        if (!expectedChallenge) throw new Error("authorize URL was not opened");
-        expect(payload.code).toBe("authorization-code");
-        expect(payload.redirect_uri).toBe("http://127.0.0.1:41234/callback");
-        expect(await generateCodeChallenge(payload.code_verifier)).toBe(
-          expectedChallenge,
-        );
-        return Response.json({
-          expires_at: "2026-05-01T00:00:00.000Z",
-          session_token: "lst_secret",
-          status: "ok",
-        });
-      },
+      now: () => now,
       onStatus: () => undefined,
       openBrowser: (url) => {
-        authorizeUrl = new URL(url);
+        openedUrl = url;
       },
-      startCallbackServer: async () => ({
-        close: () => {
-          callbackClosed = true;
-        },
-        port: 41234,
-        waitForCode: async () => ({
-          code: "authorization-code",
-          state: authorizeUrl?.searchParams.get("state") ?? "",
-        }),
-      }),
+      sleep: async (milliseconds) => {
+        sleeps.push(milliseconds);
+      },
+      fetchImpl: async (input, init) => {
+        const url = new URL(String(input));
+        const body = JSON.parse(String(init?.body)) as Record<string, string>;
+        requests.push({ path: url.pathname, body });
+
+        if (url.pathname === "/api/auth/device/code") {
+          return Response.json({
+            device_code: "device-secret",
+            user_code: "ABCD-EFGH",
+            verification_uri: "http://example.com/auth/device",
+            verification_uri_complete:
+              "http://example.com/auth/device?user_code=ABCD-EFGH",
+            expires_in: 600,
+            interval: 5,
+          });
+        }
+
+        tokenPolls += 1;
+        if (tokenPolls === 1) {
+          return Response.json(
+            {
+              error: "authorization_pending",
+              error_description: "Authorization pending",
+            },
+            { status: 400 },
+          );
+        }
+        return Response.json({
+          access_token: "better-auth-session-token",
+          token_type: "Bearer",
+          expires_in: 7_776_000,
+          scope: "",
+        });
+      },
     });
 
-    expect(result.server).toBe("http://example.com");
-    expect(callbackClosed).toBe(true);
+    expect(openedUrl).toBe(
+      "http://example.com/auth/device?user_code=ABCD-EFGH",
+    );
+    expect(sleeps).toEqual([5_000, 5_000]);
+    expect(requests).toEqual([
+      {
+        path: "/api/auth/device/code",
+        body: { client_id: "lastsaas-cli" },
+      },
+      {
+        path: "/api/auth/device/token",
+        body: {
+          client_id: "lastsaas-cli",
+          device_code: "device-secret",
+          grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+        },
+      },
+      {
+        path: "/api/auth/device/token",
+        body: {
+          client_id: "lastsaas-cli",
+          device_code: "device-secret",
+          grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+        },
+      },
+    ]);
+    expect(result).toEqual({
+      expiresAt: "2026-11-17T12:00:00.000Z",
+      server: "http://example.com",
+      sessionToken: "better-auth-session-token",
+    });
     expect(loadConfig(configPath)).toEqual({
-      expires_at: "2026-05-01T00:00:00.000Z",
+      expires_at: "2026-11-17T12:00:00.000Z",
       org: "org_default",
       server: "http://example.com",
-      session_token: "lst_secret",
+      session_token: "better-auth-session-token",
     });
+  });
+
+  test("honors slow_down and reports terminal device errors", async () => {
+    let polls = 0;
+    const sleeps: number[] = [];
+    await expect(
+      login("https://example.com", {
+        now: () => 0,
+        onStatus: () => undefined,
+        openBrowser: () => undefined,
+        sleep: async (milliseconds) => {
+          sleeps.push(milliseconds);
+        },
+        fetchImpl: async (input) => {
+          if (new URL(String(input)).pathname.endsWith("/code")) {
+            return Response.json({
+              device_code: "device-secret",
+              user_code: "ABCD-EFGH",
+              verification_uri: "https://example.com/auth/device",
+              verification_uri_complete:
+                "https://example.com/auth/device?user_code=ABCD-EFGH",
+              expires_in: 600,
+              interval: 5,
+            });
+          }
+          polls += 1;
+          return polls === 1
+            ? Response.json(
+                { error: "slow_down", error_description: "Slow down" },
+                { status: 400 },
+              )
+            : Response.json(
+                { error: "access_denied", error_description: "Denied" },
+                { status: 400 },
+              );
+        },
+      }),
+    ).rejects.toThrow("Device authorization failed: Denied");
+    expect(sleeps).toEqual([5_000, 10_000]);
   });
 });

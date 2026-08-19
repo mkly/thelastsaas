@@ -38,7 +38,7 @@ describe("auth commands", () => {
         expires_at: "2026-05-01T00:00:00.000Z",
         org: "org_default",
         server: "https://saas.example",
-        session_token: "lst_secret",
+        session_token: "better-auth-token",
       },
       configPath,
     );
@@ -62,7 +62,7 @@ describe("auth commands", () => {
         },
       );
 
-      expect(authorizations).toEqual(["Bearer lst_secret"]);
+      expect(authorizations).toEqual(["Bearer better-auth-token"]);
       expect(result.organization).toBe("org_default");
       expect(result.stats).toEqual({ collections: 2, status: "ok" });
       expect(log).toHaveBeenCalledTimes(1);

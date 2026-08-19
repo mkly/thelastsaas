@@ -43,6 +43,7 @@ async function createWalkthroughStack() {
 type Stack = Awaited<ReturnType<typeof createWalkthroughStack>>;
 
 interface Session {
+  browserCookie: string;
   token: string;
   userId: string;
   orgId: string;
@@ -85,6 +86,12 @@ async function signUp(
   expect(signUpResponse.status).toBe(200);
   const token = signUpResponse.headers.get("set-auth-token");
   if (!token) throw new Error("Sign-up did not return a bearer token");
+  const browserCookie = signUpResponse.headers
+    .getSetCookie()
+    .map((cookie) => cookie.split(";", 1)[0])
+    .join("; ");
+  if (!browserCookie)
+    throw new Error("Sign-up did not return a browser cookie");
 
   const created = await json<{ organization: { id: string } }>(
     await app.request(
@@ -99,7 +106,59 @@ async function signUp(
 
   const user = await services.prisma.user.findUnique({ where: { email } });
   if (!user) throw new Error(`User ${email} missing after sign-up`);
-  return { token, userId: user.id, orgId: created.organization.id };
+  return {
+    browserCookie,
+    token,
+    userId: user.id,
+    orgId: created.organization.id,
+  };
+}
+
+async function issueDeviceToken(
+  app: Stack["app"],
+  browserCookie: string,
+): Promise<string> {
+  const device = await json<{
+    device_code: string;
+    user_code: string;
+  }>(
+    await app.request(
+      "/api/auth/device/code",
+      jsonRequest("", { client_id: "lastsaas-cli" }),
+    ),
+    200,
+  );
+  const approvalPage = await app.request(
+    `/auth/device?user_code=${encodeURIComponent(device.user_code)}`,
+    { headers: { cookie: browserCookie } },
+  );
+  expect(approvalPage.status).toBe(200);
+  expect(await approvalPage.text()).toContain(device.user_code);
+  const approval = await app.request("/auth/device/approve", {
+    method: "POST",
+    headers: {
+      cookie: browserCookie,
+      "content-type": "application/x-www-form-urlencoded",
+      origin: "http://localhost",
+    },
+    body: new URLSearchParams({ user_code: device.user_code }).toString(),
+  });
+  expect(approval.status).toBe(200);
+  expect(await approval.text()).toContain("Device Authorized");
+  const token = await json<{ access_token: string; token_type: string }>(
+    await app.request(
+      "/api/auth/device/token",
+      jsonRequest("", {
+        grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+        device_code: device.device_code,
+        client_id: "lastsaas-cli",
+      }),
+    ),
+    200,
+  );
+  expect(token.token_type).toBe("Bearer");
+  expect(token.access_token.startsWith("lst_")).toBe(false);
+  return token.access_token;
 }
 
 async function auditActions(
@@ -130,6 +189,15 @@ describe("end-to-end walkthrough", () => {
     const submitter = await signUp(stack, "sam@example.com", "Sam Submitter");
     const orgId = admin.orgId;
     expect(orgId).not.toBe(submitter.orgId);
+    expect(
+      (
+        await app.request("/auth/dashboard", {
+          headers: { cookie: admin.browserCookie },
+        })
+      ).status,
+    ).toBe(200);
+    admin.token = await issueDeviceToken(app, admin.browserCookie);
+    submitter.token = await issueDeviceToken(app, submitter.browserCookie);
 
     const collectionResponse = await app.request(
       `/v1/orgs/${orgId}/collections`,
@@ -164,6 +232,48 @@ describe("end-to-end walkthrough", () => {
       ),
       200,
     );
+
+    const canceledInvitation = await json<{ invitation_id: string }>(
+      await app.request(
+        `/v1/orgs/${orgId}/invitations`,
+        jsonRequest(admin.token, {
+          email: "cancel-me@example.com",
+          role: "member",
+        }),
+      ),
+      201,
+    );
+    await json(
+      await app.request(
+        `/v1/orgs/${orgId}/invitations/cancel`,
+        jsonRequest(admin.token, {
+          invitation_id: canceledInvitation.invitation_id,
+        }),
+      ),
+      200,
+    );
+
+    const members = await json<{
+      members: Array<{ member_id: string; user_id: string }>;
+    }>(
+      await app.request(`/v1/orgs/${orgId}/members`, {
+        headers: { authorization: `Bearer ${admin.token}` },
+      }),
+      200,
+    );
+    const submitterMember = members.members.find(
+      (member) => member.user_id === submitter.userId,
+    );
+    if (!submitterMember) throw new Error("Accepted member is missing");
+    for (const role of ["admin", "member"] as const) {
+      await json(
+        await app.request(
+          `/v1/orgs/${orgId}/members/${submitterMember.member_id}/role`,
+          { ...jsonRequest(admin.token, { role }), method: "PATCH" },
+        ),
+        200,
+      );
+    }
 
     // Accepting as "member" auto-grants role:member read on /*; drop it so
     // the submitter's access flows only through the filtered custom role.
@@ -376,6 +486,8 @@ describe("end-to-end walkthrough", () => {
       "create_collection",
       "create_invitation",
       "accept_invitation",
+      "cancel_invitation",
+      "update_member_role",
       "add_policy",
       "remove_policy",
       "assign_role",

@@ -2,7 +2,12 @@ import type { PrismaClient } from "@prisma/client";
 import { genId } from "@lastsaas/shared";
 import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
-import { bearer, magicLink, organization } from "better-auth/plugins";
+import {
+  bearer,
+  deviceAuthorization,
+  magicLink,
+  organization,
+} from "better-auth/plugins";
 
 import type { AppConfig } from "./config";
 
@@ -61,6 +66,10 @@ export function createAuth(
         : {},
     plugins: [
       bearer(),
+      deviceAuthorization({
+        verificationUri: "/auth/device",
+        schema: {},
+      }),
       magicLink({
         sendMagicLink: async ({ email, url }) => {
           await sendAuthEmail({ type: "magic-link", to: email, url });
