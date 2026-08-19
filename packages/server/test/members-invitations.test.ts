@@ -283,6 +283,56 @@ function jsonRequest(
 }
 
 describe("organization members and invitations", () => {
+  test("members can read the directory but cannot administer membership", async () => {
+    const { app, members, rules } = createFixture();
+    const membersPath = "/v1/orgs/org_123/members";
+    members.push({
+      id: "member_agent",
+      organizationId: "org_123",
+      userId: "user_agent",
+      role: "member",
+      createdAt: new Date("2026-08-18T02:00:00Z"),
+    });
+    rules.push({
+      id: 3,
+      orgId: "org_123",
+      ptype: "g",
+      v0: "user_agent",
+      v1: "org:org_123:user:member",
+      v2: null,
+    });
+    const memberHeaders = { "x-user-id": "user_agent" };
+
+    const directory = await app.request(membersPath, {
+      headers: memberHeaders,
+    });
+    expect(directory.status).toBe(200);
+    expect(await directory.json()).toMatchObject({
+      members: [
+        { email: "admin@example.com", member_role: "admin" },
+        { email: "agent@example.com", member_role: "member" },
+      ],
+    });
+
+    const [invite, changeRole, remove] = await Promise.all([
+      app.request(
+        "/v1/orgs/org_123/invitations",
+        jsonRequest("POST", { email: "new@example.com" }, "user_agent"),
+      ),
+      app.request(
+        `${membersPath}/member_admin/role`,
+        jsonRequest("PATCH", { role: "member" }, "user_agent"),
+      ),
+      app.request(`${membersPath}/member_admin`, {
+        method: "DELETE",
+        headers: memberHeaders,
+      }),
+    ]);
+    expect(invite.status).toBe(403);
+    expect(changeRole.status).toBe(403);
+    expect(remove.status).toBe(403);
+  });
+
   test("invites a user, accepts the invitation, and synchronizes role changes", async () => {
     const { app } = createFixture();
     const invitationsPath = "/v1/orgs/org_123/invitations";

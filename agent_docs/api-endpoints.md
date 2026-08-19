@@ -80,6 +80,8 @@ POST   /v1/orgs/:orgId/permissions/field-filters
 DELETE /v1/orgs/:orgId/permissions/field-filters/:id
 
 # Organization access
+# Every organization member may read the member directory. Membership changes
+# and invitation administration require manage permission on /members.
 GET    /v1/orgs/:orgId/members
 PATCH  /v1/orgs/:orgId/members/:memberId/role
 DELETE /v1/orgs/:orgId/members/:memberId

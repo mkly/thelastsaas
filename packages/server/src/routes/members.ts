@@ -27,11 +27,10 @@ function failureMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
 
-const readMembers = requirePermission("read", () => "/members");
 const manageMembers = requirePermission("manage", () => "/members");
 
 export const memberRouter = new Hono<AppEnvironment>()
-  .get("/", readMembers, async (context) => {
+  .get("/", async (context) => {
     const parsed = listMembersSchema.safeParse(context.req.query());
     if (!parsed.success) {
       return context.json(invalidRequest(validationMessage(parsed.error)), 400);
