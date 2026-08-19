@@ -1,7 +1,9 @@
 import { Hono } from "hono";
+import { getCookie } from "hono/cookie";
 
 import type { AppConfig } from "./config";
 import type { AppEnvironment } from "./env";
+import { THEME_COOKIE, parseTheme, withPageContext } from "./html";
 import {
   createAccountAuthMiddleware,
   createAuthMiddleware,
@@ -28,6 +30,16 @@ export function createApp({
     context.set("services", services);
     await next();
   });
+
+  /* The page layout reads the pinned theme from here rather than from a
+     parameter on every route. See `withPageContext` in ./html. */
+  app.use("*", (context, next) =>
+    withPageContext(
+      parseTheme(getCookie(context, THEME_COOKIE)),
+      context.req.path,
+      next,
+    ),
+  );
 
   app.on(["GET", "POST"], "/api/auth/*", (context) =>
     services.auth.handler(context.req.raw),

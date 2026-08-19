@@ -1,16 +1,54 @@
 import { Hono, type Context } from "hono";
+import { deleteCookie, setCookie } from "hono/cookie";
 import { csrf } from "hono/csrf";
 
 import type { AppEnvironment } from "../env";
-import { escapeHtml, getExternalOrigin, htmlPage } from "../html";
+import {
+  THEME_COOKIE,
+  escapeHtml,
+  getExternalOrigin,
+  htmlPage,
+  parseTheme,
+} from "../html";
 
 export const authPagesRouter = new Hono<AppEnvironment>();
+
+/**
+ * Records the reader's light/dark choice and returns them to the page they were
+ * on. Anything other than "light" or "dark" — including the "system" option —
+ * clears the cookie and hands the decision back to the operating system.
+ */
+authPagesRouter.post("/theme", csrf(), async (context) => {
+  const form = await context.req.parseBody();
+  const theme = parseTheme(String(form["theme"] ?? ""));
+
+  if (theme) {
+    setCookie(context, THEME_COOKIE, theme, {
+      path: "/",
+      maxAge: 60 * 60 * 24 * 365,
+      httpOnly: true,
+      sameSite: "Lax",
+      secure: new URL(context.req.url).protocol === "https:",
+    });
+  } else {
+    deleteCookie(context, THEME_COOKIE, { path: "/" });
+  }
+
+  return context.redirect(sameSitePath(String(form["next"] ?? "")), 303);
+});
+
+/** Only a site-relative path is honoured, so the switch is not a redirector. */
+function sameSitePath(candidate: string): string {
+  return /^\/(?![/\\])[^\\\s]*$/.test(candidate) ? candidate : "/";
+}
 
 function messageBanner(context: Context<AppEnvironment>): string {
   const error = context.req.query("error");
   const message = context.req.query("message");
-  if (error) return `<p style="color:red">${escapeHtml(error)}</p>`;
-  if (message) return `<p style="color:green">${escapeHtml(message)}</p>`;
+  if (error)
+    return `<p class="alert alert--error" role="alert">${escapeHtml(error)}</p>`;
+  if (message)
+    return `<p class="alert alert--success" role="status">${escapeHtml(message)}</p>`;
   return "";
 }
 
@@ -73,21 +111,29 @@ authPagesRouter.get("/login", async (context) => {
   const { googleClientId, googleClientSecret } = context.get("config");
   const googleLogin =
     googleClientId && googleClientSecret
-      ? `<p><a href="${escapeHtml(googleHref)}">Continue with Google</a></p>`
+      ? `<a class="button secondary" href="${escapeHtml(googleHref)}">Continue with Google</a>`
       : "";
 
   return context.html(
     htmlPage(
       "Log In",
       `${messageBanner(context)}
-    <form method="POST" action="${escapeHtml(action)}">
-      <label>Email<br><input type="email" name="email" required autocomplete="email"></label><br><br>
-      <label>Password<br><input type="password" name="password" required autocomplete="current-password"></label><br><br>
-      <button type="submit">Log In</button>
-    </form>
-    ${googleLogin}
-    <p><a href="/auth/magic-link">Log In with Magic Link</a></p>
-    <p>Don't have an account? <a href="${escapeHtml(signupHref)}">Sign up</a></p>`,
+    <div class="card">
+      <form method="POST" action="${escapeHtml(action)}">
+        <label>Email<br><input type="email" name="email" required autocomplete="email"></label><br><br>
+        <label>Password<br><input type="password" name="password" required autocomplete="current-password"></label><br><br>
+        <button type="submit">Log In</button>
+      </form>
+    </div>
+    <div class="stack" style="margin-block-start:1rem">
+      ${googleLogin}
+      <a class="button ghost" href="/auth/magic-link">Log in with a magic link</a>
+    </div>
+    <p class="small muted" style="margin-block-start:1.25rem;text-align:center">
+      Don't have an account? <a href="${escapeHtml(signupHref)}">Sign up</a> ·
+      <a href="/auth/forgot-password">Forgot password?</a>
+    </p>`,
+      { narrow: true, description: "Sign in to your Last SaaS account." },
     ),
   );
 });
@@ -127,12 +173,18 @@ authPagesRouter.get("/signup", async (context) => {
     htmlPage(
       "Sign Up",
       `${messageBanner(context)}
-    <form method="POST" action="${escapeHtml(action)}">
-      <label>Name<br><input type="text" name="name" required autocomplete="name"></label><br><br>
-      <label>Email<br><input type="email" name="email" required autocomplete="email"${emailAttributes}></label><br><br>
-      <label>Password<br><input type="password" name="password" required minlength="8" autocomplete="new-password"></label><br><br>
-      <button type="submit">Sign Up</button>
-    </form>`,
+    <div class="card">
+      <form method="POST" action="${escapeHtml(action)}">
+        <label>Name<br><input type="text" name="name" required autocomplete="name"></label><br><br>
+        <label>Email<br><input type="email" name="email" required autocomplete="email"${emailAttributes}></label><br><br>
+        <label>Password<br><input type="password" name="password" required minlength="8" autocomplete="new-password"></label><br><br>
+        <button type="submit">Create Account</button>
+      </form>
+    </div>
+    <p class="small muted" style="margin-block-start:1.25rem;text-align:center">
+      Already have an account? <a href="/auth/login">Log in</a>
+    </p>`,
+      { narrow: true, description: "Create an account to get started." },
     ),
   );
 });
@@ -168,10 +220,16 @@ authPagesRouter.get("/magic-link", (context) =>
     htmlPage(
       "Magic Link",
       `${messageBanner(context)}
-    <form method="POST" action="/auth/magic-link">
-      <label>Email<br><input type="email" name="email" required autocomplete="email"></label><br><br>
-      <button type="submit">Send Magic Link</button>
-    </form>`,
+    <div class="card">
+      <form method="POST" action="/auth/magic-link">
+        <label>Email<br><input type="email" name="email" required autocomplete="email"></label><br><br>
+        <button type="submit">Send Magic Link</button>
+      </form>
+    </div>`,
+      {
+        narrow: true,
+        description: "We'll email you a link that signs you in — no password.",
+      },
     ),
   ),
 );
@@ -191,8 +249,11 @@ authPagesRouter.post("/magic-link", async (context) => {
 
   return context.html(
     htmlPage(
-      "Magic Link Sent",
-      `<p>If an account exists for <strong>${escapeHtml(email)}</strong>, a magic link has been sent.</p>`,
+      "Check Your Email",
+      `<div class="card">
+        <p>If an account exists for <strong>${escapeHtml(email)}</strong>, a magic link has been sent. The link expires shortly, so use it soon.</p>
+      </div>`,
+      { narrow: true },
     ),
   );
 });
@@ -202,10 +263,19 @@ authPagesRouter.get("/forgot-password", (context) =>
     htmlPage(
       "Forgot Password",
       `${messageBanner(context)}
-    <form method="POST" action="/auth/forgot-password">
-      <label>Email<br><input type="email" name="email" required autocomplete="email"></label><br><br>
-      <button type="submit">Send Reset Link</button>
-    </form>`,
+    <div class="card">
+      <form method="POST" action="/auth/forgot-password">
+        <label>Email<br><input type="email" name="email" required autocomplete="email"></label><br><br>
+        <button type="submit">Send Reset Link</button>
+      </form>
+    </div>
+    <p class="small muted" style="margin-block-start:1.25rem;text-align:center">
+      <a href="/auth/login">Back to log in</a>
+    </p>`,
+      {
+        narrow: true,
+        description: "Enter your email and we'll send a reset link.",
+      },
     ),
   ),
 );
@@ -225,8 +295,11 @@ authPagesRouter.post("/forgot-password", async (context) => {
 
   return context.html(
     htmlPage(
-      "Reset Link Sent",
-      `<p>If an account exists for <strong>${escapeHtml(email)}</strong>, a reset link has been sent.</p>`,
+      "Check Your Email",
+      `<div class="card">
+        <p>If an account exists for <strong>${escapeHtml(email)}</strong>, a password reset link has been sent.</p>
+      </div>`,
+      { narrow: true },
     ),
   );
 });
@@ -237,11 +310,17 @@ authPagesRouter.get("/reset-password", (context) => {
     htmlPage(
       "Reset Password",
       `${messageBanner(context)}
-    <form method="POST" action="/auth/reset-password">
-      <input type="hidden" name="token" value="${escapeHtml(token)}">
-      <label>New Password<br><input type="password" name="newPassword" required minlength="8" autocomplete="new-password"></label><br><br>
-      <button type="submit">Reset Password</button>
-    </form>`,
+    <div class="card">
+      <form method="POST" action="/auth/reset-password">
+        <input type="hidden" name="token" value="${escapeHtml(token)}">
+        <label>New Password<br><input type="password" name="newPassword" required minlength="8" autocomplete="new-password"></label><br><br>
+        <button type="submit">Reset Password</button>
+      </form>
+    </div>`,
+      {
+        narrow: true,
+        description: "Choose a new password of at least 8 characters.",
+      },
     ),
   );
 });
@@ -341,27 +420,50 @@ authPagesRouter.get("/dashboard", async (context) => {
     },
   });
   const organizations = memberships.length
-    ? `<ul>${memberships
+    ? `<ul class="record-list">${memberships
         .map(
           ({ organization, role }) =>
-            `<li>${escapeHtml(organization.name)} — ${escapeHtml(role)} (<code>${escapeHtml(organization.id)}</code>)</li>`,
+            `<li class="record">
+              <div class="record__body">
+                <div class="record__title">${escapeHtml(organization.name)}</div>
+                <div class="record__meta">${escapeHtml(organization.id)}</div>
+              </div>
+              <span class="badge">${escapeHtml(role)}</span>
+            </li>`,
         )
         .join("")}</ul>`
-    : `<p>You do not belong to an organization yet. Install the CLI to create one, or accept an invitation from an existing organization.</p>`;
+    : `<div class="empty">
+        <h3>No organizations yet</h3>
+        <p>Install the CLI to create your first organization, or accept an invitation from an existing one.</p>
+        <p style="margin-block-start:1.25rem"><a class="button" href="/auth/install">Install the CLI</a></p>
+      </div>`;
 
   return context.html(
     htmlPage(
       "Dashboard",
       `${messageBanner(context)}
-    <p>Logged in as <strong>${escapeHtml(session.user.name)}</strong> (${escapeHtml(session.user.email)})</p>
+    <div class="identity">
+      <span class="identity__avatar" aria-hidden="true">${escapeHtml(initial(session.user.name, session.user.email))}</span>
+      <div>
+        <div class="identity__name">${escapeHtml(session.user.name)}</div>
+        <div class="identity__detail">${escapeHtml(session.user.email)}</div>
+      </div>
+    </div>
+
     <h2>Organizations</h2>
     ${organizations}
-    <p><a href="/auth/install">Install CLI</a></p>
     `,
-      { authenticated: true },
+      {
+        authenticated: true,
+        current: "/auth/dashboard",
+      },
     ),
   );
 });
+
+function initial(name: string, email: string): string {
+  return (name.trim() || email).charAt(0);
+}
 
 authPagesRouter.get("/install", async (context) => {
   const server = getExternalOrigin(
@@ -378,27 +480,33 @@ authPagesRouter.get("/install", async (context) => {
   ]
     .map(
       ([label, platform, file]) =>
-        `<li><a href="/dl/${platform}/${file}">${escapeHtml(label)}</a></li>`,
+        `<li class="record">
+          <div class="record__body"><div class="record__title">${escapeHtml(label)}</div></div>
+          <a class="button secondary" href="/dl/${platform}/${file}">Download</a>
+        </li>`,
     )
     .join("");
 
   return context.html(
     htmlPage(
       "Install CLI",
-      `<p>The <code>saas</code> CLI lets you manage your Last SaaS account from a terminal.</p>
-
-    <h2>Quick install (Linux / macOS)</h2>
+      `<h2>Quick install (Linux / macOS)</h2>
     <pre><code>${escapeHtml(oneLiner)}</code></pre>
-    <p>This detects your OS and architecture, downloads the matching binary, and installs it to <code>$HOME/.local/bin/saas</code>. Override the destination with <code>LASTSAAS_INSTALL_DIR=~/bin</code>.</p>
+    <p class="small muted">Detects your OS and architecture, downloads the matching binary, and installs it to <code>$HOME/.local/bin/saas</code>. Override the destination with <code>LASTSAAS_INSTALL_DIR=~/bin</code>.</p>
 
     <h2>Manual download</h2>
-    <ul>${binaries}</ul>
-    <p>After downloading on Linux or macOS, make it executable (<code>chmod +x saas</code>) and move it somewhere on your <code>$PATH</code>.</p>
+    <ul class="record-list">${binaries}</ul>
+    <p class="small muted" style="margin-block-start:0.75rem">After downloading on Linux or macOS, make it executable (<code>chmod +x saas</code>) and move it somewhere on your <code>$PATH</code>.</p>
 
     <h2>First run</h2>
     <pre><code>saas login --server ${escapeHtml(server)}</code></pre>
-    <p>This opens a browser window to complete authentication. See <a href="/auth/dashboard">your dashboard</a> once signed in.</p>`,
-      { authenticated: await isAuthenticated(context) },
+    <p class="small muted">This opens a browser window to complete authentication. See <a href="/auth/dashboard">your dashboard</a> once signed in.</p>`,
+      {
+        authenticated: await isAuthenticated(context),
+        current: "/auth/install",
+        description:
+          "The saas CLI lets you manage your Last SaaS account from a terminal.",
+      },
     ),
   );
 });
@@ -445,18 +553,26 @@ authPagesRouter.get("/device", async (context) => {
   return context.html(
     htmlPage(
       "Authorize Device",
-      `<p>A command-line client is requesting access to your account.</p>
-      <p>Confirm that this code matches the one shown in your terminal:</p>
-      <p><strong><code>${escapeHtml(userCode)}</code></strong></p>
-      <form method="POST" action="/auth/device/approve">
-        <input type="hidden" name="user_code" value="${escapeHtml(userCode)}">
-        <button type="submit">Authorize</button>
-      </form>
-      <form method="POST" action="/auth/device/deny">
-        <input type="hidden" name="user_code" value="${escapeHtml(userCode)}">
-        <button type="submit">Deny</button>
-      </form>`,
-      { authenticated: true },
+      `<div class="card">
+        <p>Confirm that this code matches the one shown in your terminal:</p>
+        <p style="text-align:center"><span class="code-verify">${escapeHtml(userCode)}</span></p>
+        <div class="button-row" style="justify-content:center">
+          <form method="POST" action="/auth/device/approve">
+            <input type="hidden" name="user_code" value="${escapeHtml(userCode)}">
+            <button type="submit">Authorize</button>
+          </form>
+          <form method="POST" action="/auth/device/deny">
+            <input type="hidden" name="user_code" value="${escapeHtml(userCode)}">
+            <button class="secondary" type="submit">Deny</button>
+          </form>
+        </div>
+      </div>`,
+      {
+        authenticated: true,
+        narrow: true,
+        description:
+          "A command-line client is requesting access to your account.",
+      },
     ),
   );
 });
@@ -540,11 +656,20 @@ authPagesRouter.get("/invitations/:invitationId", async (context) => {
     return context.html(
       htmlPage(
         "Organization Invitation",
-        `<p><strong>${escapeHtml(invitation.inviterEmail)}</strong> invited you to join <strong>${escapeHtml(invitation.organizationName)}</strong> as a <strong>${escapeHtml(invitation.role)}</strong>.</p>
-        <form method="POST" action="${escapeHtml(next)}">
-          <button type="submit">Accept Invitation</button>
-        </form>`,
-        { authenticated: true },
+        `<div class="card">
+          <div class="identity" style="margin-block-end:1rem">
+            <span class="identity__avatar" aria-hidden="true">${escapeHtml(invitation.organizationName.charAt(0))}</span>
+            <div>
+              <div class="identity__name">${escapeHtml(invitation.organizationName)}</div>
+              <div class="identity__detail">Invited by ${escapeHtml(invitation.inviterEmail)}</div>
+            </div>
+            <span class="badge badge--accent" style="margin-inline-start:auto">${escapeHtml(invitation.role)}</span>
+          </div>
+          <form method="POST" action="${escapeHtml(next)}">
+            <button type="submit">Accept Invitation</button>
+          </form>
+        </div>`,
+        { authenticated: true, narrow: true },
       ),
     );
   } catch {

@@ -128,11 +128,11 @@ describe("browser auth pages", () => {
     expect(dashboard.status).toBe(200);
     const dashboardHtml = await dashboard.text();
     expect(dashboardHtml).toContain('<a href="/auth/install">Install CLI</a>');
-    expect(dashboardHtml).toContain('<a href="/auth/logout">Logout</a>');
+    expect(dashboardHtml).toContain('<a href="/auth/logout">Log Out</a>');
     expect(dashboardHtml).not.toContain('<a href="/auth/login">');
     expect(dashboardHtml).not.toContain('<a href="/auth/signup">');
     expect(dashboardHtml).toContain("auth-user@example.com");
-    expect(dashboardHtml).toContain("You do not belong to an organization yet");
+    expect(dashboardHtml).toContain("No organizations yet");
 
     for (const path of ["/auth/login", "/auth/signup"]) {
       const response = await app.request(`http://localhost:3000${path}`, {
@@ -146,7 +146,7 @@ describe("browser auth pages", () => {
       headers: { Cookie: cookie! },
     });
     const installHtml = await install.text();
-    expect(installHtml).toContain('<a href="/auth/logout">Logout</a>');
+    expect(installHtml).toContain('<a href="/auth/logout">Log Out</a>');
     expect(installHtml).not.toContain('<a href="/auth/login">');
     expect(installHtml).not.toContain('<a href="/auth/signup">');
 
@@ -255,5 +255,41 @@ describe("browser auth pages", () => {
     expect(html).not.toContain("<b>bad</b>");
     expect(html).toContain("&lt;script&gt;bad&lt;/script&gt;");
     expect(html).toContain('action="/auth/signup"');
+  });
+
+  test("pins the theme through a cookie and refuses off-site returns", async () => {
+    const { app } = await createAuthPageApp();
+
+    const pin = await app.request("http://localhost:3000/auth/theme", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Origin: "http://localhost:3000",
+      },
+      body: formBody({ theme: "dark", next: "/auth/login" }),
+    });
+    expect(pin.status).toBe(303);
+    expect(pin.headers.get("location")).toBe("/auth/login");
+
+    const cookie = pin.headers.get("set-cookie")?.split(";")[0];
+    expect(cookie).toBe("theme=dark");
+
+    const page = await app.request("http://localhost:3000/auth/login", {
+      headers: { Cookie: cookie! },
+    });
+    const html = await page.text();
+    expect(html).toContain('<html lang="en" data-theme="dark">');
+    expect(html).toContain('value="dark" aria-pressed="true"');
+
+    const offSite = await app.request("http://localhost:3000/auth/theme", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Origin: "http://localhost:3000",
+      },
+      body: formBody({ theme: "system", next: "https://example.com" }),
+    });
+    expect(offSite.headers.get("location")).toBe("/");
+    expect(offSite.headers.get("set-cookie")).toContain("theme=;");
   });
 });
