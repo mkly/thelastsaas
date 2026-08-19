@@ -51,10 +51,20 @@ describe("auth commands", () => {
         {
           configPath,
           fetchImpl: async (input, init) => {
-            expect(String(input)).toBe("https://saas.example/v1/orgs");
             authorizations.push(
               new Headers(init?.headers).get("authorization"),
             );
+            if (String(input) === "https://saas.example/v1/me") {
+              return Response.json({
+                status: "ok",
+                user: {
+                  id: "user_123",
+                  name: "Mike Lay",
+                  email: "mike@example.com",
+                },
+              });
+            }
+            expect(String(input)).toBe("https://saas.example/v1/orgs");
             return Response.json({
               status: "ok",
               organizations: [
@@ -65,11 +75,65 @@ describe("auth commands", () => {
         },
       );
 
-      expect(authorizations).toEqual(["Bearer better-auth-token"]);
+      expect(authorizations).toEqual([
+        "Bearer better-auth-token",
+        "Bearer better-auth-token",
+      ]);
+      expect(result.user_id).toBe("user_123");
+      expect(result.name).toBe("Mike Lay");
+      expect(result.email).toBe("mike@example.com");
       expect(result.organization).toBe("org_default");
       expect(result.organization_name).toBe("Origin");
       expect(result.role).toBe("member");
       expect(log).toHaveBeenCalledTimes(1);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  test("whoami reports identity when no organization is selected", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "lastsaas-whoami-no-org-"));
+    temporaryDirectories.push(directory);
+    const configPath = join(directory, "config.json");
+    saveConfig(
+      {
+        server: "https://saas.example",
+        session_token: "better-auth-token",
+      },
+      configPath,
+    );
+    const log = spyOn(console, "log").mockImplementation(() => undefined);
+    const requests: string[] = [];
+
+    try {
+      const result = await whoami(
+        {},
+        {
+          configPath,
+          fetchImpl: async (input) => {
+            requests.push(String(input));
+            return Response.json({
+              status: "ok",
+              user: {
+                id: "user_456",
+                name: "Tom Turkey",
+                email: "tom@example.com",
+              },
+            });
+          },
+        },
+      );
+
+      expect(requests).toEqual(["https://saas.example/v1/me"]);
+      expect(result).toEqual({
+        user_id: "user_456",
+        name: "Tom Turkey",
+        email: "tom@example.com",
+        server: "https://saas.example",
+      });
+      expect(log).toHaveBeenCalledWith(
+        expect.stringContaining("Organization: none selected"),
+      );
     } finally {
       log.mockRestore();
     }

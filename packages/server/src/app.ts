@@ -41,13 +41,12 @@ export function createApp({
     auth: services.auth,
     prisma: services.prisma,
   });
-  app.use(
-    "/v1/orgs",
-    createAccountAuthMiddleware({
-      auth: services.auth,
-      prisma: services.prisma,
-    }),
-  );
+  const accountAuthMiddleware = createAccountAuthMiddleware({
+    auth: services.auth,
+    prisma: services.prisma,
+  });
+  app.use("/v1/me", accountAuthMiddleware);
+  app.use("/v1/orgs", accountAuthMiddleware);
   app.use("/v1/orgs/:orgId", authMiddleware);
   app.use("/v1/orgs/:orgId/*", authMiddleware);
 

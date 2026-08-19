@@ -15,6 +15,7 @@ collection; deletion remains a separate permission.
 # System and authentication
 GET    /health
 *      /api/auth/**
+GET    /v1/me
 GET    /auth/login
 POST   /auth/login
 GET    /auth/signup

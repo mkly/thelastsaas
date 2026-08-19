@@ -76,6 +76,24 @@ async function createHarness() {
 }
 
 describe("organization routes", () => {
+  test("returns the authenticated user without requiring an organization", async () => {
+    const { app, cliHeaders } = await createHarness();
+
+    const response = await app.request("http://localhost/v1/me", {
+      headers: cliHeaders,
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      status: "ok",
+      user: {
+        id: expect.any(String),
+        name: "Organization User",
+        email: "org-user@example.com",
+      },
+    });
+  });
+
   test("signup does not create an organization", async () => {
     const { app, services, headers } = await createHarness();
 
@@ -146,7 +164,11 @@ describe("organization routes", () => {
 
   test("requires authentication", async () => {
     const { app } = await createHarness();
-    const response = await app.request("http://localhost/v1/orgs");
-    expect(response.status).toBe(401);
+    const [accountResponse, organizationsResponse] = await Promise.all([
+      app.request("http://localhost/v1/me"),
+      app.request("http://localhost/v1/orgs"),
+    ]);
+    expect(accountResponse.status).toBe(401);
+    expect(organizationsResponse.status).toBe(401);
   });
 });

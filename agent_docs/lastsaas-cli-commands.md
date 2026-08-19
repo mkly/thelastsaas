@@ -84,5 +84,9 @@ saas skills print
 saas skills install [--directory <skill-root>]
 ```
 
+`saas whoami` reports the authenticated user's name, email address, and user ID.
+It does not require a selected organization; when one is selected, it also reports
+the organization and the user's role.
+
 `skill` aliases `skills`; `path` aliases `skills install`. The default install
 location is `~/.lastsaas/skills/lastsaas/SKILL.md`.
