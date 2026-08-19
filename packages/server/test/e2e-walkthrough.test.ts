@@ -326,7 +326,7 @@ describe("end-to-end walkthrough", () => {
       ),
       201,
     );
-    await services.scheduler.flushOnce();
+    await services.scheduler.start();
     const notifications = await json<{
       notifications: Array<{ message: string }>;
     }>(
