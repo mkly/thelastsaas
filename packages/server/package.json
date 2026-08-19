@@ -13,6 +13,7 @@
   "dependencies": {
     "@lastsaas/shared": "workspace:*",
     "@prisma/client": "^6.16.2",
+    "better-auth": "1.5.5",
     "hono": "^4.9.8",
     "zod": "^4.1.11"
   },

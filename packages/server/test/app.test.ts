@@ -2,9 +2,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 
 import { createTestApp } from "./harness";
 
-const cleanups: Array<() => void> = [];
-afterEach(() => {
-  for (const cleanup of cleanups.splice(0)) cleanup();
+const cleanups: Array<() => Promise<void>> = [];
+afterEach(async () => {
+  for (const cleanup of cleanups.splice(0)) await cleanup();
 });
 
 describe("server skeleton", () => {

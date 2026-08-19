@@ -17,7 +17,7 @@ function shutdown(signal: NodeJS.Signals): void {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`${signal} received. Shutting down...`);
-  void server.stop().finally(() => closeServices(services));
+  void server.stop().finally(async () => closeServices(services));
 }
 
 process.once("SIGINT", shutdown);
