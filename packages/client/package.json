@@ -7,7 +7,7 @@
     "saas": "./src/index.ts"
   },
   "scripts": {
-    "build": "bun build src/index.ts --compile --outfile ../../dist/saas",
+    "build": "bun run ../../scripts/embed-skill.ts && bun build src/index.ts --compile --outfile ../../dist/saas",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
