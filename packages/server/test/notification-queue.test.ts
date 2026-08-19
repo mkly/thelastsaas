@@ -8,6 +8,7 @@ import { NotificationQueue } from "../src/notifications/queue";
 import {
   mergeNotificationPreferences,
   normalizeNotificationPreferences,
+  resolveNotificationChannels,
 } from "../src/notifications/preferences";
 
 function dueRow(attempts = 0) {
@@ -39,6 +40,38 @@ describe("notification preferences", () => {
     ).toEqual({
       default: { in_app: true, email: true },
       by_kind: { invitation: { in_app: true, email: false } },
+    });
+  });
+
+  test("a default-only update applies to kinds without an explicit override", () => {
+    const stored = mergeNotificationPreferences(null, {
+      by_kind: { invitation: { email: false } },
+    });
+
+    const merged = mergeNotificationPreferences(stored, {
+      default: { email: false },
+    });
+
+    expect(merged).toEqual({
+      default: { in_app: true, email: false },
+      by_kind: {},
+    });
+    expect(resolveNotificationChannels(merged, "role_assigned")).toEqual({
+      in_app: true,
+      email: false,
+    });
+  });
+
+  test("keeps an explicit override that still differs from the new default", () => {
+    const stored = mergeNotificationPreferences(null, {
+      by_kind: { invitation: { in_app: false } },
+    });
+
+    expect(
+      mergeNotificationPreferences(stored, { default: { email: false } }),
+    ).toEqual({
+      default: { in_app: true, email: false },
+      by_kind: { invitation: { in_app: false, email: true } },
     });
   });
 });

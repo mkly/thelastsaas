@@ -78,11 +78,23 @@ export function mergeNotificationPreferences(
     : current.default;
   const by_kind: NotificationPreferences["by_kind"] = {};
 
-  for (const kind of NOTIFICATION_KINDS) {
-    const existing = current.by_kind[kind] ?? current.default;
+  // Only kinds that already carry an explicit override, or that this patch
+  // names, may end up stored: every other kind keeps inheriting the default so
+  // a default-only update actually changes their behaviour.
+  const touched = new Set<NotificationKind>(
+    [
+      ...Object.keys(current.by_kind),
+      ...Object.keys(patch.by_kind ?? {}),
+    ].filter((kind): kind is NotificationKind =>
+      (NOTIFICATION_KINDS as readonly string[]).includes(kind),
+    ),
+  );
+
+  for (const kind of touched) {
+    const existing = current.by_kind[kind];
     const next = patch.by_kind?.[kind]
-      ? applyPatch(current.by_kind[kind] ?? nextDefault, patch.by_kind[kind]!)
-      : existing;
+      ? applyPatch(existing ?? nextDefault, patch.by_kind[kind]!)
+      : (existing ?? current.default);
     if (!sameChannels(next, nextDefault)) by_kind[kind] = next;
   }
 
