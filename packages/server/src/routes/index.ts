@@ -9,6 +9,7 @@ import { invitationRouter } from "./invitations";
 import { memberRouter } from "./members";
 import { notificationScheduleRouter } from "./notification-schedules";
 import { notificationRouter } from "./notifications";
+import { organizationRouter } from "./organizations";
 import { permissionRouter } from "./permissions";
 import { recordsRouter } from "./records";
 import { systemRouter } from "./system";
@@ -22,6 +23,7 @@ export interface DomainRouter {
 export const domainRouters: readonly DomainRouter[] = [
   { basePath: "/auth/device", router: deviceAuthRouter },
   { basePath: "/health", router: healthRouter },
+  { basePath: "/v1/orgs", router: organizationRouter },
   { basePath: "/v1/orgs/:orgId/collections", router: collectionsRouter },
   {
     basePath: "/v1/orgs/:orgId/collections/:name/records",

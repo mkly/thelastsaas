@@ -5,8 +5,6 @@ import { csrf } from "hono/csrf";
 import { randomBytes } from "node:crypto";
 
 import { SESSION_EXPIRES_IN_SECONDS } from "../auth";
-import { bootstrapOrgPolicies } from "../db/casbin";
-import { ensurePersonalOrganization } from "../db/organizations";
 import type { AppEnvironment } from "../env";
 
 const AUTH_CODE_TTL_MS = 10 * 60 * 1000;
@@ -110,7 +108,6 @@ async function createCliSession(
     code: string;
     userId: string;
   },
-  orgId: string,
   ipAddress: string | null,
 ): Promise<{ expiresAt: Date; sessionToken: string } | null> {
   const now = new Date();
@@ -134,7 +131,7 @@ async function createCliSession(
         userId: authCode.userId,
         token: sessionToken,
         expiresAt,
-        activeOrganizationId: orgId,
+        activeOrganizationId: null,
         userAgent: "lastsaas-cli",
         ipAddress,
       },
@@ -295,7 +292,7 @@ deviceAuthRouter.post("/token", async (context) => {
     return context.json(deviceError("Invalid code_verifier"), 400);
   }
 
-  const { auth, prisma } = context.get("services");
+  const { prisma } = context.get("services");
   const authCode = await prisma.deviceAuthCode.findUnique({
     where: { code: request.code },
   });
@@ -328,20 +325,10 @@ deviceAuthRouter.post("/token", async (context) => {
     return context.json(deviceError("Authorized user no longer exists"), 400);
   }
 
-  const personalOrganization = await ensurePersonalOrganization(
-    prisma,
-    auth,
-    user,
-  );
-  if (personalOrganization.created) {
-    await bootstrapOrgPolicies(prisma, personalOrganization.orgId, user.id);
-  }
-
   const forwardedFor = context.req.header("x-forwarded-for")?.split(",")[0];
   const cliSession = await createCliSession(
     prisma,
     { code: authCode.code, userId: authCode.userId },
-    personalOrganization.orgId,
     forwardedFor?.trim() || context.req.header("x-real-ip") || null,
   );
   if (!cliSession) {

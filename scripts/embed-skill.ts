@@ -5,7 +5,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const source = resolve(root, "SKILL.md");
+const source = resolve(root, "skills", "lastsaas", "SKILL.md");
 const destination = resolve(root, "packages/client/src/skill.generated.ts");
 
 const content = readFileSync(source, "utf8");
@@ -20,5 +20,5 @@ writeFileSync(
 );
 
 console.log(
-  `Embedded ${content.length} bytes from SKILL.md in ${destination}.`,
+  `Embedded ${content.length} bytes from skills/lastsaas/SKILL.md in ${destination}.`,
 );

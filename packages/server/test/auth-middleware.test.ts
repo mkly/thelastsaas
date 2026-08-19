@@ -155,23 +155,12 @@ describe("organization session middleware", () => {
     expect(member.findUnique).toHaveBeenCalledTimes(1);
   });
 
-  test("creates a personal org and its default policies on first access", async () => {
-    const createOrganization = mock().mockResolvedValue({ id: "org_personal" });
-    const policyFind = mock().mockResolvedValue(null);
-    const policyCreate = mock().mockResolvedValue({});
-    const auditCreate = mock().mockResolvedValue({});
+  test("does not create an organization as an authentication side effect", async () => {
+    const createOrganization = mock();
     const prisma = {
       member: {
-        findFirst: mock().mockResolvedValue(null),
-        findUnique: mock().mockResolvedValue({ id: "member_123" }),
+        findUnique: mock().mockResolvedValue(null),
       },
-      $transaction: mock().mockImplementation(
-        async (operation: (transaction: unknown) => Promise<void>) =>
-          operation({
-            casbinRule: { findFirst: policyFind, create: policyCreate },
-          }),
-      ),
-      auditLog: { create: auditCreate },
     };
     const app = createProtectedApp(
       {
@@ -188,49 +177,8 @@ describe("organization session middleware", () => {
 
     const response = await app.request("/v1/orgs/org_personal/probe");
 
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({
-      orgId: "org_personal",
-      userId: "user_123",
-    });
-    expect(createOrganization).toHaveBeenCalledWith({
-      body: {
-        name: "Session User's Org",
-        slug: "personal-user_123",
-        userId: "user_123",
-        keepCurrentActiveOrganization: true,
-      },
-    });
-    expect(policyCreate).toHaveBeenCalledTimes(2);
-    expect(policyCreate).toHaveBeenCalledWith({
-      data: {
-        orgId: "org_personal",
-        ptype: "p",
-        v0: "org:org_personal:user:admin",
-        v1: "/*",
-        v2: "*",
-      },
-    });
-    expect(policyCreate).toHaveBeenCalledWith({
-      data: {
-        orgId: "org_personal",
-        ptype: "g",
-        v0: "user_123",
-        v1: "org:org_personal:user:admin",
-        v2: null,
-      },
-    });
-    expect(auditCreate).toHaveBeenCalledWith({
-      data: {
-        id: expect.any(String),
-        orgId: "org_personal",
-        userId: "user_123",
-        action: "create_organization",
-        resourceType: "organization",
-        resourceId: "org_personal",
-        details: { personal: true },
-      },
-    });
+    expect(response.status).toBe(403);
+    expect(createOrganization).not.toHaveBeenCalled();
   });
 
   test("provides routes an audit writer bound to the real session user", async () => {

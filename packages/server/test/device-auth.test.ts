@@ -50,7 +50,7 @@ interface SessionCreateArgs {
     userId: string;
     token: string;
     expiresAt: Date;
-    activeOrganizationId: string;
+    activeOrganizationId: string | null;
     userAgent: string;
     ipAddress: string | null;
   };
@@ -318,6 +318,7 @@ describe("device authorization flow", () => {
     if (!storedSession) throw new Error("CLI session was not created");
     expect(token.session_token.slice(4)).toBe(storedSession.token);
     expect(storedSession.ipAddress).toBe("192.0.2.10");
+    expect(storedSession.activeOrganizationId).toBeNull();
 
     const browserLookupsBeforeCliRequest = harness.browserSessionLookups();
     const protectedApp = new Hono<AppEnvironment>();

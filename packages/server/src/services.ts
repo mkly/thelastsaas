@@ -44,13 +44,18 @@ export async function createServices(
 ): Promise<AppServices> {
   const provider = databaseProvider(config.databaseUrl);
   let database: Database | null = null;
+  let datasourceUrl = config.databaseUrl;
   if (provider === "sqlite") {
     const path = sqlitePath(config.databaseUrl);
     if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
     database = new Database(path, { create: true });
     database.exec("PRAGMA foreign_keys = ON");
+    // Prisma resolves relative SQLite URLs from the schema directory, while
+    // bun:sqlite resolves them from the process working directory. Give both
+    // clients the same absolute path so they operate on the same database.
+    datasourceUrl = path === ":memory:" ? "file::memory:" : `file:${path}`;
   }
-  const prisma = new PrismaClient({ datasourceUrl: config.databaseUrl });
+  const prisma = new PrismaClient({ datasourceUrl });
   const auth = createAuth(prisma, config, sendAuthEmail);
   const notificationServices = createNotificationServices(prisma, config);
   const scheduler = createBackgroundScheduler(

@@ -2,7 +2,10 @@ import { Hono } from "hono";
 
 import type { AppConfig } from "./config";
 import type { AppEnvironment } from "./env";
-import { createAuthMiddleware } from "./middleware/auth";
+import {
+  createAccountAuthMiddleware,
+  createAuthMiddleware,
+} from "./middleware/auth";
 import { domainRouters } from "./routes";
 import { authPagesRouter } from "./routes/auth-pages";
 import { downloadsRouter } from "./routes/downloads";
@@ -38,6 +41,13 @@ export function createApp({
     auth: services.auth,
     prisma: services.prisma,
   });
+  app.use(
+    "/v1/orgs",
+    createAccountAuthMiddleware({
+      auth: services.auth,
+      prisma: services.prisma,
+    }),
+  );
   app.use("/v1/orgs/:orgId", authMiddleware);
   app.use("/v1/orgs/:orgId/*", authMiddleware);
 

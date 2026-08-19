@@ -9,7 +9,21 @@ export function escapeHtml(value: unknown): string {
     .replaceAll("'", "&#39;");
 }
 
-export function htmlPage(title: string, body: string): string {
+export function htmlPage(
+  title: string,
+  body: string,
+  options: { authenticated?: boolean } = {},
+): string {
+  const navigation = options.authenticated
+    ? `<a href="/auth/dashboard">Dashboard</a> |
+  <a href="/auth/install">Install CLI</a> |
+  <a href="/auth/logout">Logout</a>`
+    : `<a href="/auth/login">Log In</a> |
+  <a href="/auth/signup">Sign Up</a> |
+  <a href="/auth/magic-link">Magic Link</a> |
+  <a href="/auth/forgot-password">Forgot Password</a> |
+  <a href="/auth/install">Install CLI</a>`;
+
   return `<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(title)} - Last SaaS</title></head>
 <body>
@@ -17,10 +31,7 @@ export function htmlPage(title: string, body: string): string {
 ${body}
 <hr>
 <nav>
-  <a href="/auth/login">Login</a> |
-  <a href="/auth/signup">Sign Up</a> |
-  <a href="/auth/magic-link">Magic Link</a> |
-  <a href="/auth/forgot-password">Forgot Password</a>
+  ${navigation}
 </nav>
 </body></html>`;
 }

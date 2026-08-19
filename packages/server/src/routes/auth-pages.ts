@@ -52,7 +52,19 @@ function authRequest(
   });
 }
 
-authPagesRouter.get("/login", (context) => {
+async function isAuthenticated(
+  context: Context<AppEnvironment>,
+): Promise<boolean> {
+  const session = await context
+    .get("services")
+    .auth.api.getSession({ headers: context.req.raw.headers })
+    .catch(() => null);
+  return Boolean(session?.user);
+}
+
+authPagesRouter.get("/login", async (context) => {
+  if (await isAuthenticated(context))
+    return context.redirect("/auth/dashboard");
   const next = authNext(context);
   const action = authPath("/auth/login", { next });
   const signupHref = authPath("/auth/signup", { next });
@@ -65,15 +77,15 @@ authPagesRouter.get("/login", (context) => {
 
   return context.html(
     htmlPage(
-      "Login",
+      "Log In",
       `${messageBanner(context)}
     <form method="POST" action="${escapeHtml(action)}">
       <label>Email<br><input type="email" name="email" required autocomplete="email"></label><br><br>
       <label>Password<br><input type="password" name="password" required autocomplete="current-password"></label><br><br>
-      <button type="submit">Login</button>
+      <button type="submit">Log In</button>
     </form>
     ${googleLogin}
-    <p><a href="/auth/magic-link">Login with Magic Link</a></p>
+    <p><a href="/auth/magic-link">Log In with Magic Link</a></p>
     <p>Don't have an account? <a href="${escapeHtml(signupHref)}">Sign up</a></p>`,
     ),
   );
@@ -100,7 +112,9 @@ authPagesRouter.post("/login", async (context) => {
   return redirect;
 });
 
-authPagesRouter.get("/signup", (context) => {
+authPagesRouter.get("/signup", async (context) => {
+  if (await isAuthenticated(context))
+    return context.redirect("/auth/dashboard");
   const next = authNext(context);
   const action = authPath("/auth/signup", { next });
   const prefillEmail = context.req.query("email") ?? "";
@@ -137,7 +151,7 @@ authPagesRouter.post("/signup", async (context) => {
     return context.redirect(
       authPath("/auth/login", {
         next,
-        message: "Account created. Please login.",
+        message: "Account created. Please log in.",
       }),
     );
   } catch (error) {
@@ -243,7 +257,7 @@ authPagesRouter.post("/reset-password", async (context) => {
     });
     return context.redirect(
       authPath("/auth/login", {
-        message: "Password reset successfully. Please login.",
+        message: "Password reset successfully. Please log in.",
       }),
     );
   } catch (error) {
@@ -312,38 +326,58 @@ authPagesRouter.get("/logout", async (context) => {
 });
 
 authPagesRouter.get("/dashboard", async (context) => {
-  const session = await context
-    .get("services")
-    .auth.api.getSession({ headers: context.req.raw.headers });
+  const { auth, prisma } = context.get("services");
+  const session = await auth.api.getSession({
+    headers: context.req.raw.headers,
+  });
   if (!session?.user) return context.redirect("/auth/login");
+  const memberships = await prisma.member.findMany({
+    where: { userId: session.user.id },
+    orderBy: { createdAt: "asc" },
+    select: {
+      role: true,
+      organization: { select: { id: true, name: true } },
+    },
+  });
+  const organizations = memberships.length
+    ? `<ul>${memberships
+        .map(
+          ({ organization, role }) =>
+            `<li>${escapeHtml(organization.name)} — ${escapeHtml(role)} (<code>${escapeHtml(organization.id)}</code>)</li>`,
+        )
+        .join("")}</ul>`
+    : `<p>You do not belong to an organization yet. Install the CLI to create one, or accept an invitation from an existing organization.</p>`;
 
   return context.html(
     htmlPage(
       "Dashboard",
       `${messageBanner(context)}
     <p>Logged in as <strong>${escapeHtml(session.user.name)}</strong> (${escapeHtml(session.user.email)})</p>
-    <p>Active Org: ${escapeHtml(session.session.activeOrganizationId ?? "none")}</p>
-    <p><a href="/auth/logout">Logout</a></p>`,
+    <h2>Organizations</h2>
+    ${organizations}
+    <p><a href="/auth/install">Install CLI</a></p>
+    `,
+      { authenticated: true },
     ),
   );
 });
 
-authPagesRouter.get("/install", (context) => {
+authPagesRouter.get("/install", async (context) => {
   const server = getExternalOrigin(
     context.req.raw,
     context.get("config")?.betterAuthUrl,
   );
   const oneLiner = `curl -fsSL ${server}/install.sh | sh`;
   const binaries = [
-    ["Linux x64", "saas-linux-x64"],
-    ["Linux arm64", "saas-linux-arm64"],
-    ["macOS x64 (Intel)", "saas-darwin-x64"],
-    ["macOS arm64 (Apple Silicon)", "saas-darwin-arm64"],
-    ["Windows x64", "saas-windows-x64.exe"],
+    ["Linux x64", "linux-x64", "saas"],
+    ["Linux arm64", "linux-arm64", "saas"],
+    ["macOS x64 (Intel)", "darwin-x64", "saas"],
+    ["macOS arm64 (Apple Silicon)", "darwin-arm64", "saas"],
+    ["Windows x64", "windows-x64", "saas.exe"],
   ]
     .map(
-      ([label, file]) =>
-        `<li><a href="/dl/${file}">${escapeHtml(label)}</a> — <code>${escapeHtml(file)}</code></li>`,
+      ([label, platform, file]) =>
+        `<li><a href="/dl/${platform}/${file}">${escapeHtml(label)}</a></li>`,
     )
     .join("");
 
@@ -354,15 +388,16 @@ authPagesRouter.get("/install", (context) => {
 
     <h2>Quick install (Linux / macOS)</h2>
     <pre><code>${escapeHtml(oneLiner)}</code></pre>
-    <p>This detects your OS and architecture, downloads the matching binary, and installs it to <code>/usr/local/bin/saas</code> when that directory is writable. Otherwise it falls back to <code>$HOME/.local/bin/saas</code>. Override the destination with <code>LASTSAAS_INSTALL_DIR=~/bin</code>.</p>
+    <p>This detects your OS and architecture, downloads the matching binary, and installs it to <code>$HOME/.local/bin/saas</code>. Override the destination with <code>LASTSAAS_INSTALL_DIR=~/bin</code>.</p>
 
     <h2>Manual download</h2>
     <ul>${binaries}</ul>
-    <p>After downloading, make it executable (<code>chmod +x saas-*</code>) and move it somewhere on your <code>$PATH</code>.</p>
+    <p>After downloading on Linux or macOS, make it executable (<code>chmod +x saas</code>) and move it somewhere on your <code>$PATH</code>.</p>
 
     <h2>First run</h2>
     <pre><code>saas login --server ${escapeHtml(server)}</code></pre>
     <p>This opens a browser window to complete authentication. See <a href="/auth/dashboard">your dashboard</a> once signed in.</p>`,
+      { authenticated: await isAuthenticated(context) },
     ),
   );
 });

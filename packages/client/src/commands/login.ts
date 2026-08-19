@@ -24,6 +24,6 @@ export async function login(
       status: "ok",
     },
     outputOptions,
-    `Logged in successfully to ${result.server}.`,
+    `Logged in successfully to ${result.server}. Run \`saas orgs list\` to view or select an organization.`,
   );
 }

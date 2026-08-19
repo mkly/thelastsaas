@@ -7,18 +7,18 @@ import { Hono } from "hono";
 import type { AppEnvironment } from "../env";
 import { getExternalOrigin } from "../html";
 
-const BINARY_FILES = [
-  "saas-linux-x64",
-  "saas-linux-arm64",
-  "saas-darwin-x64",
-  "saas-darwin-arm64",
-  "saas-windows-x64.exe",
-] as const;
+const BINARY_ARTIFACTS = {
+  "linux-x64": { artifact: "saas-linux-x64", download: "saas" },
+  "linux-arm64": { artifact: "saas-linux-arm64", download: "saas" },
+  "darwin-x64": { artifact: "saas-darwin-x64", download: "saas" },
+  "darwin-arm64": { artifact: "saas-darwin-arm64", download: "saas" },
+  "windows-x64": { artifact: "saas-windows-x64.exe", download: "saas.exe" },
+} as const;
 
-type BinaryFile = (typeof BINARY_FILES)[number];
+type BinaryPlatform = keyof typeof BINARY_ARTIFACTS;
+type BinaryFile = (typeof BINARY_ARTIFACTS)[BinaryPlatform]["artifact"];
 type EmbeddedBinaryModule = { default: string };
 
-const BINARY_SET = new Set<string>(BINARY_FILES);
 const BUN_FS_PREFIX = "/$bunfs/";
 const MODULE_DIR = String(Reflect.get(import.meta, "dir") ?? process.cwd());
 const IS_STANDALONE_BUILD = MODULE_DIR.startsWith(BUN_FS_PREFIX);
@@ -48,11 +48,11 @@ const embeddedBinaryPaths = new Map<BinaryFile, string>();
 
 export const downloadsRouter = new Hono<AppEnvironment>();
 
-function isBinaryFile(file: string): file is BinaryFile {
-  return BINARY_SET.has(file);
+function isBinaryPlatform(platform: string): platform is BinaryPlatform {
+  return Object.hasOwn(BINARY_ARTIFACTS, platform);
 }
 
-function getHostPlatformBinary(): BinaryFile | null {
+function getHostPlatform(): BinaryPlatform | null {
   let arch: "x64" | "arm64";
   switch (process.arch) {
     case "x64":
@@ -67,11 +67,11 @@ function getHostPlatformBinary(): BinaryFile | null {
 
   switch (process.platform) {
     case "linux":
-      return `saas-linux-${arch}`;
+      return `linux-${arch}`;
     case "darwin":
-      return `saas-darwin-${arch}`;
+      return `darwin-${arch}`;
     case "win32":
-      return arch === "x64" ? "saas-windows-x64.exe" : null;
+      return arch === "x64" ? "windows-x64" : null;
     default:
       return null;
   }
@@ -91,7 +91,7 @@ async function getEmbeddedBinaryPath(file: BinaryFile): Promise<string | null> {
 }
 
 function createDownloadResponse(
-  file: BinaryFile,
+  downloadName: string,
   stream: ReadableStream,
   size: number,
 ): Response {
@@ -99,32 +99,39 @@ function createDownloadResponse(
     headers: {
       "Content-Type": "application/octet-stream",
       "Content-Length": String(size),
-      "Content-Disposition": `attachment; filename="${file}"`,
+      "Content-Disposition": `attachment; filename="${downloadName}"`,
     },
   });
 }
 
-async function serveEmbeddedBinary(file: BinaryFile): Promise<Response | null> {
+async function serveEmbeddedBinary(
+  file: BinaryFile,
+  downloadName: string,
+): Promise<Response | null> {
   if (!IS_STANDALONE_BUILD) return null;
 
   const assetPath = await getEmbeddedBinaryPath(file);
   if (!assetPath) return null;
 
   const asset = Bun.file(assetPath);
-  return createDownloadResponse(file, asset.stream(), asset.size);
+  return createDownloadResponse(downloadName, asset.stream(), asset.size);
 }
 
-function serveDiskBinary(file: BinaryFile): Response | null {
+function serveDiskBinary(
+  platform: BinaryPlatform,
+  file: BinaryFile,
+  downloadName: string,
+): Response | null {
   const path = resolve(SOURCE_DIST_DIR, file);
   if (existsSync(path)) {
     const size = statSync(path).size;
     const stream = Readable.toWeb(
       createReadStream(path),
     ) as unknown as ReadableStream;
-    return createDownloadResponse(file, stream, size);
+    return createDownloadResponse(downloadName, stream, size);
   }
 
-  if (getHostPlatformBinary() !== file) return null;
+  if (getHostPlatform() !== platform) return null;
 
   const genericPath = resolve(SOURCE_DIST_DIR, "saas");
   if (!existsSync(genericPath)) return null;
@@ -133,19 +140,23 @@ function serveDiskBinary(file: BinaryFile): Response | null {
   const stream = Readable.toWeb(
     createReadStream(genericPath),
   ) as unknown as ReadableStream;
-  return createDownloadResponse(file, stream, size);
+  return createDownloadResponse(downloadName, stream, size);
 }
 
-downloadsRouter.get("/dl/:file", async (context) => {
-  const file = context.req.param("file");
-  if (!isBinaryFile(file)) {
+downloadsRouter.get("/dl/:platform/:download", async (context) => {
+  const platform = context.req.param("platform");
+  if (!isBinaryPlatform(platform)) {
+    return context.json({ status: "error", error: "NotFound" }, 404);
+  }
+  const { artifact, download } = BINARY_ARTIFACTS[platform];
+  if (context.req.param("download") !== download) {
     return context.json({ status: "error", error: "NotFound" }, 404);
   }
 
-  const embeddedResponse = await serveEmbeddedBinary(file);
+  const embeddedResponse = await serveEmbeddedBinary(artifact, download);
   if (embeddedResponse) return embeddedResponse;
 
-  const diskResponse = serveDiskBinary(file);
+  const diskResponse = serveDiskBinary(platform, artifact, download);
   if (diskResponse) return diskResponse;
 
   return context.json({ status: "error", error: "NotFound" }, 404);
@@ -171,20 +182,17 @@ case "$ARCH" in
 esac
 
 case "$OS" in
-  linux|darwin) BIN="saas-$OS-$ARCH" ;;
-  *) echo "Unsupported OS: $OS (use the .exe from $SERVER/dl/saas-windows-x64.exe on Windows)" >&2; exit 1 ;;
+  linux|darwin) PLATFORM="$OS-$ARCH" ;;
+  *) echo "Unsupported OS: $OS (use $SERVER/dl/windows-x64/saas.exe on Windows)" >&2; exit 1 ;;
 esac
 
 if [ -z "$INSTALL_DIR" ]; then
-  if [ -d "/usr/local/bin" ] && [ -w "/usr/local/bin" ]; then
-    INSTALL_DIR="/usr/local/bin"
-  elif [ -n "\${HOME:-}" ]; then
-    echo "Installing to \$HOME/.local/bin by default. To specify a different directory, set LASTSAAS_INSTALL_DIR to a writable directory." >&2
-    INSTALL_DIR="$HOME/.local/bin"
-  else
-    echo "Set LASTSAAS_INSTALL_DIR to a writable directory." >&2
+  if [ -z "\${HOME:-}" ]; then
+    echo "HOME is not set. Set LASTSAAS_INSTALL_DIR to a writable directory." >&2
     exit 1
   fi
+  INSTALL_DIR="$HOME/.local/bin"
+  echo "Installing to \$HOME/.local/bin by default. To choose another directory, set LASTSAAS_INSTALL_DIR." >&2
 fi
 
 if ! mkdir -p "$INSTALL_DIR"; then
@@ -194,11 +202,11 @@ fi
 
 if [ ! -w "$INSTALL_DIR" ]; then
   echo "Install directory is not writable: $INSTALL_DIR" >&2
-  echo "Re-run with sudo for a system-wide install, or set LASTSAAS_INSTALL_DIR to a writable directory such as \$HOME/.local/bin." >&2
+  echo "Set LASTSAAS_INSTALL_DIR to a writable directory." >&2
   exit 1
 fi
 
-URL="$SERVER/dl/$BIN"
+URL="$SERVER/dl/$PLATFORM/saas"
 DEST="$INSTALL_DIR/saas"
 TMP="$DEST.tmp"
 

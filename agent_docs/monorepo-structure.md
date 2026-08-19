@@ -1,7 +1,7 @@
 # Monorepo Structure
 
 ```text
-SKILL.md                              Agent operator guide embedded in the CLI
+skills/lastsaas/SKILL.md              Agent operator guide embedded in the CLI
 agent_docs/                           Concise implementation references
 scripts/
 ├── embed-skill.ts                    Generates client skill.generated.ts

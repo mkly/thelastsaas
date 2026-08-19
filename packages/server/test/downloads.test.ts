@@ -18,7 +18,8 @@ import { downloadsRouter } from "../src/routes/downloads";
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
 const DIST_DIR = resolve(TEST_DIR, "../../../dist");
 const SERVER_DIST_DIR = resolve(TEST_DIR, "../dist");
-const TEST_BINARY = "saas-linux-x64";
+const TEST_PLATFORM = "linux-x64";
+const TEST_ARTIFACT = "saas-linux-x64";
 const TEST_CONTENT = "hello binary";
 
 function createApp(config?: Partial<AppConfig>) {
@@ -37,9 +38,9 @@ function createApp(config?: Partial<AppConfig>) {
 // developer's compiled binaries: move those aside for the test and restore them
 // afterwards instead of deleting them.
 const MANAGED_FILES = [
-  resolve(DIST_DIR, TEST_BINARY),
+  resolve(DIST_DIR, TEST_ARTIFACT),
   resolve(DIST_DIR, "saas"),
-  resolve(SERVER_DIST_DIR, TEST_BINARY),
+  resolve(SERVER_DIST_DIR, TEST_ARTIFACT),
   resolve(SERVER_DIST_DIR, "saas"),
 ];
 
@@ -60,10 +61,10 @@ afterEach(() => {
 
 describe("download routes", () => {
   test("serves an allow-listed binary from repo-root dist", async () => {
-    writeFileSync(resolve(DIST_DIR, TEST_BINARY), TEST_CONTENT);
+    writeFileSync(resolve(DIST_DIR, TEST_ARTIFACT), TEST_CONTENT);
 
     const response = await createApp().request(
-      `http://localhost/dl/${TEST_BINARY}`,
+      `http://localhost/dl/${TEST_PLATFORM}/saas`,
     );
 
     expect(response.status).toBe(200);
@@ -74,7 +75,7 @@ describe("download routes", () => {
       String(TEST_CONTENT.length),
     );
     expect(response.headers.get("content-disposition")).toBe(
-      `attachment; filename="${TEST_BINARY}"`,
+      'attachment; filename="saas"',
     );
     expect(await response.text()).toBe(TEST_CONTENT);
   });
@@ -82,13 +83,13 @@ describe("download routes", () => {
   test("uses repo-root dist even when cwd is packages/server", async () => {
     const originalCwd = process.cwd();
     mkdirSync(SERVER_DIST_DIR, { recursive: true });
-    writeFileSync(resolve(SERVER_DIST_DIR, TEST_BINARY), "wrong dist");
-    writeFileSync(resolve(DIST_DIR, TEST_BINARY), TEST_CONTENT);
+    writeFileSync(resolve(SERVER_DIST_DIR, TEST_ARTIFACT), "wrong dist");
+    writeFileSync(resolve(DIST_DIR, TEST_ARTIFACT), TEST_CONTENT);
 
     try {
       process.chdir(resolve(TEST_DIR, ".."));
       const response = await createApp().request(
-        `http://localhost/dl/${TEST_BINARY}`,
+        `http://localhost/dl/${TEST_PLATFORM}/saas`,
       );
       expect(response.status).toBe(200);
       expect(await response.text()).toBe(TEST_CONTENT);
@@ -98,46 +99,54 @@ describe("download routes", () => {
   });
 
   test("returns 404 for missing and unlisted binaries", async () => {
-    for (const binary of [TEST_BINARY, "not-allowed"]) {
-      const response = await createApp().request(
-        `http://localhost/dl/${binary}`,
-      );
+    for (const path of [
+      `/dl/${TEST_PLATFORM}/saas`,
+      "/dl/not-allowed/saas",
+      `/dl/${TEST_PLATFORM}/not-allowed`,
+    ]) {
+      const response = await createApp().request(`http://localhost${path}`);
       expect(response.status).toBe(404);
       expect(await response.json()).toEqual({
         status: "error",
         error: "NotFound",
       });
     }
+
+    const oldUrl = await createApp().request(
+      `http://localhost/dl/${TEST_ARTIFACT}`,
+    );
+    expect(oldUrl.status).toBe(404);
   });
 
   test("falls back to the generic build for the host platform", async () => {
-    const platformBinary =
+    const platform =
       process.platform === "linux"
         ? process.arch === "x64"
-          ? "saas-linux-x64"
+          ? "linux-x64"
           : process.arch === "arm64"
-            ? "saas-linux-arm64"
+            ? "linux-arm64"
             : null
         : process.platform === "darwin"
           ? process.arch === "x64"
-            ? "saas-darwin-x64"
+            ? "darwin-x64"
             : process.arch === "arm64"
-              ? "saas-darwin-arm64"
+              ? "darwin-arm64"
               : null
           : process.platform === "win32" && process.arch === "x64"
-            ? "saas-windows-x64.exe"
+            ? "windows-x64"
             : null;
 
-    if (!platformBinary) return;
+    if (!platform) return;
 
     writeFileSync(resolve(DIST_DIR, "saas"), TEST_CONTENT);
+    const download = platform === "windows-x64" ? "saas.exe" : "saas";
     const response = await createApp().request(
-      `http://localhost/dl/${platformBinary}`,
+      `http://localhost/dl/${platform}/${download}`,
     );
 
     expect(response.status).toBe(200);
     expect(response.headers.get("content-disposition")).toBe(
-      `attachment; filename="${platformBinary}"`,
+      `attachment; filename="${download}"`,
     );
     expect(await response.text()).toBe(TEST_CONTENT);
   });
@@ -159,8 +168,11 @@ describe("download routes", () => {
       'SERVER="${LASTSAAS_SERVER:-https://example.com}"',
     );
     expect(script).toContain('INSTALL_DIR="${LASTSAAS_INSTALL_DIR:-}"');
+    expect(script).toContain('URL="$SERVER/dl/$PLATFORM/saas"');
+    expect(script).toContain("$SERVER/dl/windows-x64/saas.exe");
+    expect(script).toContain('INSTALL_DIR="$HOME/.local/bin"');
     expect(script).toContain("Installing to $HOME/.local/bin by default.");
-    expect(script).toContain("Re-run with sudo for a system-wide install");
+    expect(script).not.toContain('INSTALL_DIR="/usr/local/bin"');
     expect(script).toContain('"server": "$SERVER"');
   });
 

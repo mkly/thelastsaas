@@ -77,15 +77,15 @@ async function login(
 }
 
 describe("browser auth pages", () => {
-  test("renders the root and auth forms before protected routes", async () => {
+  test("redirects the root and renders auth forms before protected routes", async () => {
     const { app } = await createAuthPageApp();
 
     const root = await app.request("http://localhost:3000/");
-    expect(root.status).toBe(200);
-    expect(await root.text()).toContain('<a href="/auth/login">Login</a>');
+    expect(root.status).toBe(302);
+    expect(root.headers.get("location")).toBe("/auth/signup");
 
     for (const [path, heading] of [
-      ["/auth/login", "Login"],
+      ["/auth/login", "Log In"],
       ["/auth/signup", "Sign Up"],
       ["/auth/magic-link", "Magic Link"],
       ["/auth/forgot-password", "Forgot Password"],
@@ -94,8 +94,16 @@ describe("browser auth pages", () => {
     ]) {
       const response = await app.request(`http://localhost:3000${path}`);
       expect(response.status).toBe(200);
-      expect(await response.text()).toContain(`<h1>${heading}</h1>`);
+      const html = await response.text();
+      expect(html).toContain(`<h1>${heading}</h1>`);
+      expect(html).toContain('<a href="/auth/install">Install CLI</a>');
     }
+
+    const install = await app.request("http://localhost:3000/auth/install");
+    const installHtml = await install.text();
+    expect(installHtml).toContain('href="/dl/linux-x64/saas"');
+    expect(installHtml).toContain('href="/dl/windows-x64/saas.exe"');
+    expect(installHtml).not.toContain("</a> — <code>");
   });
 
   test("signs up, logs in, renders the dashboard, and logs out", async () => {
@@ -104,7 +112,7 @@ describe("browser auth pages", () => {
     const signup = await signUp(app);
     expect(signup.status).toBe(302);
     expect(signup.headers.get("location")).toBe(
-      "/auth/login?message=Account+created.+Please+login.",
+      "/auth/login?message=Account+created.+Please+log+in.",
     );
 
     const loginResponse = await login(app, "initial-password");
@@ -118,7 +126,35 @@ describe("browser auth pages", () => {
       { headers: { Cookie: cookie! } },
     );
     expect(dashboard.status).toBe(200);
-    expect(await dashboard.text()).toContain("auth-user@example.com");
+    const dashboardHtml = await dashboard.text();
+    expect(dashboardHtml).toContain('<a href="/auth/install">Install CLI</a>');
+    expect(dashboardHtml).toContain('<a href="/auth/logout">Logout</a>');
+    expect(dashboardHtml).not.toContain('<a href="/auth/login">');
+    expect(dashboardHtml).not.toContain('<a href="/auth/signup">');
+    expect(dashboardHtml).toContain("auth-user@example.com");
+    expect(dashboardHtml).toContain("You do not belong to an organization yet");
+
+    for (const path of ["/auth/login", "/auth/signup"]) {
+      const response = await app.request(`http://localhost:3000${path}`, {
+        headers: { Cookie: cookie! },
+      });
+      expect(response.status).toBe(302);
+      expect(response.headers.get("location")).toBe("/auth/dashboard");
+    }
+
+    const install = await app.request("http://localhost:3000/auth/install", {
+      headers: { Cookie: cookie! },
+    });
+    const installHtml = await install.text();
+    expect(installHtml).toContain('<a href="/auth/logout">Logout</a>');
+    expect(installHtml).not.toContain('<a href="/auth/login">');
+    expect(installHtml).not.toContain('<a href="/auth/signup">');
+
+    const authenticatedRoot = await app.request("http://localhost:3000/", {
+      headers: { Cookie: cookie! },
+    });
+    expect(authenticatedRoot.status).toBe(302);
+    expect(authenticatedRoot.headers.get("location")).toBe("/auth/dashboard");
 
     const logout = await app.request("http://localhost:3000/auth/logout", {
       headers: { Cookie: cookie! },

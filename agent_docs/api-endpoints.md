@@ -1,8 +1,9 @@
 # API Endpoints
 
-All application data routes are explicitly scoped by organization:
-`/v1/orgs/:orgId`. They require a BetterAuth session cookie or the bearer
-session issued by the device PKCE flow.
+Organization membership discovery and creation use the account-scoped
+`/v1/orgs` route. All organization data routes are explicitly scoped through
+`/v1/orgs/:orgId`. They require a BetterAuth session cookie or the bearer session
+issued by the device PKCE flow.
 
 ```text
 # System and authentication
@@ -12,6 +13,8 @@ GET    /auth/login
 POST   /auth/login
 GET    /auth/signup
 POST   /auth/signup
+GET    /v1/orgs
+POST   /v1/orgs
 GET    /auth/magic-link
 POST   /auth/magic-link
 GET    /auth/forgot-password

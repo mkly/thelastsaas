@@ -4,11 +4,10 @@ import type { AppEnvironment } from "../env";
 
 export const homeRouter = new Hono<AppEnvironment>();
 
-homeRouter.get("/", (context) =>
-  context.html(`<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>The Last SaaS</title></head>
-<body>
-<h1>The Last SaaS</h1>
-<p><a href="/auth/login">Login</a></p>
-</body></html>`),
-);
+homeRouter.get("/", async (context) => {
+  const session = await context
+    .get("services")
+    .auth.api.getSession({ headers: context.req.raw.headers })
+    .catch(() => null);
+  return context.redirect(session?.user ? "/auth/dashboard" : "/auth/signup");
+});

@@ -12,6 +12,11 @@ saas login [--server <url>]
 saas whoami
 saas logout
 
+# Organizations (alias: org)
+saas orgs list
+saas orgs create <name> [--slug <slug>]
+saas orgs use <org-id>
+
 # Collections (alias: c)
 saas collections list
 saas collections create <name> --schema <json> [--description <text>]

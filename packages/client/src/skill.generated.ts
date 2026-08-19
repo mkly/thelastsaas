@@ -18,6 +18,9 @@ program will consume the output.
 
 \`\`\`bash
 saas login --server http://localhost:8787
+saas orgs list
+saas orgs create <name> [--slug <slug>]
+saas orgs use <org-id>
 saas whoami
 saas --org <org-id> collections list
 saas logout
@@ -25,7 +28,8 @@ saas logout
 
 Login uses browser-based PKCE and stores a rolling user session in
 \`~/.lastsaas/config.json\`. Every data operation acts as that user. Organization
-scope is explicit: pass \`--org <org-id>\` or save an \`org\` default in the config.
+scope is explicit: create an organization or join one by invitation, select its
+stored default with \`orgs use\`, or pass \`--org <org-id>\` for one command.
 If a request returns 401, authenticate again; do not substitute another
 credential type.
 

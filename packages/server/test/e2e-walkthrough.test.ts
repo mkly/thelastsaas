@@ -86,21 +86,20 @@ async function signUp(
   const token = signUpResponse.headers.get("set-auth-token");
   if (!token) throw new Error("Sign-up did not return a bearer token");
 
-  // The personal organization is created lazily by the auth middleware, so any
-  // org-scoped request bootstraps it even though the placeholder org 403s.
-  const bootstrap = await app.request(
-    "/v1/orgs/_bootstrap/collections",
-    jsonRequest(token, { name: "ignored", schema: {} }),
+  const created = await json<{ organization: { id: string } }>(
+    await app.request(
+      "/v1/orgs",
+      jsonRequest(token, {
+        name: `${name}'s Org`,
+        slug: `${name.toLowerCase().replaceAll(" ", "-")}-org`,
+      }),
+    ),
+    201,
   );
-  expect(bootstrap.status).toBe(403);
 
   const user = await services.prisma.user.findUnique({ where: { email } });
   if (!user) throw new Error(`User ${email} missing after sign-up`);
-  const member = await services.prisma.member.findFirst({
-    where: { userId: user.id },
-  });
-  if (!member) throw new Error(`Personal org membership missing for ${email}`);
-  return { token, userId: user.id, orgId: member.organizationId };
+  return { token, userId: user.id, orgId: created.organization.id };
 }
 
 async function auditActions(
