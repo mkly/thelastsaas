@@ -101,7 +101,7 @@ export function validateSchema(schema: Schema): string[] {
       errors.push(`Field '${fieldName}': unknown type '${fieldType}'`);
     }
     if (
-      typeof fieldDef === "object" &&
+      isPlainObject(fieldDef) &&
       fieldDef.description !== undefined &&
       typeof fieldDef.description !== "string"
     ) {
@@ -155,7 +155,7 @@ export function applyFieldUpdate(
         : extractFieldType(existingDef)) ?? "string",
   };
   if (
-    typeof existingDef === "object" &&
+    isPlainObject(existingDef) &&
     existingDef.description !== undefined &&
     !("description" in updateDef)
   ) {

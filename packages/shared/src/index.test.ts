@@ -4,6 +4,7 @@ import {
   API_VERSION,
   CollectionNotFoundError,
   SchemaValidationError,
+  applyFieldUpdate,
   errorResponse,
   isPlainObject,
   isValidFieldName,
@@ -46,6 +47,29 @@ describe("schema validation", () => {
     expect(
       validateFieldUpdates({ name: { type: 42 } }, { name: "string" }),
     ).toEqual(["Field 'name': type must be a string"]);
+  });
+
+  test("reports null and array field definitions without throwing", () => {
+    expect(
+      validateSchema({ broken: null } as unknown as Parameters<
+        typeof validateSchema
+      >[0]),
+    ).toEqual([
+      "Field 'broken': must be a type string or an object with a 'type' key",
+    ]);
+    expect(
+      validateSchema({ broken: [] } as unknown as Parameters<
+        typeof validateSchema
+      >[0]),
+    ).toEqual([
+      "Field 'broken': must be a type string or an object with a 'type' key",
+    ]);
+    expect(
+      applyFieldUpdate(
+        null as unknown as Parameters<typeof applyFieldUpdate>[0],
+        { type: "string" },
+      ),
+    ).toEqual({ type: "string" });
   });
 });
 

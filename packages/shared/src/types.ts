@@ -70,8 +70,6 @@ export interface File {
   collection_id: string | null;
   record_id: string | null;
   uploaded_by: string;
-  access: string;
-  public_token: string | null;
   created_at: string;
 }
 
