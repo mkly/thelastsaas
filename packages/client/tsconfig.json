@@ -1,4 +1,7 @@
 {
   "extends": "../../tsconfig.base.json",
-  "include": ["src/**/*.ts"]
+  // The client's typed API surface pulls in the server sources, which import
+  // the compiled CLI binaries as embedded assets: their ambient declarations
+  // have to be part of this program too.
+  "include": ["src/**/*.ts", "../server/src/assets.d.ts"]
 }
