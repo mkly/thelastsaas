@@ -3,6 +3,7 @@ import type { Command } from "commander";
 import { registerAccessCommands } from "./commands/access";
 import { registerAuthCommands } from "./commands/auth";
 import { registerCollections } from "./commands/collections";
+import { registerOperationsCommands } from "./commands/operations";
 import { registerRecords } from "./commands/records";
 import { registerSkills } from "./commands/skills";
 
@@ -15,4 +16,5 @@ export const commandRegistrars: readonly CommandRegistrar[] = [
   registerRecords,
   registerAccessCommands,
   registerSkills,
+  registerOperationsCommands,
 ];
