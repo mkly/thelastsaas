@@ -1,4 +1,4 @@
-import type { PrismaClient } from "@prisma/client";
+import type { Prisma, PrismaClient } from "@prisma/client";
 
 interface Policy {
   ptype: "p" | "g";
@@ -18,7 +18,7 @@ export async function bootstrapOrgPolicies(
     { ptype: "g", v0: adminUserId, v1: role, v2: null },
   ];
 
-  await prisma.$transaction(async (transaction) => {
+  await prisma.$transaction(async (transaction: Prisma.TransactionClient) => {
     for (const policy of policies) {
       const existing = await transaction.casbinRule.findFirst({
         where: { orgId, ...policy },

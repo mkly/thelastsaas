@@ -11,6 +11,7 @@
     "test:shared": "bun test packages/shared",
     "test:server": "bun test packages/server",
     "test:client": "bun test packages/client",
+    "build:client": "bun build packages/client/src/index.ts --compile --outfile dist/saas",
     "typecheck": "bun run --filter '*' typecheck",
     "lint": "eslint .",
     "format": "prettier --write .",
