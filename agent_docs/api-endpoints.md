@@ -13,6 +13,8 @@ GET    /auth/login
 POST   /auth/login
 GET    /auth/signup
 POST   /auth/signup
+GET    /auth/invitations/:invitationId
+POST   /auth/invitations/:invitationId
 GET    /v1/orgs
 POST   /v1/orgs
 GET    /auth/magic-link

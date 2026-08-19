@@ -524,3 +524,66 @@ authPagesRouter.post("/device/deny", csrf(), async (context) => {
     );
   }
 });
+
+authPagesRouter.get("/invitations/:invitationId", async (context) => {
+  const invitationId = context.req.param("invitationId");
+  const next = `/auth/invitations/${encodeURIComponent(invitationId)}`;
+  if (!(await isAuthenticated(context))) {
+    return context.redirect(authPath("/auth/login", { next }));
+  }
+
+  try {
+    const invitation = await context.get("services").auth.api.getInvitation({
+      query: { id: invitationId },
+      headers: context.req.raw.headers,
+    });
+    return context.html(
+      htmlPage(
+        "Organization Invitation",
+        `<p><strong>${escapeHtml(invitation.inviterEmail)}</strong> invited you to join <strong>${escapeHtml(invitation.organizationName)}</strong> as a <strong>${escapeHtml(invitation.role)}</strong>.</p>
+        <form method="POST" action="${escapeHtml(next)}">
+          <button type="submit">Accept Invitation</button>
+        </form>`,
+        { authenticated: true },
+      ),
+    );
+  } catch {
+    return context.html(
+      htmlPage(
+        "Organization Invitation",
+        "<p>This invitation is invalid, expired, or belongs to another account.</p>",
+        { authenticated: true },
+      ),
+      400,
+    );
+  }
+});
+
+authPagesRouter.post("/invitations/:invitationId", csrf(), async (context) => {
+  const invitationId = context.req.param("invitationId");
+  const next = `/auth/invitations/${encodeURIComponent(invitationId)}`;
+  if (!(await isAuthenticated(context))) {
+    return context.redirect(authPath("/auth/login", { next }));
+  }
+
+  try {
+    await context.get("services").auth.api.acceptInvitation({
+      body: { invitationId },
+      headers: context.req.raw.headers,
+    });
+    return context.redirect(
+      authPath("/auth/dashboard", {
+        message: "Invitation accepted.",
+      }),
+    );
+  } catch {
+    return context.html(
+      htmlPage(
+        "Organization Invitation",
+        "<p>This invitation could not be accepted. It may be invalid, expired, or belong to another account.</p>",
+        { authenticated: true },
+      ),
+      400,
+    );
+  }
+});

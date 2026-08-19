@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 
+import { syncMemberRole } from "../src/db/casbin";
 import type { AppEnvironment } from "../src/env";
 import { invitationRouter } from "../src/routes/invitations";
 import { memberRouter } from "../src/routes/members";
@@ -202,13 +203,22 @@ function createFixture() {
           throw new Error("Invitation does not belong to this user");
         }
         invitation.status = "accepted";
-        members.push({
+        const member = {
           id: `member_${userId.slice("user_".length)}`,
           organizationId: invitation.organizationId,
           userId,
           role: invitation.role,
           createdAt: new Date("2026-08-18T02:00:00Z"),
-        });
+        };
+        members.push(member);
+        // Better Auth runs the configured afterAcceptInvitation hook here.
+        await syncMemberRole(
+          prisma as never,
+          invitation.organizationId,
+          userId,
+          member.role,
+          member.role,
+        );
       },
       cancelInvitation: async ({
         body,

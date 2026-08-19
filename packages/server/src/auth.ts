@@ -10,6 +10,8 @@ import {
 } from "better-auth/plugins";
 
 import type { AppConfig } from "./config";
+import { createAuditWriter } from "./db/audit";
+import { syncMemberRole } from "./db/casbin";
 
 export const SESSION_EXPIRES_IN_SECONDS = 60 * 60 * 24 * 90;
 const SESSION_UPDATE_AGE = 60 * 60 * 24;
@@ -78,12 +80,30 @@ export function createAuth(
       organization({
         allowUserToCreateOrganization: true,
         creatorRole: "admin",
+        organizationHooks: {
+          afterAcceptInvitation: async ({ invitation, member, user }) => {
+            await syncMemberRole(
+              prisma,
+              invitation.organizationId,
+              user.id,
+              member.role,
+              member.role,
+            );
+            await createAuditWriter(prisma, invitation.organizationId, user.id)(
+              "accept_invitation",
+              "invitation",
+              invitation.id,
+              {
+                role: member.role,
+              },
+            );
+          },
+        },
         sendInvitationEmail: async ({ email, invitation }) => {
           const url = new URL(
-            "/api/auth/organization/accept-invitation",
+            `/auth/invitations/${encodeURIComponent(invitation.id)}`,
             config.betterAuthUrl,
           );
-          url.searchParams.set("invitationId", invitation.id);
           await sendAuthEmail({
             type: "invitation",
             to: email,

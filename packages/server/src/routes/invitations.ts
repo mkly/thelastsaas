@@ -2,7 +2,6 @@ import { errorResponse } from "@lastsaas/shared";
 import { Hono } from "hono";
 import { z } from "zod";
 
-import { syncMemberRole } from "../db/casbin";
 import type { AppEnvironment } from "../env";
 import { requirePermission } from "../middleware/permission";
 
@@ -121,24 +120,6 @@ export const invitationRouter = new Hono<AppEnvironment>()
         body: { invitationId: parsed.data.invitation_id },
         headers: context.req.raw.headers,
       });
-      const member = await prisma.member.findUnique({
-        where: {
-          organizationId_userId: {
-            organizationId: orgId,
-            userId: context.get("userId"),
-          },
-        },
-        select: { userId: true, role: true },
-      });
-      if (!member)
-        throw new Error("Accepted invitation did not create a member");
-      await syncMemberRole(
-        prisma,
-        orgId,
-        member.userId,
-        member.role,
-        member.role,
-      );
     } catch (error) {
       return context.json(
         errorResponse(
@@ -149,12 +130,6 @@ export const invitationRouter = new Hono<AppEnvironment>()
       );
     }
 
-    await context.get("audit")(
-      "accept_invitation",
-      "invitation",
-      parsed.data.invitation_id,
-      { role: invitation.role },
-    );
     return context.json({ status: "ok" as const });
   })
   .post("/cancel", manageMembers, async (context) => {
