@@ -24,6 +24,7 @@ async function createRecordsApp(schema: Schema) {
     DATABASE_URL: `file:${join(directory, "test.sqlite")}`,
   });
   const services = await createServices(config);
+  if (!services.database) throw new Error("Expected SQLite database handle");
   services.database.exec(
     readFileSync(
       new URL(
