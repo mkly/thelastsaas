@@ -4,6 +4,7 @@ import { closeServices, createServices } from "./services";
 
 const config = loadConfig();
 const services = await createServices(config);
+await services.scheduler.start();
 const app = createApp({ config, services });
 
 // Multipart framing is bounded separately by Busboy. This allowance keeps a

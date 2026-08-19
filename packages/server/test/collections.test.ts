@@ -26,6 +26,7 @@ async function createCollectionsApp() {
     DATABASE_URL: `file:${databasePath}`,
   });
   const services = await createServices(config);
+  if (!services.database) throw new Error("Expected SQLite database handle");
   services.database.exec(
     readFileSync(
       new URL(

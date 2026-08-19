@@ -36,6 +36,7 @@ async function createAuthPageApp(options: { google?: boolean } = {}) {
   const services = await createServices(config, async (email) => {
     emails.push(email);
   });
+  if (!services.database) throw new Error("Expected SQLite database handle");
   services.database.exec(migration);
   const app = createApp({ config, services });
   cleanups.push(async () => {

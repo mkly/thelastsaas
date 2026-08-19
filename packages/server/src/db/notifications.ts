@@ -134,6 +134,8 @@ export async function enqueueNotification(
     id: genId(),
     orgId: input.orgId,
     userId: input.userId,
+    ...(input.scheduleId ? { scheduleId: input.scheduleId } : {}),
+    ...(input.occurrenceAt ? { occurrenceAt: input.occurrenceAt } : {}),
     type: input.type,
     message: input.message,
     data: attachDelivery(input.data, input.delivery),

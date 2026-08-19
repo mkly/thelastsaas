@@ -15,6 +15,8 @@ const DEFAULT_BATCH_SIZE = 25;
 export interface QueueNotificationInput {
   orgId: string;
   userId: string;
+  scheduleId?: string;
+  occurrenceAt?: Date;
   type: string;
   message: string;
   delivery: QueuedDelivery;
