@@ -23,12 +23,15 @@ describe("server skeleton", () => {
     const second = await createTestApp();
     cleanups.push(first.close, second.close);
 
-    first.services.database.exec(
-      "CREATE TABLE example (id INTEGER PRIMARY KEY)",
-    );
+    const firstDatabase = first.services.database;
+    const secondDatabase = second.services.database;
+    if (!firstDatabase || !secondDatabase) {
+      throw new Error("Expected SQLite database handles");
+    }
+    firstDatabase.exec("CREATE TABLE example (id INTEGER PRIMARY KEY)");
 
     const tableQuery = "SELECT name FROM sqlite_master WHERE name = 'example'";
-    expect(first.services.database.query(tableQuery).get()).not.toBeNull();
-    expect(second.services.database.query(tableQuery).get()).toBeNull();
+    expect(firstDatabase.query(tableQuery).get()).not.toBeNull();
+    expect(secondDatabase.query(tableQuery).get()).toBeNull();
   });
 });

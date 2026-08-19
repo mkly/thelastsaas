@@ -56,6 +56,21 @@ export interface AppConfig {
   s3ForcePathStyle: boolean;
 }
 
+export type DatabaseProvider = "sqlite" | "postgresql";
+
+export function databaseProvider(databaseUrl: string): DatabaseProvider {
+  if (databaseUrl.startsWith("file:")) return "sqlite";
+  if (
+    databaseUrl.startsWith("postgres:") ||
+    databaseUrl.startsWith("postgresql:")
+  ) {
+    return "postgresql";
+  }
+  throw new Error(
+    "DATABASE_URL must use the file:, postgres:, or postgresql: scheme",
+  );
+}
+
 export function loadConfig(
   environment: Record<string, string | undefined> = process.env,
 ): AppConfig {
