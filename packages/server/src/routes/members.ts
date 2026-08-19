@@ -82,6 +82,7 @@ export const memberRouter = new Hono<AppEnvironment>()
     return context.json({
       status: "ok" as const,
       members: rows.map((member) => ({
+        member_id: member.id,
         user_id: member.user.id,
         email: member.user.email,
         name: member.user.name,

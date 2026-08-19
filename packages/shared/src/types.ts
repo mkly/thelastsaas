@@ -220,6 +220,7 @@ export interface Stats {
 export type MemberRole = "owner" | "admin" | "member";
 
 export interface Member {
+  member_id: string;
   user_id: string;
   email: string;
   name: string | null;

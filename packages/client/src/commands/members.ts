@@ -28,6 +28,10 @@ function memberListOutput(
 ): string {
   if (members.length === 0) return "No members found.";
 
+  const memberIdWidth = Math.max(
+    9,
+    ...members.map((member) => member.member_id.length),
+  );
   const emailWidth = Math.max(
     5,
     ...members.map((member) => member.email.length),
@@ -41,6 +45,7 @@ function memberListOutput(
     ...members.map((member) => member.member_role.length),
   );
   const header = [
+    "member_id".padEnd(memberIdWidth),
     "email".padEnd(emailWidth),
     "name".padEnd(nameWidth),
     "role".padEnd(roleWidth),
@@ -50,6 +55,7 @@ function memberListOutput(
   for (const member of members) {
     lines.push(
       [
+        member.member_id.padEnd(memberIdWidth),
         member.email.padEnd(emailWidth),
         (member.name ?? "-").padEnd(nameWidth),
         member.member_role.padEnd(roleWidth),

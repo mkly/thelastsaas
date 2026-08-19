@@ -378,7 +378,23 @@ describe("member commands", () => {
         "--offset",
         "5",
       ],
-      { status: "ok", members: [], total: 0, limit: 20, offset: 5 },
+      {
+        status: "ok",
+        members: [
+          {
+            member_id: "member_1",
+            user_id: "user_1",
+            email: "casey@example.test",
+            name: "Casey",
+            member_role: "member",
+            casbin_roles: ["member"],
+            joined_at: "2026-08-18T00:00:00.000Z",
+          },
+        ],
+        total: 1,
+        limit: 20,
+        offset: 5,
+      },
     );
     await runMember(["members", "role-change", "member_1", "--role", "admin"]);
     await runMember(["members", "remove", "member_1"]);
@@ -400,6 +416,11 @@ describe("member commands", () => {
       role: "member",
       q: "casey",
     });
+    expect(outputs[0]?.value).toMatchObject({
+      members: [{ member_id: "member_1" }],
+    });
+    expect(outputs[0]?.human).toContain("member_id");
+    expect(outputs[0]?.human).toContain("member_1");
     expect(await requestBody(1)).toEqual({ role: "admin" });
   });
 });
