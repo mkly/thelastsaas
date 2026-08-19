@@ -174,12 +174,3 @@ export async function bootstrapOrgPolicies(
     }
   });
 }
-
-export async function bootstrapMemberPolicies(
-  prisma: PrismaClient,
-  orgId: string,
-  userId: string,
-): Promise<void> {
-  await addPolicy(prisma, orgId, roleSubject(orgId, "member"), "/*", "read");
-  await assignRole(prisma, orgId, userId, "member");
-}
