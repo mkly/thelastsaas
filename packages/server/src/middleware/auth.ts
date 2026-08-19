@@ -3,6 +3,7 @@ import type { PrismaClient } from "@prisma/client";
 import type { MiddlewareHandler } from "hono";
 
 import type { Auth } from "../auth";
+import { createAuditWriter } from "../db/audit";
 import { bootstrapOrgPolicies } from "../db/casbin";
 import { ensurePersonalOrganization } from "../db/organizations";
 import type { AppEnvironment } from "../env";
@@ -39,6 +40,13 @@ export function createAuthMiddleware({
         personalOrganization.orgId,
         session.user.id,
       );
+      await createAuditWriter(
+        prisma,
+        personalOrganization.orgId,
+        session.user.id,
+      )("create_organization", "organization", personalOrganization.orgId, {
+        personal: true,
+      });
     }
 
     const orgId = context.req.param("orgId");
@@ -66,6 +74,7 @@ export function createAuthMiddleware({
 
     context.set("orgId", orgId);
     context.set("userId", session.user.id);
+    context.set("audit", createAuditWriter(prisma, orgId, session.user.id));
     await next();
   };
 }

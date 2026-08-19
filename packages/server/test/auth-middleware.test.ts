@@ -23,6 +23,12 @@ function createProtectedApp(auth: unknown, prisma: unknown) {
       userId: context.get("userId"),
     }),
   );
+  app.post("/v1/orgs/:orgId/mutation", async (context) => {
+    await context.get("audit")("update_probe", "probe", "probe_123", {
+      changed: true,
+    });
+    return context.json({ status: "ok" });
+  });
   return app;
 }
 
@@ -85,6 +91,7 @@ describe("organization session middleware", () => {
     const createOrganization = mock().mockResolvedValue({ id: "org_personal" });
     const policyFind = mock().mockResolvedValue(null);
     const policyCreate = mock().mockResolvedValue({});
+    const auditCreate = mock().mockResolvedValue({});
     const prisma = {
       member: {
         findFirst: mock().mockResolvedValue(null),
@@ -96,6 +103,7 @@ describe("organization session middleware", () => {
             casbinRule: { findFirst: policyFind, create: policyCreate },
           }),
       ),
+      auditLog: { create: auditCreate },
     };
     const app = createProtectedApp(
       {
@@ -142,6 +150,56 @@ describe("organization session middleware", () => {
         v0: "user_123",
         v1: "org:org_personal:user:admin",
         v2: null,
+      },
+    });
+    expect(auditCreate).toHaveBeenCalledWith({
+      data: {
+        id: expect.any(String),
+        orgId: "org_personal",
+        userId: "user_123",
+        action: "create_organization",
+        resourceType: "organization",
+        resourceId: "org_personal",
+        details: { personal: true },
+      },
+    });
+  });
+
+  test("provides routes an audit writer bound to the real session user", async () => {
+    const auditCreate = mock().mockResolvedValue({});
+    const prisma = {
+      member: {
+        findFirst: mock().mockResolvedValue({ organizationId: "org_123" }),
+        findUnique: mock().mockResolvedValue({ id: "member_123" }),
+      },
+      auditLog: { create: auditCreate },
+    };
+    const app = createProtectedApp(
+      {
+        api: {
+          getSession: mock().mockResolvedValue({
+            session: { id: "session_123" },
+            user,
+          }),
+        },
+      },
+      prisma,
+    );
+
+    const response = await app.request("/v1/orgs/org_123/mutation", {
+      method: "POST",
+    });
+
+    expect(response.status).toBe(200);
+    expect(auditCreate).toHaveBeenCalledWith({
+      data: {
+        id: expect.any(String),
+        orgId: "org_123",
+        userId: "user_123",
+        action: "update_probe",
+        resourceType: "probe",
+        resourceId: "probe_123",
+        details: { changed: true },
       },
     });
   });
