@@ -23,7 +23,7 @@ async function createRecordsApp(schema: Schema) {
     PORT: "0",
     DATABASE_URL: `file:${join(directory, "test.sqlite")}`,
   });
-  const services = createServices(config);
+  const services = await createServices(config);
   services.database.exec(
     readFileSync(
       new URL(
