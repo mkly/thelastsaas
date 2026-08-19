@@ -6,15 +6,21 @@
   "scripts": {
     "start": "bun src/index.ts",
     "dev": "bun --watch src/index.ts",
+    "prisma:generate": "prisma generate --schema prisma/schema.prisma",
+    "prisma:generate:postgres": "bun ../../scripts/generate-postgres-schema.ts && prisma generate --schema prisma/schema.postgres.prisma",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@lastsaas/shared": "workspace:*",
+    "@prisma/client": "^6.16.2",
     "hono": "^4.9.8",
     "zod": "^4.1.11"
   },
   "optionalDependencies": {
     "@aws-sdk/client-s3": "^3.1103.0",
     "@aws-sdk/lib-storage": "^3.1103.0"
+  },
+  "devDependencies": {
+    "prisma": "^6.16.2"
   }
 }
