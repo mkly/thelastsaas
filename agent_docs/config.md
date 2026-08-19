@@ -1,5 +1,15 @@
 # Configuration
 
+For local development, copy the server example from the repository root:
+
+```sh
+cp packages/server/.env.example packages/server/.env
+```
+
+`bun run dev` runs from `packages/server`, where Bun automatically loads this
+file. Replace secrets and public URLs before using the configuration in
+production.
+
 | Variable               | Default                               | Purpose                                            |
 | ---------------------- | ------------------------------------- | -------------------------------------------------- |
 | `NODE_ENV`             | `development`                         | `development`, `test`, or `production`             |
