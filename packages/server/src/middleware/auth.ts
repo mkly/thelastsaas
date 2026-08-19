@@ -18,9 +18,27 @@ export function createAuthMiddleware({
   prisma,
 }: AuthMiddlewareDependencies): MiddlewareHandler<AppEnvironment> {
   return async (context, next) => {
-    const session = await auth.api
-      .getSession({ headers: context.req.raw.headers })
-      .catch(() => null);
+    const authorization = context.req.header("authorization");
+    const cliToken = authorization?.startsWith("Bearer lst_")
+      ? authorization.slice("Bearer lst_".length)
+      : null;
+    const cliSession = cliToken
+      ? await prisma.session.findUnique({
+          where: { token: cliToken },
+          select: {
+            id: true,
+            expiresAt: true,
+            user: { select: { id: true, name: true } },
+          },
+        })
+      : null;
+    const session = cliToken
+      ? cliSession && cliSession.expiresAt > new Date()
+        ? { session: cliSession, user: cliSession.user }
+        : null
+      : await auth.api
+          .getSession({ headers: context.req.raw.headers })
+          .catch(() => null);
 
     if (!session?.session || !session.user) {
       return context.json(
