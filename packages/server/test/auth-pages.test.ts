@@ -1,0 +1,221 @@
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { createApp } from "../src/app";
+import type { AuthEmail } from "../src/auth";
+import { loadConfig } from "../src/config";
+import { closeServices, createServices } from "../src/services";
+
+const migration = readFileSync(
+  new URL(
+    "../prisma/migrations/20260819015000_init/migration.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const cleanups: Array<() => Promise<void>> = [];
+
+afterEach(async () => {
+  for (const cleanup of cleanups.splice(0)) await cleanup();
+});
+
+function createAuthPageApp(options: { google?: boolean } = {}) {
+  const directory = mkdtempSync(join(tmpdir(), "lastsaas-auth-pages-"));
+  const emails: AuthEmail[] = [];
+  const config = loadConfig({
+    NODE_ENV: "test",
+    PORT: "3000",
+    DATABASE_URL: `file:${join(directory, "test.db")}`,
+    BETTER_AUTH_SECRET: "test-secret-that-is-at-least-32-characters",
+    BETTER_AUTH_URL: "http://localhost:3000",
+    GOOGLE_CLIENT_ID: options.google ? "google-client-id" : "",
+    GOOGLE_CLIENT_SECRET: options.google ? "google-client-secret" : "",
+  });
+  const services = createServices(config, async (email) => {
+    emails.push(email);
+  });
+  services.database.exec(migration);
+  const app = createApp({ config, services });
+  cleanups.push(async () => {
+    await closeServices(services);
+    rmSync(directory, { recursive: true, force: true });
+  });
+  return { app, emails };
+}
+
+function formBody(fields: Record<string, string>): URLSearchParams {
+  return new URLSearchParams(fields);
+}
+
+async function signUp(
+  app: ReturnType<typeof createAuthPageApp>["app"],
+  password = "initial-password",
+) {
+  return app.request("http://localhost:3000/auth/signup", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: formBody({
+      name: "Auth User",
+      email: "auth-user@example.com",
+      password,
+    }),
+  });
+}
+
+async function login(
+  app: ReturnType<typeof createAuthPageApp>["app"],
+  password: string,
+) {
+  return app.request("http://localhost:3000/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: formBody({ email: "auth-user@example.com", password }),
+  });
+}
+
+describe("browser auth pages", () => {
+  test("renders the root and auth forms before protected routes", async () => {
+    const { app } = createAuthPageApp();
+
+    const root = await app.request("http://localhost:3000/");
+    expect(root.status).toBe(200);
+    expect(await root.text()).toContain('<a href="/auth/login">Login</a>');
+
+    for (const [path, heading] of [
+      ["/auth/login", "Login"],
+      ["/auth/signup", "Sign Up"],
+      ["/auth/magic-link", "Magic Link"],
+      ["/auth/forgot-password", "Forgot Password"],
+      ["/auth/reset-password?token=test-token", "Reset Password"],
+    ]) {
+      const response = await app.request(`http://localhost:3000${path}`);
+      expect(response.status).toBe(200);
+      expect(await response.text()).toContain(`<h1>${heading}</h1>`);
+    }
+  });
+
+  test("signs up, logs in, renders the dashboard, and logs out", async () => {
+    const { app } = createAuthPageApp();
+
+    const signup = await signUp(app);
+    expect(signup.status).toBe(302);
+    expect(signup.headers.get("location")).toBe(
+      "/auth/login?message=Account+created.+Please+login.",
+    );
+
+    const loginResponse = await login(app, "initial-password");
+    expect(loginResponse.status).toBe(302);
+    expect(loginResponse.headers.get("location")).toBe("/auth/dashboard");
+    const cookie = loginResponse.headers.get("set-cookie")?.split(";")[0];
+    expect(cookie).toBeTruthy();
+
+    const dashboard = await app.request(
+      "http://localhost:3000/auth/dashboard",
+      { headers: { Cookie: cookie! } },
+    );
+    expect(dashboard.status).toBe(200);
+    expect(await dashboard.text()).toContain("auth-user@example.com");
+
+    const logout = await app.request("http://localhost:3000/auth/logout", {
+      headers: { Cookie: cookie! },
+    });
+    expect(logout.status).toBe(302);
+    expect(logout.headers.get("set-cookie")).toContain("Max-Age=0");
+  });
+
+  test("sends and verifies a magic link without revealing unknown users", async () => {
+    const { app, emails } = createAuthPageApp();
+    await signUp(app);
+
+    const sent = await app.request("http://localhost:3000/auth/magic-link", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: formBody({ email: "auth-user@example.com" }),
+    });
+    expect(sent.status).toBe(200);
+    expect(await sent.text()).toContain("If an account exists");
+    const email = emails.find((candidate) => candidate.type === "magic-link");
+    expect(email?.to).toBe("auth-user@example.com");
+
+    const verified = await app.request(email!.url);
+    expect(verified.status).toBe(302);
+    expect(verified.headers.get("location")).toContain("/auth/dashboard");
+    expect(verified.headers.get("set-cookie")).toBeTruthy();
+  });
+
+  test("completes password reset and accepts only the new password", async () => {
+    const { app, emails } = createAuthPageApp();
+    await signUp(app);
+
+    const requested = await app.request(
+      "http://localhost:3000/auth/forgot-password",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: formBody({ email: "auth-user@example.com" }),
+      },
+    );
+    expect(requested.status).toBe(200);
+    const email = emails.find(
+      (candidate) => candidate.type === "password-reset",
+    );
+    expect(email).toBeDefined();
+
+    const resetLink = await app.request(email!.url);
+    expect(resetLink.status).toBe(302);
+    const resetLocation = resetLink.headers.get("location");
+    expect(resetLocation).toContain("/auth/reset-password?token=");
+    const token = new URL(
+      resetLocation!,
+      "http://localhost:3000",
+    ).searchParams.get("token");
+    expect(token).toBeTruthy();
+
+    const reset = await app.request(
+      "http://localhost:3000/auth/reset-password",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: formBody({ token: token!, newPassword: "replacement-password" }),
+      },
+    );
+    expect(reset.status).toBe(302);
+    expect(
+      (await login(app, "initial-password")).headers.get("location"),
+    ).toContain("error=Invalid+credentials");
+    expect(
+      (await login(app, "replacement-password")).headers.get("location"),
+    ).toBe("/auth/dashboard");
+  });
+
+  test("starts configured Google OAuth and preserves a safe auth next path", async () => {
+    const { app } = createAuthPageApp({ google: true });
+
+    const loginPage = await app.request("http://localhost:3000/auth/login");
+    expect(await loginPage.text()).toContain("Continue with Google");
+
+    const response = await app.request(
+      "http://localhost:3000/auth/google?next=%2Fauth%2Fdevice%2Fauthorize%3Fstate%3Dcli",
+    );
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toStartWith(
+      "https://accounts.google.com/",
+    );
+    expect(response.headers.get("set-cookie")).toBeTruthy();
+  });
+
+  test("escapes auth-page query values and rejects external next redirects", async () => {
+    const { app } = createAuthPageApp();
+    const page = await app.request(
+      "http://localhost:3000/auth/signup?email=%22%3E%3Cscript%3Ebad%3C%2Fscript%3E&error=%3Cb%3Ebad%3C%2Fb%3E&next=https%3A%2F%2Fexample.com",
+    );
+    const html = await page.text();
+
+    expect(html).not.toContain("<script>");
+    expect(html).not.toContain("<b>bad</b>");
+    expect(html).toContain("&lt;script&gt;bad&lt;/script&gt;");
+    expect(html).toContain('action="/auth/signup"');
+  });
+});
