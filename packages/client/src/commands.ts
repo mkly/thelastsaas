@@ -4,6 +4,7 @@ import { registerAccessCommands } from "./commands/access";
 import { registerAuthCommands } from "./commands/auth";
 import { registerCollections } from "./commands/collections";
 import { registerRecords } from "./commands/records";
+import { registerSkills } from "./commands/skills";
 
 export type CommandRegistrar = (program: Command) => void;
 
@@ -13,4 +14,5 @@ export const commandRegistrars: readonly CommandRegistrar[] = [
   registerCollections,
   registerRecords,
   registerAccessCommands,
+  registerSkills,
 ];
