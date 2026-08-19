@@ -263,33 +263,38 @@ function toDateTime(value: Date | string): DateTime {
   return parsed.toUTC();
 }
 
+/**
+ * Expand one rule within the window in a single pass. `between` with an
+ * iterator stops as soon as a cap is hit; repeated `after()` calls would
+ * restart iteration from DTSTART every time and turn expansion quadratic.
+ */
 function expandRule(
   rule: RRuleSet,
   window: NormalizedWindow,
   limits: RecurrenceLimits,
   initialQueryCount: number,
 ): { occurrences: Date[]; queryCount: number } {
-  const occurrences: Date[] = [];
-  let queryCount = initialQueryCount;
-  let cursor = window.from;
-  let inclusive = true;
+  const queryBudget = Math.max(
+    limits.maxOccurrencesPerQuery - initialQueryCount,
+    0,
+  );
+  const cap = Math.min(limits.maxOccurrencesPerRecord, queryBudget);
+  let capped = false;
 
-  while (true) {
-    const occurrence = rule.after(cursor, inclusive);
-    if (!occurrence || occurrence.getTime() > window.to.getTime()) break;
+  const occurrences = rule.between(window.from, window.to, true, (_, count) => {
+    if (count >= cap) {
+      capped = true;
+      return false;
+    }
+    return true;
+  });
 
+  if (capped) {
     if (occurrences.length >= limits.maxOccurrencesPerRecord) {
       throw new RecurrenceRecordLimitError(limits.maxOccurrencesPerRecord);
     }
-    if (queryCount >= limits.maxOccurrencesPerQuery) {
-      throw new RecurrenceQueryLimitError(limits.maxOccurrencesPerQuery);
-    }
-
-    occurrences.push(occurrence);
-    queryCount += 1;
-    cursor = occurrence;
-    inclusive = false;
+    throw new RecurrenceQueryLimitError(limits.maxOccurrencesPerQuery);
   }
 
-  return { occurrences, queryCount };
+  return { occurrences, queryCount: initialQueryCount + occurrences.length };
 }

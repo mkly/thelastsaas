@@ -61,6 +61,23 @@ describe("recurrence engine", () => {
     ).toThrow(InvalidRecurrenceError);
   });
 
+  it("expands a two-year daily series in a single pass", () => {
+    const daily = [
+      "DTSTART;TZID=America/New_York:20260101T090000",
+      "RRULE:FREQ=DAILY",
+    ].join("\n");
+    const started = performance.now();
+    const occurrences = expandRecurrence(daily, {
+      from: "2026-01-01T00:00:00Z",
+      to: "2028-01-01T00:00:00Z",
+    });
+
+    expect(occurrences.length).toBe(730);
+    expect(occurrences[0]?.toISOString()).toBe("2026-01-01T14:00:00.000Z");
+    // the earlier after()-per-occurrence loop needed minutes for this window
+    expect(performance.now() - started).toBeLessThan(5_000);
+  });
+
   it("uses distinct errors for window, record, and query caps", () => {
     const daily = "DTSTART;TZID=UTC:20260101T000000\nRRULE:FREQ=DAILY;COUNT=10";
     expect(() =>
