@@ -3,8 +3,15 @@ import { z } from "zod";
 import type { Storage } from "./storage/interface";
 
 const environmentSchema = z.object({
+  NODE_ENV: z
+    .enum(["development", "test", "production"])
+    .default("development"),
   PORT: z.coerce.number().int().min(0).max(65_535).default(8787),
   DATABASE_URL: z.string().default("file:./data/lastsaas.db"),
+  BETTER_AUTH_SECRET: z.string().min(32).optional(),
+  BETTER_AUTH_URL: z.string().url().optional(),
+  GOOGLE_CLIENT_ID: z.string().default(""),
+  GOOGLE_CLIENT_SECRET: z.string().default(""),
   STORAGE_TYPE: z.enum(["local", "s3"]).default("local"),
   STORAGE_PATH: z.string().default("./data/files"),
   S3_ENDPOINT: z.string().default(""),
@@ -18,6 +25,10 @@ const environmentSchema = z.object({
 export interface AppConfig {
   port: number;
   databaseUrl: string;
+  betterAuthSecret: string;
+  betterAuthUrl: string;
+  googleClientId: string;
+  googleClientSecret: string;
   storageType: "local" | "s3";
   storagePath: string;
   s3Endpoint: string;
@@ -32,9 +43,28 @@ export function loadConfig(
   environment: Record<string, string | undefined> = process.env,
 ): AppConfig {
   const parsed = environmentSchema.parse(environment);
+  if (
+    Boolean(parsed.GOOGLE_CLIENT_ID) !== Boolean(parsed.GOOGLE_CLIENT_SECRET)
+  ) {
+    throw new Error(
+      "GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be provided together",
+    );
+  }
+  if (parsed.NODE_ENV === "production" && !parsed.BETTER_AUTH_SECRET) {
+    throw new Error("BETTER_AUTH_SECRET is required in production");
+  }
+  if (parsed.NODE_ENV === "production" && !parsed.BETTER_AUTH_URL) {
+    throw new Error("BETTER_AUTH_URL is required in production");
+  }
+
   return {
     port: parsed.PORT,
     databaseUrl: parsed.DATABASE_URL,
+    betterAuthSecret:
+      parsed.BETTER_AUTH_SECRET ?? "development-only-change-before-production",
+    betterAuthUrl: parsed.BETTER_AUTH_URL ?? `http://localhost:${parsed.PORT}`,
+    googleClientId: parsed.GOOGLE_CLIENT_ID,
+    googleClientSecret: parsed.GOOGLE_CLIENT_SECRET,
     storageType: parsed.STORAGE_TYPE,
     storagePath: parsed.STORAGE_PATH,
     s3Endpoint: parsed.S3_ENDPOINT,

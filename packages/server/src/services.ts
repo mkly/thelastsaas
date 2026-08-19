@@ -1,11 +1,15 @@
+import { PrismaClient } from "@prisma/client";
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
 import type { AppConfig } from "./config";
+import { createAuth, type Auth, type AuthEmailSender } from "./auth";
 
 export interface AppServices {
   database: Database;
+  prisma: PrismaClient;
+  auth: Auth;
 }
 
 function sqlitePath(databaseUrl: string): string {
@@ -19,15 +23,21 @@ function sqlitePath(databaseUrl: string): string {
   return resolve(path);
 }
 
-export function createServices(config: AppConfig): AppServices {
+export function createServices(
+  config: AppConfig,
+  sendAuthEmail?: AuthEmailSender,
+): AppServices {
   const path = sqlitePath(config.databaseUrl);
   if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
 
   const database = new Database(path, { create: true });
   database.exec("PRAGMA foreign_keys = ON");
-  return { database };
+  const prisma = new PrismaClient({ datasourceUrl: config.databaseUrl });
+  const auth = createAuth(prisma, config, sendAuthEmail);
+  return { database, prisma, auth };
 }
 
-export function closeServices(services: AppServices): void {
+export async function closeServices(services: AppServices): Promise<void> {
   services.database.close();
+  await services.prisma.$disconnect();
 }

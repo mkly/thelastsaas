@@ -2,6 +2,7 @@ import { Hono } from "hono";
 
 import type { AppConfig } from "./config";
 import type { AppEnvironment } from "./env";
+import { createAuthMiddleware } from "./middleware/auth";
 import { domainRouters } from "./routes";
 import type { AppServices } from "./services";
 
@@ -21,6 +22,17 @@ export function createApp({
     context.set("services", services);
     await next();
   });
+
+  app.on(["GET", "POST"], "/api/auth/*", (context) =>
+    services.auth.handler(context.req.raw),
+  );
+
+  const authMiddleware = createAuthMiddleware({
+    auth: services.auth,
+    prisma: services.prisma,
+  });
+  app.use("/v1/orgs/:orgId", authMiddleware);
+  app.use("/v1/orgs/:orgId/*", authMiddleware);
 
   for (const { basePath, router } of domainRouters) {
     app.route(basePath, router);
