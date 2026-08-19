@@ -184,6 +184,59 @@ describe("recurring notification schedules", () => {
       }),
     ).toBe(3);
   });
+
+  test("drains a dense backlog in bounded per-poll chunks", async () => {
+    const services = await createSchedulerServices();
+    // A cap smaller than the production one keeps the assertion cheap; the
+    // chunking behavior under test is identical at either size.
+    const processor = new NotificationScheduleProcessor(
+      services.prisma,
+      services.notificationQueue,
+      5,
+    );
+    const recurrence = [
+      "DTSTART;TZID=UTC:20260301T000000",
+      "RRULE:FREQ=MINUTELY;COUNT=12",
+    ].join("\n");
+    await services.prisma.notificationSchedule.create({
+      data: {
+        id: "schedule_dense",
+        orgId: "org_test",
+        userId: "user_test",
+        dedupeKey: "dense-backlog",
+        type: "heartbeat",
+        message: "Heartbeat",
+        recurrence,
+      },
+    });
+
+    const now = new Date("2026-03-01T01:00:00.000Z");
+    expect(await processor.processDue(now)).toBe(5);
+    expect(
+      await services.prisma.notificationSchedule.findUnique({
+        where: { id: "schedule_dense" },
+        select: { status: true, nextOccurrenceAt: true },
+      }),
+    ).toEqual({
+      status: "scheduled",
+      nextOccurrenceAt: new Date("2026-03-01T00:05:00.000Z"),
+    });
+
+    expect(await processor.processDue(now)).toBe(5);
+    expect(await processor.processDue(now)).toBe(2);
+    expect(
+      await services.prisma.notification.count({
+        where: { scheduleId: "schedule_dense" },
+      }),
+    ).toBe(12);
+    expect(
+      await services.prisma.notificationSchedule.findUnique({
+        where: { id: "schedule_dense" },
+        select: { status: true, nextOccurrenceAt: true },
+      }),
+    ).toEqual({ status: "sent", nextOccurrenceAt: null });
+    expect(await processor.processDue(now)).toBe(0);
+  });
 });
 
 describe("SQLite scheduler lifecycle", () => {

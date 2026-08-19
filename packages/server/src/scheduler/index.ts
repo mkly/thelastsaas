@@ -3,7 +3,7 @@ import { Cron } from "croner";
 
 import type { AppConfig } from "../config";
 import { databaseProvider } from "../config";
-import { expandRecurrence, parseRecurrence } from "../lib/recurrence";
+import { parseRecurrence } from "../lib/recurrence";
 import type { NotificationQueue } from "../notifications/queue";
 
 const SQLITE_POLL_PATTERN = "*/10 * * * * *";
@@ -12,6 +12,7 @@ const POSTGRES_QUEUE = "lastsaas-background";
 const DEFAULT_BATCH_SIZE = 25;
 const PROCESSING_STALE_AFTER_MS = 5 * 60_000;
 const RECURRENCE_CHUNK_DAYS = 731;
+const MAX_OCCURRENCES_PER_POLL = 500;
 const DAY_MS = 24 * 60 * 60_000;
 
 function dataObject(value: Prisma.JsonValue | null): object | undefined {
@@ -55,6 +56,7 @@ export class NotificationScheduleProcessor {
   constructor(
     private readonly prisma: PrismaClient,
     private readonly queue: NotificationQueue,
+    private readonly maxOccurrencesPerPoll = MAX_OCCURRENCES_PER_POLL,
   ) {}
 
   async processDue(
@@ -180,27 +182,37 @@ export class NotificationScheduleProcessor {
       return 0;
     }
 
-    // Bound each expansion to the recurrence library's supported window. A
-    // schedule with a large backlog advances its persisted cursor on each poll.
+    // Bound each expansion by both window and occurrence count: a dense rule
+    // (hourly or finer) with a long backlog would otherwise blow past the
+    // recurrence expansion limits and wedge every poll. Either bound leaves the
+    // persisted cursor on the first unprocessed occurrence, so the backlog
+    // drains one chunk per poll.
     const chunkEnd = new Date(
       Math.min(
         now.getTime(),
         firstUnprocessed.getTime() + RECURRENCE_CHUNK_DAYS * DAY_MS,
       ),
     );
-    const occurrences = expandRecurrence(recurrence, {
-      from: firstUnprocessed,
-      to: chunkEnd,
-    });
+    const occurrences = parsed.rule.between(
+      firstUnprocessed,
+      chunkEnd,
+      true,
+      (_, count) => count < this.maxOccurrencesPerPoll,
+    );
 
     for (const occurrence of occurrences) {
       await this.enqueueOccurrence(row, occurrence);
     }
 
-    const nextOccurrence = parsed.rule.after(chunkEnd, false);
+    const lastEnqueued = occurrences.at(-1);
+    const cursorFrom =
+      lastEnqueued && occurrences.length >= this.maxOccurrencesPerPoll
+        ? lastEnqueued
+        : chunkEnd;
+    const nextOccurrence = parsed.rule.after(cursorFrom, false);
     await this.finishRecurringClaim(
       row.id,
-      occurrences.at(-1) ?? row.lastEnqueuedAt,
+      lastEnqueued ?? row.lastEnqueuedAt,
       nextOccurrence,
     );
     return occurrences.length;
