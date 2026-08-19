@@ -229,6 +229,7 @@ export async function importData(
       await createCollection(
         prisma,
         orgId,
+        null,
         collectionData.name,
         collectionData.schema,
         collectionData.description,

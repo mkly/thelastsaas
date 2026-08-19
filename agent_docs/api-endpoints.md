@@ -5,6 +5,12 @@ Organization membership discovery and creation use the account-scoped
 `/v1/orgs/:orgId`. They require a Better Auth session cookie or the bearer
 session issued by the RFC 8628 device authorization flow.
 
+Organization membership alone grants no data access. Admins receive wildcard
+authority when the organization is created. Other members need explicit
+Casbin grants. Collection creation requires `write` on `/collections` and
+atomically grants the creator `read`, `write`, and `manage` on the new
+collection; deletion remains a separate permission.
+
 ```text
 # System and authentication
 GET    /health
@@ -34,12 +40,12 @@ GET    /auth/device?user_code=...
 POST   /auth/device/approve
 POST   /auth/device/deny
 
-# Collections
-POST   /v1/orgs/:orgId/collections
-GET    /v1/orgs/:orgId/collections
-GET    /v1/orgs/:orgId/collections/:name
-PATCH  /v1/orgs/:orgId/collections/:name/schema
-DELETE /v1/orgs/:orgId/collections/:name?confirm=true
+# Collections (required permission)
+POST   /v1/orgs/:orgId/collections                    /collections:write
+GET    /v1/orgs/:orgId/collections                    filters by collection:read
+GET    /v1/orgs/:orgId/collections/:name              collection:read
+PATCH  /v1/orgs/:orgId/collections/:name/schema       collection:manage
+DELETE /v1/orgs/:orgId/collections/:name?confirm=true collection:delete
 
 # Records
 POST   /v1/orgs/:orgId/collections/:name/records
@@ -51,12 +57,12 @@ POST   /v1/orgs/:orgId/collections/:name/records/query
 POST   /v1/orgs/:orgId/collections/:name/records/count
 POST   /v1/orgs/:orgId/collections/:name/records/aggregate
 
-# Files
-POST   /v1/orgs/:orgId/files
-GET    /v1/orgs/:orgId/files?prefix=<path-prefix>
-GET    /v1/orgs/:orgId/files/:id
-GET    /v1/orgs/:orgId/files/:id/content
-DELETE /v1/orgs/:orgId/files/:id
+# Files (`/files` permission)
+POST   /v1/orgs/:orgId/files                     write
+GET    /v1/orgs/:orgId/files?prefix=<path-prefix> read
+GET    /v1/orgs/:orgId/files/:id                  read
+GET    /v1/orgs/:orgId/files/:id/content          read
+DELETE /v1/orgs/:orgId/files/:id                  delete
 
 # Casbin policies and data filters
 GET    /v1/orgs/:orgId/permissions
@@ -90,8 +96,8 @@ PATCH  /v1/orgs/:orgId/notifications/:id
 DELETE /v1/orgs/:orgId/notifications/:id
 
 # Inspection and portability
-GET    /v1/orgs/:orgId/stats
-GET    /v1/orgs/:orgId/audit-log
+GET    /v1/orgs/:orgId/stats       `/system/stats`:read
+GET    /v1/orgs/:orgId/audit-log   `/system/audit`:read
 POST   /v1/orgs/:orgId/export
 POST   /v1/orgs/:orgId/import
 ```

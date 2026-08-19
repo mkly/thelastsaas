@@ -107,7 +107,7 @@ describe("organization export and import", () => {
           id: "member_source_owner",
           organizationId: sourceOrg,
           userId: owner,
-          role: "owner",
+          role: "admin",
         },
         {
           id: "member_source_reader",
@@ -118,7 +118,7 @@ describe("organization export and import", () => {
           id: "member_destination_owner",
           organizationId: destinationOrg,
           userId: owner,
-          role: "owner",
+          role: "admin",
         },
       ],
     });
@@ -328,7 +328,7 @@ describe("organization export and import", () => {
         id: "member_invalid_owner",
         organizationId: orgId,
         userId: owner,
-        role: "owner",
+        role: "admin",
       },
     });
     await prisma.casbinRule.createMany({

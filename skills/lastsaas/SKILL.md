@@ -200,6 +200,14 @@ Casbin is the collection-level gate. Row filters use the same Where DSL as
 record queries and support `$user.id`, `$user.email`, and `$org.id`. Field
 filters are plain arrays. If access is surprising, inspect all three layers.
 
+Organization membership does not grant data access. Admins have full
+organization access; members need explicit user or role policies for each
+resource. Creating a collection requires `write` on `/collections` and grants
+the creator `read`, `write`, and `manage` on that new collection, but not
+`delete`. Collection listings omit resources the caller cannot read. Files use
+the separate `/files` resource, and organization statistics and audit logs use
+`/system/stats` and `/system/audit`.
+
 ## Notifications and files
 
 ```bash

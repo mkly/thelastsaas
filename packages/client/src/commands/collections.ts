@@ -115,8 +115,6 @@ export function registerCollections(
         const result = await dependencies.handleResponse<
           CollectionSummary & {
             status: "ok";
-            record_count?: number;
-            sample_records?: Record<string, unknown>[];
           }
         >(response);
 
@@ -133,15 +131,6 @@ export function registerCollections(
                 ? definition
                 : JSON.stringify(definition);
             lines.push(`  ${field.padEnd(24)} ${rendered}`);
-          }
-        }
-        if (result.record_count !== undefined) {
-          lines.push("", `Records: ${result.record_count}`);
-        }
-        if (result.sample_records?.length) {
-          lines.push("", "Sample records:");
-          for (const record of result.sample_records) {
-            lines.push(`  ${JSON.stringify(record)}`);
           }
         }
         dependencies.writeOutput(result, options, lines.join("\n"));

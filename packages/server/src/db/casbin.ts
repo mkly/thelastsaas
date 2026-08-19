@@ -161,9 +161,6 @@ export async function syncMemberRole(
   if (previousRole !== role) {
     await unassignRole(prisma, orgId, userId, previousRole);
   }
-  if (role === "member") {
-    await addPolicy(prisma, orgId, roleSubject(orgId, role), "/*", "read");
-  }
   await assignRole(prisma, orgId, userId, role);
 }
 

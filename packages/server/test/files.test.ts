@@ -123,7 +123,25 @@ function createFilesApp(storage: Storage, maxUploadSize = 50 * 1024 * 1024) {
   app.use("*", async (context, next) => {
     context.set("config", config);
     context.set("services", {
-      prisma: { file: files.model },
+      prisma: {
+        file: files.model,
+        casbinRule: {
+          findMany: async () => [
+            {
+              ptype: "p",
+              v0: "org:org_1:user:admin",
+              v1: "/*",
+              v2: "*",
+            },
+            {
+              ptype: "g",
+              v0: "user_1",
+              v1: "org:org_1:user:admin",
+              v2: null,
+            },
+          ],
+        },
+      },
       storage,
     } as never);
     context.set("orgId", "org_1");

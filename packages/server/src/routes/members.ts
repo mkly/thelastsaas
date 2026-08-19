@@ -6,17 +6,14 @@ import { removeMemberAccess, syncMemberRole } from "../db/casbin";
 import type { AppEnvironment } from "../env";
 import { requirePermission } from "../middleware/permission";
 
-const memberRoleSchema = z.enum(["owner", "admin", "member"]);
-const managedMemberRoleSchema = z.enum(["admin", "member"]);
+const memberRoleSchema = z.enum(["admin", "member"]);
 const listMembersSchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(50),
   offset: z.coerce.number().int().min(0).default(0),
   role: memberRoleSchema.optional(),
   q: z.string().min(1).max(200).optional(),
 });
-const updateMemberRoleSchema = z
-  .object({ role: managedMemberRoleSchema })
-  .strict();
+const updateMemberRoleSchema = z.object({ role: memberRoleSchema }).strict();
 
 function invalidRequest(message: string) {
   return errorResponse("InvalidRequest", message);

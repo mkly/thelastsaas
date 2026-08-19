@@ -118,6 +118,8 @@ const portableDataSchema = z
 
 const manageExport = requirePermission("manage", () => "/system/export");
 const manageImport = requirePermission("manage", () => "/system/import");
+const readStats = requirePermission("read", () => "/system/stats");
+const readAudit = requirePermission("read", () => "/system/audit");
 
 function auditLimit(rawLimit: string | undefined): number {
   if (!rawLimit) return DEFAULT_AUDIT_LIMIT;
@@ -127,14 +129,14 @@ function auditLimit(rawLimit: string | undefined): number {
 }
 
 export const systemRouter = new Hono<AppEnvironment>()
-  .get("/stats", async (context) => {
+  .get("/stats", readStats, async (context) => {
     const stats = await getStats(
       context.get("services").prisma,
       context.get("orgId"),
     );
     return context.json({ status: "ok" as const, ...stats });
   })
-  .get("/audit-log", async (context) => {
+  .get("/audit-log", readAudit, async (context) => {
     const entries = await getAuditLog(
       context.get("services").prisma,
       context.get("orgId"),

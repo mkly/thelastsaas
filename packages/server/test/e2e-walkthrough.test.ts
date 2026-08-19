@@ -275,19 +275,6 @@ describe("end-to-end walkthrough", () => {
       );
     }
 
-    // Accepting as "member" auto-grants role:member read on /*; drop it so
-    // the submitter's access flows only through the filtered custom role.
-    await json(
-      await app.request(`/v1/orgs/${orgId}/permissions/policies`, {
-        ...jsonRequest(admin.token, {
-          subject: "role:member",
-          resource: "/*",
-          action: "read",
-        }),
-        method: "DELETE",
-      }),
-      200,
-    );
     for (const action of ["read", "write"] as const) {
       await json(
         await app.request(
@@ -489,7 +476,6 @@ describe("end-to-end walkthrough", () => {
       "cancel_invitation",
       "update_member_role",
       "add_policy",
-      "remove_policy",
       "assign_role",
       "set_row_filter",
       "set_field_filter",

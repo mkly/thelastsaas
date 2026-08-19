@@ -29,7 +29,7 @@ describe("auth commands", () => {
     ]);
   });
 
-  test("whoami authenticates the stats request and reports session context", async () => {
+  test("whoami authenticates membership without requiring organization stats", async () => {
     const directory = mkdtempSync(join(tmpdir(), "lastsaas-whoami-"));
     temporaryDirectories.push(directory);
     const configPath = join(directory, "config.json");
@@ -51,20 +51,24 @@ describe("auth commands", () => {
         {
           configPath,
           fetchImpl: async (input, init) => {
-            expect(String(input)).toBe(
-              "https://saas.example/v1/orgs/org_default/stats",
-            );
+            expect(String(input)).toBe("https://saas.example/v1/orgs");
             authorizations.push(
               new Headers(init?.headers).get("authorization"),
             );
-            return Response.json({ collections: 2, status: "ok" });
+            return Response.json({
+              status: "ok",
+              organizations: [
+                { id: "org_default", name: "Origin", role: "member" },
+              ],
+            });
           },
         },
       );
 
       expect(authorizations).toEqual(["Bearer better-auth-token"]);
       expect(result.organization).toBe("org_default");
-      expect(result.stats).toEqual({ collections: 2, status: "ok" });
+      expect(result.organization_name).toBe("Origin");
+      expect(result.role).toBe("member");
       expect(log).toHaveBeenCalledTimes(1);
     } finally {
       log.mockRestore();

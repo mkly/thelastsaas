@@ -22,10 +22,26 @@ function createSystemApp(prisma: Record<string, unknown>) {
     },
     handler: mock(),
   };
+  const casbinRule = {
+    findMany: mock().mockResolvedValue([
+      {
+        ptype: "p",
+        v0: "org:org_123:user:admin",
+        v1: "/*",
+        v2: "*",
+      },
+      {
+        ptype: "g",
+        v0: user.id,
+        v1: "org:org_123:user:admin",
+        v2: null,
+      },
+    ]),
+  };
 
   return createApp({
     config: {} as never,
-    services: { auth, prisma: { member, ...prisma } } as never,
+    services: { auth, prisma: { member, casbinRule, ...prisma } } as never,
   });
 }
 

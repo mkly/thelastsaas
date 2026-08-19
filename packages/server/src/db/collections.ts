@@ -49,6 +49,7 @@ function serializeCollection(collection: {
 export async function createCollection(
   prisma: PrismaClient,
   orgId: string,
+  creatorUserId: string | null,
   name: string,
   schema: Schema,
   description = "",
@@ -57,14 +58,28 @@ export async function createCollection(
   if (errors.length > 0) throw new SchemaValidationError(errors);
 
   try {
-    const collection = await prisma.collection.create({
-      data: {
-        id: genId(),
-        orgId,
-        name,
-        schema: schemaJson(schema),
-        description,
-      },
+    const collection = await prisma.$transaction(async (transaction) => {
+      const created = await transaction.collection.create({
+        data: {
+          id: genId(),
+          orgId,
+          name,
+          schema: schemaJson(schema),
+          description,
+        },
+      });
+      if (creatorUserId) {
+        await transaction.casbinRule.createMany({
+          data: ["read", "write", "manage"].map((action) => ({
+            orgId,
+            ptype: "p",
+            v0: creatorUserId,
+            v1: `/collections/${name}`,
+            v2: action,
+          })),
+        });
+      }
+      return created;
     });
     return serializeCollection(collection);
   } catch (error) {
@@ -91,27 +106,7 @@ export async function describeCollection(
   orgId: string,
   name: string,
 ) {
-  const collection = await getCollection(prisma, orgId, name);
-  const [recordCount, samples] = await Promise.all([
-    prisma.record.count({ where: { orgId, collectionId: collection.id } }),
-    prisma.record.findMany({
-      where: { orgId, collectionId: collection.id },
-      orderBy: { createdAt: "desc" },
-      take: 5,
-    }),
-  ]);
-
-  return {
-    ...serializeCollection(collection),
-    record_count: recordCount,
-    sample_records: samples.map((record) => ({
-      id: record.id,
-      data: record.data,
-      created_by: record.createdBy,
-      created_at: record.createdAt.toISOString(),
-      updated_at: record.updatedAt.toISOString(),
-    })),
-  };
+  return serializeCollection(await getCollection(prisma, orgId, name));
 }
 
 export async function updateCollectionSchema(
@@ -160,7 +155,16 @@ export async function dropCollection(
   name: string,
 ): Promise<void> {
   const collection = await getCollection(prisma, orgId, name);
-  await prisma.collection.delete({ where: { id: collection.id } });
+  await prisma.$transaction(async (transaction) => {
+    await transaction.collection.delete({ where: { id: collection.id } });
+    await transaction.casbinRule.deleteMany({
+      where: {
+        orgId,
+        ptype: "p",
+        v1: `/collections/${name}`,
+      },
+    });
+  });
 }
 
 export async function getCollection(

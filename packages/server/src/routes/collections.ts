@@ -16,7 +16,9 @@ import {
   listCollections,
   updateCollectionSchema,
 } from "../db/collections";
+import { createOrgEnforcer } from "../db/casbin";
 import type { AppEnvironment } from "../env";
+import { requirePermission } from "../middleware/permission";
 
 const fieldDefinitionSchema = z.union([
   z.string(),
@@ -84,14 +86,29 @@ function collectionError(
   throw error;
 }
 
+const createCollections = requirePermission("write", () => "/collections");
+const readCollection = requirePermission(
+  "read",
+  (context) => `/collections/${context.req.param("name")}`,
+);
+const manageCollection = requirePermission(
+  "manage",
+  (context) => `/collections/${context.req.param("name")}`,
+);
+const deleteCollection = requirePermission(
+  "delete",
+  (context) => `/collections/${context.req.param("name")}`,
+);
+
 export const collectionsRouter = new Hono<AppEnvironment>()
-  .post("/", async (context) => {
+  .post("/", createCollections, async (context) => {
     const body = await parseJson(context, createBodySchema);
     if (!body.success) return body.response;
     try {
       const collection = await createCollection(
         context.get("services").prisma,
         context.get("orgId"),
+        context.get("userId"),
         body.data.name,
         body.data.schema as Schema,
         body.data.description,
@@ -109,9 +126,29 @@ export const collectionsRouter = new Hono<AppEnvironment>()
       context.get("services").prisma,
       context.get("orgId"),
     );
-    return context.json({ status: "ok" as const, collections });
+    const enforcer = await createOrgEnforcer(
+      context.get("services").prisma,
+      context.get("orgId"),
+    );
+    const visibleCollections = (
+      await Promise.all(
+        collections.map(async (collection) =>
+          (await enforcer.enforce(
+            context.get("userId"),
+            `/collections/${collection.name}`,
+            "read",
+          ))
+            ? collection
+            : null,
+        ),
+      )
+    ).filter((collection) => collection !== null);
+    return context.json({
+      status: "ok" as const,
+      collections: visibleCollections,
+    });
   })
-  .get("/:name", async (context) => {
+  .get("/:name", readCollection, async (context) => {
     try {
       const collection = await describeCollection(
         context.get("services").prisma,
@@ -123,7 +160,7 @@ export const collectionsRouter = new Hono<AppEnvironment>()
       return collectionError(context, error);
     }
   })
-  .patch("/:name/schema", async (context) => {
+  .patch("/:name/schema", manageCollection, async (context) => {
     const body = await parseJson(context, updateBodySchema);
     if (!body.success) return body.response;
     try {
@@ -146,7 +183,7 @@ export const collectionsRouter = new Hono<AppEnvironment>()
       return collectionError(context, error);
     }
   })
-  .delete("/:name", async (context) => {
+  .delete("/:name", deleteCollection, async (context) => {
     if (context.req.query("confirm") !== "true") {
       return context.json(
         errorResponse(

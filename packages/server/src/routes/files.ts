@@ -10,6 +10,7 @@ import type { Readable } from "node:stream";
 
 import { createFile, deleteFile, getFile, listFiles } from "../db/files";
 import type { AppEnvironment } from "../env";
+import { requirePermission } from "../middleware/permission";
 import type { Storage, StorageInput } from "../storage/interface";
 
 const MAX_PATH_BYTES = 1024;
@@ -262,8 +263,12 @@ function missingFileResponse(error: FileMissingError) {
   return errorResponse(error.code, error.message);
 }
 
+const readFiles = requirePermission("read", () => "/files");
+const writeFiles = requirePermission("write", () => "/files");
+const deleteFiles = requirePermission("delete", () => "/files");
+
 export const fileRouter = new Hono<AppEnvironment>()
-  .post("/", async (context) => {
+  .post("/", writeFiles, async (context) => {
     const { prisma, storage } = context.get("services");
     const orgId = context.get("orgId");
     const fileId = genId();
@@ -309,7 +314,7 @@ export const fileRouter = new Hono<AppEnvironment>()
       throw error;
     }
   })
-  .get("/", async (context) => {
+  .get("/", readFiles, async (context) => {
     const prefix = context.req.query("prefix") ?? "";
     if (new TextEncoder().encode(prefix).byteLength > MAX_PATH_BYTES) {
       return context.json(
@@ -327,7 +332,7 @@ export const fileRouter = new Hono<AppEnvironment>()
     );
     return context.json({ status: "ok" as const, files });
   })
-  .get("/:id/content", async (context) => {
+  .get("/:id/content", readFiles, async (context) => {
     const { prisma, storage } = context.get("services");
     try {
       const file = await getFile(
@@ -354,7 +359,7 @@ export const fileRouter = new Hono<AppEnvironment>()
       throw error;
     }
   })
-  .get("/:id", async (context) => {
+  .get("/:id", readFiles, async (context) => {
     try {
       const file = await getFile(
         context.get("services").prisma,
@@ -369,7 +374,7 @@ export const fileRouter = new Hono<AppEnvironment>()
       throw error;
     }
   })
-  .delete("/:id", async (context) => {
+  .delete("/:id", deleteFiles, async (context) => {
     const { prisma, storage } = context.get("services");
     const orgId = context.get("orgId");
     const fileId = context.req.param("id");

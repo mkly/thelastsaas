@@ -7,6 +7,7 @@ import { validateRecordData } from "@lastsaas/shared";
 import { Hono } from "hono";
 
 import { loadConfig } from "../src/config";
+import { bootstrapOrgPolicies } from "../src/db/casbin";
 import { validateCollectionRecordData } from "../src/db/collections";
 import type { AppEnvironment } from "../src/env";
 import { collectionsRouter } from "../src/routes/collections";
@@ -39,6 +40,7 @@ async function createCollectionsApp() {
   await services.prisma.organization.create({
     data: { id: "org_test", name: "Test Org", slug: "test-org" },
   });
+  await bootstrapOrgPolicies(services.prisma, "org_test", "user_test");
 
   const app = new Hono<AppEnvironment>();
   app.use("/v1/orgs/:orgId/*", async (context, next) => {
@@ -99,8 +101,6 @@ describe("collections routes", () => {
       expect.objectContaining({
         status: "ok",
         name: "contacts",
-        record_count: 0,
-        sample_records: [],
       }),
     );
 

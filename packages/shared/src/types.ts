@@ -217,7 +217,7 @@ export interface Stats {
   storage_bytes: number;
 }
 
-export type MemberRole = "owner" | "admin" | "member";
+export type MemberRole = "admin" | "member";
 
 export interface Member {
   member_id: string;
