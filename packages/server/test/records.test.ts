@@ -23,7 +23,7 @@ async function createRecordsApp(schema: Schema) {
     PORT: "0",
     DATABASE_URL: `file:${join(directory, "test.sqlite")}`,
   });
-  const services = createServices(config);
+  const services = await createServices(config);
   services.database.exec(
     readFileSync(
       new URL(
@@ -237,7 +237,7 @@ describe("records routes", () => {
     expect(await count.json()).toEqual({ status: "ok", count: 2 });
   });
 
-  test("groups aggregate metrics, applies having, and rejects occurs_between", async () => {
+  test("groups aggregate metrics and applies having", async () => {
     const { app } = await createRecordsApp({
       status: "string",
       amount: "number",
@@ -295,23 +295,125 @@ describe("records routes", () => {
         },
       ],
     });
+  });
 
-    const unsupported = await app.request(
+  test("expands occurs_between after SQL filtering and before pagination", async () => {
+    const { app } = await createRecordsApp({
+      name: "string",
+      status: "string",
+      schedule: "recurrence",
+    });
+    const base = "/v1/orgs/org_test/collections/contacts/records";
+    const dstWithExdate = [
+      "DTSTART;TZID=America/New_York:20260301T090000",
+      "RRULE:FREQ=WEEKLY;COUNT=4",
+      "EXDATE:20260308T090000",
+    ].join("\n");
+    const later = [
+      "DTSTART;TZID=America/New_York:20260315T090000",
+      "RRULE:FREQ=WEEKLY;COUNT=2",
+    ].join("\n");
+    const outsideWindow = [
+      "DTSTART;TZID=America/New_York:20260405T090000",
+      "RRULE:FREQ=WEEKLY;COUNT=2",
+    ].join("\n");
+    await app.request(
+      `${base}/batch`,
+      jsonRequest({
+        records: [
+          { name: "A-no-match", status: "open", schedule: outsideWindow },
+          { name: "B-dst", status: "open", schedule: dstWithExdate },
+          { name: "C-later", status: "open", schedule: later },
+          { name: "D-prefiltered", status: "closed", schedule: later },
+        ],
+      }),
+    );
+
+    const response = await app.request(
+      `${base}/query`,
+      jsonRequest({
+        where: {
+          and: [
+            { status: "open" },
+            {
+              schedule: {
+                occurs_between: [
+                  "2026-03-01T00:00:00Z",
+                  "2026-03-30T00:00:00Z",
+                ],
+              },
+            },
+          ],
+        },
+        order_by: "name",
+        limit: 1,
+        offset: 1,
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      status: "ok",
+      records: [
+        expect.objectContaining({
+          data: expect.objectContaining({ name: "C-later" }),
+          occurrences: ["2026-03-15T13:00:00.000Z", "2026-03-22T13:00:00.000Z"],
+        }),
+      ],
+      total: 2,
+      limit: 1,
+      offset: 1,
+    });
+
+    const fullResponse = await app.request(
       `${base}/query`,
       jsonRequest({
         where: {
           schedule: {
-            occurs_between: ["2026-08-19T00:00:00Z", "2026-08-20T00:00:00Z"],
+            occurs_between: ["2026-03-01T00:00:00Z", "2026-03-30T00:00:00Z"],
+          },
+        },
+        order_by: "name",
+      }),
+    );
+    const full = (await fullResponse.json()) as {
+      records: Array<{ data: { name: string }; occurrences: string[] }>;
+    };
+    expect(full.records.map((record) => record.data.name)).toEqual([
+      "B-dst",
+      "C-later",
+      "D-prefiltered",
+    ]);
+    expect(full.records[0]?.occurrences).toEqual([
+      "2026-03-01T14:00:00.000Z",
+      "2026-03-15T13:00:00.000Z",
+      "2026-03-22T13:00:00.000Z",
+    ]);
+
+    const count = await app.request(
+      `${base}/count`,
+      jsonRequest({
+        where: {
+          schedule: {
+            occurs_between: ["2026-03-01T00:00:00Z", "2026-03-30T00:00:00Z"],
           },
         },
       }),
     );
-    expect(unsupported.status).toBe(400);
-    expect(await unsupported.json()).toEqual(
-      expect.objectContaining({
-        error: "InvalidQueryError",
-        message: expect.stringContaining("not yet supported"),
+    expect(await count.json()).toEqual({ status: "ok", count: 3 });
+
+    const overlongWindow = await app.request(
+      `${base}/query`,
+      jsonRequest({
+        where: {
+          schedule: {
+            occurs_between: ["2026-01-01T00:00:00Z", "2028-01-04T00:00:00Z"],
+          },
+        },
       }),
+    );
+    expect(overlongWindow.status).toBe(400);
+    expect(await overlongWindow.json()).toEqual(
+      expect.objectContaining({ error: "RECURRENCE_WINDOW_LIMIT" }),
     );
   });
 });
