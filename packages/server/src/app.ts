@@ -4,6 +4,8 @@ import type { AppConfig } from "./config";
 import type { AppEnvironment } from "./env";
 import { createAuthMiddleware } from "./middleware/auth";
 import { domainRouters } from "./routes";
+import { authPagesRouter } from "./routes/auth-pages";
+import { homeRouter } from "./routes/home";
 import type { AppServices } from "./services";
 
 export interface CreateAppOptions {
@@ -26,6 +28,9 @@ export function createApp({
   app.on(["GET", "POST"], "/api/auth/*", (context) =>
     services.auth.handler(context.req.raw),
   );
+
+  app.route("/auth", authPagesRouter);
+  app.route("/", homeRouter);
 
   const authMiddleware = createAuthMiddleware({
     auth: services.auth,

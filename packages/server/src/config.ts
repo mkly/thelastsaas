@@ -12,8 +12,19 @@ const environmentSchema = z.object({
   BETTER_AUTH_URL: z.string().url().optional(),
   GOOGLE_CLIENT_ID: z.string().default(""),
   GOOGLE_CLIENT_SECRET: z.string().default(""),
+  SMTP_HOST: z.string().default(""),
+  SMTP_PORT: z.coerce.number().int().min(1).max(65_535).default(587),
+  SMTP_USER: z.string().default(""),
+  SMTP_PASS: z.string().default(""),
+  SMTP_FROM: z.string().default("Last SaaS <notifications@localhost>"),
   STORAGE_TYPE: z.enum(["local", "s3"]).default("local"),
   STORAGE_PATH: z.string().default("./data/files"),
+  MAX_UPLOAD_SIZE: z.coerce
+    .number()
+    .int()
+    .positive()
+    .max(2_147_483_647)
+    .default(50 * 1024 * 1024),
   S3_ENDPOINT: z.string().default(""),
   S3_REGION: z.string().default("us-east-1"),
   S3_BUCKET: z.string().default(""),
@@ -29,8 +40,14 @@ export interface AppConfig {
   betterAuthUrl: string;
   googleClientId: string;
   googleClientSecret: string;
+  smtpHost: string;
+  smtpPort: number;
+  smtpUser: string;
+  smtpPass: string;
+  smtpFrom: string;
   storageType: "local" | "s3";
   storagePath: string;
+  maxUploadSize: number;
   s3Endpoint: string;
   s3Region: string;
   s3Bucket: string;
@@ -65,8 +82,14 @@ export function loadConfig(
     betterAuthUrl: parsed.BETTER_AUTH_URL ?? `http://localhost:${parsed.PORT}`,
     googleClientId: parsed.GOOGLE_CLIENT_ID,
     googleClientSecret: parsed.GOOGLE_CLIENT_SECRET,
+    smtpHost: parsed.SMTP_HOST,
+    smtpPort: parsed.SMTP_PORT,
+    smtpUser: parsed.SMTP_USER,
+    smtpPass: parsed.SMTP_PASS,
+    smtpFrom: parsed.SMTP_FROM,
     storageType: parsed.STORAGE_TYPE,
     storagePath: parsed.STORAGE_PATH,
+    maxUploadSize: parsed.MAX_UPLOAD_SIZE,
     s3Endpoint: parsed.S3_ENDPOINT,
     s3Region: parsed.S3_REGION,
     s3Bucket: parsed.S3_BUCKET,

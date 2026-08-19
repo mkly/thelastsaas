@@ -3,6 +3,9 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "exports": {
+    "./api": "./src/app.ts"
+  },
   "scripts": {
     "start": "bun src/index.ts",
     "dev": "bun --watch src/index.ts",
@@ -14,9 +17,11 @@
     "@lastsaas/shared": "workspace:*",
     "@prisma/client": "^6.16.2",
     "better-auth": "1.5.5",
+    "busboy": "^1.6.0",
     "casbin": "^5.49.0",
     "hono": "^4.9.8",
     "luxon": "^3.7.2",
+    "nodemailer": "^7.0.6",
     "rrule": "^2.8.1",
     "zod": "^4.1.11"
   },
@@ -26,6 +31,8 @@
   },
   "devDependencies": {
     "@types/luxon": "^3.7.1",
+    "@types/busboy": "^1.5.4",
+    "@types/nodemailer": "^7.0.1",
     "prisma": "^6.16.2"
   }
 }

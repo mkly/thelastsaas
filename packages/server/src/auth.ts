@@ -6,7 +6,7 @@ import { bearer, magicLink, organization } from "better-auth/plugins";
 
 import type { AppConfig } from "./config";
 
-const SESSION_EXPIRES_IN = 60 * 60 * 24 * 90;
+export const SESSION_EXPIRES_IN_SECONDS = 60 * 60 * 24 * 90;
 const SESSION_UPDATE_AGE = 60 * 60 * 24;
 
 export interface AuthEmail {
@@ -31,7 +31,7 @@ export function createAuth(
     baseURL: config.betterAuthUrl,
     database: prismaAdapter(prisma, { provider: "sqlite" }),
     session: {
-      expiresIn: SESSION_EXPIRES_IN,
+      expiresIn: SESSION_EXPIRES_IN_SECONDS,
       updateAge: SESSION_UPDATE_AGE,
     },
     emailAndPassword: {

@@ -86,6 +86,17 @@ function createPrismaFixture() {
   const transaction = { casbinRule };
   const prisma = {
     casbinRule,
+    collection: {
+      findUnique: async () => ({
+        id: "collection_tasks",
+        orgId: "org_123",
+        name: "tasks",
+        schema: { title: "string" },
+      }),
+    },
+    rowFilter: {
+      findMany: async () => [],
+    },
     member: {
       findMany: async ({ where }: { where: { organizationId: string } }) =>
         members.filter(
@@ -222,6 +233,26 @@ describe("permission routes", () => {
       }),
     );
     expect(response.status).toBe(201);
+
+    const directCheck = await app.request(
+      "/v1/orgs/org_123/permissions/check",
+      jsonRequest("POST", {
+        user_id: "user_reader",
+        resource: "/collections/tasks",
+        action: "write",
+      }),
+    );
+    expect(await directCheck.json()).toMatchObject({ allowed: true });
+
+    const otherActionCheck = await app.request(
+      "/v1/orgs/org_123/permissions/check",
+      jsonRequest("POST", {
+        user_id: "user_reader",
+        resource: "/collections/tasks",
+        action: "delete",
+      }),
+    );
+    expect(await otherActionCheck.json()).toMatchObject({ allowed: false });
 
     const rejected = await app.request(
       base,

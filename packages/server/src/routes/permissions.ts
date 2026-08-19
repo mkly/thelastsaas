@@ -1,4 +1,4 @@
-import { errorResponse } from "@lastsaas/shared";
+import { CollectionNotFoundError, errorResponse } from "@lastsaas/shared";
 import type { PrismaClient } from "@prisma/client";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -11,6 +11,13 @@ import {
   roleSubject,
   unassignRole,
 } from "../db/casbin";
+import { getCollection } from "../db/collections";
+import {
+  deleteRowFilter,
+  listRowFilters,
+  setRowFilter,
+} from "../db/rowFilters";
+import { whereSchema } from "../db/query/validation";
 import type { AppEnvironment } from "../env";
 import { requirePermission } from "../middleware/permission";
 
@@ -37,6 +44,14 @@ const checkSchema = z
     user_id: z.string().min(1),
     resource: z.string().min(1).max(512).startsWith("/"),
     action: z.enum(permissionActions),
+  })
+  .strict();
+const rowFilterSchema = z
+  .object({
+    collection: z.string().min(1),
+    role: roleSchema.shape.role,
+    action: z.enum(["read", "write", "delete"]),
+    condition: whereSchema,
   })
   .strict();
 
@@ -312,4 +327,85 @@ export const permissionRouter = new Hono<AppEnvironment>()
       resource: parsed.data.resource,
       action: parsed.data.action,
     });
+  })
+  .get("/row-filters", managePermissions, async (context) => {
+    const orgId = context.get("orgId");
+    const prisma = context.get("services").prisma;
+    const collectionName = context.req.query("collection");
+    let collectionId: string | undefined;
+
+    if (collectionName) {
+      try {
+        collectionId = (await getCollection(prisma, orgId, collectionName)).id;
+      } catch (error) {
+        if (error instanceof CollectionNotFoundError) {
+          return context.json({ status: "ok" as const, row_filters: [] });
+        }
+        throw error;
+      }
+    }
+
+    const rows = await listRowFilters(prisma, orgId, collectionId);
+    return context.json({
+      status: "ok" as const,
+      row_filters: rows.map((row) => ({
+        id: row.id,
+        collection: row.collection.name,
+        collection_id: row.collectionId,
+        role: row.role,
+        action: row.action,
+        condition: row.condition,
+        created_at: row.createdAt.toISOString(),
+        updated_at: row.updatedAt.toISOString(),
+      })),
+    });
+  })
+  .post("/row-filters", managePermissions, async (context) => {
+    const parsed = rowFilterSchema.safeParse(
+      await context.req.json().catch(() => null),
+    );
+    if (!parsed.success) {
+      return context.json(invalidRequest(validationMessage(parsed.error)), 400);
+    }
+
+    const orgId = context.get("orgId");
+    const prisma = context.get("services").prisma;
+    try {
+      const collection = await getCollection(
+        prisma,
+        orgId,
+        parsed.data.collection,
+      );
+      const row = await setRowFilter(
+        prisma,
+        orgId,
+        collection.id,
+        parsed.data.role,
+        parsed.data.action,
+        parsed.data.condition,
+      );
+      await context.get("audit")("set_row_filter", "permission", row.id, {
+        collection: parsed.data.collection,
+        role: parsed.data.role,
+        action: parsed.data.action,
+      });
+      return context.json({ status: "ok" as const, id: row.id });
+    } catch (error) {
+      if (error instanceof CollectionNotFoundError) {
+        return context.json(error.toResponse(), 404);
+      }
+      throw error;
+    }
+  })
+  .delete("/row-filters/:id", managePermissions, async (context) => {
+    const id = context.req.param("id");
+    const orgId = context.get("orgId");
+    if (!(await deleteRowFilter(context.get("services").prisma, orgId, id))) {
+      return context.json(
+        errorResponse("NotFound", "Row filter not found"),
+        404,
+      );
+    }
+    await context.get("audit")("delete_row_filter", "permission", id, {});
+    return context.json({ status: "ok" as const });
   });
