@@ -1,0 +1,26 @@
+{
+  "name": "thelastsaas",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "start": "bun run --cwd packages/server start",
+    "dev": "bun run --cwd packages/server dev",
+    "test": "bun run test:shared && bun run test:server && bun run test:client",
+    "test:shared": "bun test packages/shared",
+    "test:server": "bun test packages/server",
+    "test:client": "bun test packages/client",
+    "typecheck": "bun run --filter '*' typecheck",
+    "lint": "eslint packages/*/{src,test}/**/*.ts",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "eslint": "^9.39.1",
+    "prettier": "^3.6.2",
+    "typescript": "^5.9.2",
+    "typescript-eslint": "^8.46.1"
+  }
+}

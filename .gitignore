@@ -1,3 +1,14 @@
 .envrc
 EXISTING_APP_REPORT.md
 REWRITE_DECISIONS.md
+node_modules/
+.env
+.env.*
+!.env.example
+dist/
+coverage/
+.crabbox/
+data/
+*.db
+*.db-shm
+*.db-wal

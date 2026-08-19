@@ -1,0 +1,16 @@
+{
+  "name": "@lastsaas/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun src/index.ts",
+    "dev": "bun --watch src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@lastsaas/shared": "workspace:*",
+    "hono": "^4.9.8",
+    "zod": "^4.1.11"
+  }
+}
