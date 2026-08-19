@@ -310,4 +310,66 @@ describe("organization export and import", () => {
       canonicalize(structuredClone(sourceData)),
     );
   });
+
+  test("rejects a dump whose collection schema is invalid with 400", async () => {
+    const services = await createExportServices();
+    const { prisma } = services;
+    const orgId = "org_invalid";
+    const owner = "user_invalid_owner";
+
+    await prisma.user.create({
+      data: { id: owner, email: "invalid@example.com", name: "Owner" },
+    });
+    await prisma.organization.create({
+      data: { id: orgId, name: "Invalid", slug: "invalid" },
+    });
+    await prisma.member.create({
+      data: {
+        id: "member_invalid_owner",
+        organizationId: orgId,
+        userId: owner,
+        role: "owner",
+      },
+    });
+    await prisma.casbinRule.createMany({
+      data: [
+        {
+          orgId,
+          ptype: "p",
+          v0: roleSubject(orgId, "admin"),
+          v1: "/*",
+          v2: "*",
+        },
+        { orgId, ptype: "g", v0: owner, v1: roleSubject(orgId, "admin") },
+      ],
+    });
+
+    const response = await createSystemApp(services, orgId, owner).request(
+      `/v1/orgs/${orgId}/import`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          version: 1,
+          collections: [
+            {
+              name: "tasks",
+              schema: { title: "not_a_real_type" },
+              description: "",
+              records: [],
+            },
+          ],
+          files: [],
+          policies: [],
+          role_assignments: [],
+          row_filters: [],
+          field_filters: [],
+          notification_schedules: [],
+        } satisfies ExportData),
+      },
+    );
+
+    expect(response.status).toBe(400);
+    expect(await prisma.collection.count({ where: { orgId } })).toBe(0);
+  });
 });

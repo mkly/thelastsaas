@@ -1,4 +1,8 @@
-import { errorResponse, type ExportData } from "@lastsaas/shared";
+import {
+  LastSaasError,
+  errorResponse,
+  type ExportData,
+} from "@lastsaas/shared";
 import type { Prisma } from "@prisma/client";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -161,11 +165,21 @@ export const systemRouter = new Hono<AppEnvironment>()
       );
     }
     const { status: _status, ...portableData } = parsed.data;
-    const result = await importData(
-      context.get("services").prisma,
-      context.get("orgId"),
-      portableData as ExportData,
-    );
+    let result;
+    try {
+      result = await importData(
+        context.get("services").prisma,
+        context.get("orgId"),
+        portableData as ExportData,
+      );
+    } catch (error) {
+      // A dump can carry a collection the schema validator rejects; that is a
+      // bad request, not a server fault.
+      if (error instanceof LastSaasError) {
+        return context.json(error.toResponse(), 400);
+      }
+      throw error;
+    }
     await context.get("audit")("import_data", "system", null, {
       ...result,
     } as Prisma.InputJsonObject);
