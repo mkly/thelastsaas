@@ -193,21 +193,57 @@ export function compileWhere(
   provider: DbProvider,
   options: CompileOptions = {},
 ): CompiledFragment {
-  const effectiveWhere = andWhere(where, options.extraWhere);
-  if (
-    !effectiveWhere ||
-    (isPlainObject(effectiveWhere) && Object.keys(effectiveWhere).length === 0)
-  ) {
-    return { sql: "", params: [], postFilters: [] };
-  }
-  return compileNode(effectiveWhere, schema, provider, options);
+  const requested = compileOptionalNode(where, schema, provider, options);
+  // The injected predicate comes from policy code rather than from the caller,
+  // so it is exempt from the caller's field allowlist: a row filter keyed on a
+  // field the requester may not read must still narrow the result set instead
+  // of failing the whole query.
+  const injected = compileOptionalNode(
+    options.extraWhere,
+    schema,
+    provider,
+    {},
+  );
+  return andFragments(requested, injected);
 }
 
+function compileOptionalNode(
+  node: Where | null | undefined,
+  schema: Schema,
+  provider: DbProvider,
+  options: CompileOptions,
+): CompiledFragment {
+  if (!node || (isPlainObject(node) && Object.keys(node).length === 0)) {
+    return { sql: "", params: [], postFilters: [] };
+  }
+  return compileNode(node, schema, provider, options, true);
+}
+
+function andFragments(
+  left: CompiledFragment,
+  right: CompiledFragment,
+): CompiledFragment {
+  const postFilters = [...left.postFilters, ...right.postFilters];
+  if (!left.sql) return { ...right, postFilters };
+  if (!right.sql) return { ...left, postFilters };
+  return {
+    sql: `(${left.sql}) AND (${right.sql})`,
+    params: [...left.params, ...right.params],
+    postFilters,
+  };
+}
+
+/**
+ * `conjunctive` is false once compilation descends into an `or` branch or a
+ * `not`, where a deferred post-filter descriptor could not be applied by the
+ * caller without changing the query's meaning.
+ */
 function compileNode(
   node: Where,
   schema: Schema,
   provider: DbProvider,
   options: CompileOptions,
+  conjunctive: boolean,
 ): CompiledFragment {
   const object = node as Record<string, unknown>;
   const keys = Object.keys(object);
@@ -222,17 +258,29 @@ function compileNode(
         schema,
         provider,
         options,
+        conjunctive,
       );
     }
     if (key === "or" && Array.isArray(value)) {
-      return compileBoolList(value as Where[], "OR", schema, provider, options);
+      return compileBoolList(
+        value as Where[],
+        "OR",
+        schema,
+        provider,
+        options,
+        false,
+      );
     }
     if (key === "not" && value !== null && typeof value === "object") {
-      const inner = compileNode(value as Where, schema, provider, options);
-      // Negating a deferred condition cannot safely narrow the SQL candidates.
-      if (inner.postFilters.length > 0 || !inner.sql) {
-        return { sql: "", params: [], postFilters: inner.postFilters };
-      }
+      const inner = compileNode(
+        value as Where,
+        schema,
+        provider,
+        options,
+        false,
+      );
+      // An always-true inner expression cannot narrow the SQL candidates.
+      if (!inner.sql) return { sql: "", params: [], postFilters: [] };
       return {
         sql: `NOT (${inner.sql})`,
         params: inner.params,
@@ -241,7 +289,7 @@ function compileNode(
     }
   }
 
-  return compileLeaf(node as WhereLeaf, schema, provider, options);
+  return compileLeaf(node as WhereLeaf, schema, provider, options, conjunctive);
 }
 
 function compileBoolList(
@@ -250,14 +298,15 @@ function compileBoolList(
   schema: Schema,
   provider: DbProvider,
   options: CompileOptions,
+  conjunctive: boolean,
 ): CompiledFragment {
   const compiled = nodes.map((node) =>
-    compileNode(node, schema, provider, options),
+    compileNode(node, schema, provider, options, conjunctive),
   );
   const postFilters = compiled.flatMap((part) => part.postFilters);
 
-  // An empty OR branch may be satisfied entirely by a deferred post-filter,
-  // so applying any other OR branch in SQL would incorrectly drop candidates.
+  // An always-true OR branch satisfies the whole disjunction, so applying any
+  // other branch in SQL would incorrectly drop candidate rows.
   if (operator === "OR" && compiled.some((part) => !part.sql)) {
     return { sql: "", params: [], postFilters };
   }
@@ -285,6 +334,7 @@ function compileLeaf(
   schema: Schema,
   provider: DbProvider,
   options: CompileOptions,
+  conjunctive: boolean,
 ): CompiledFragment {
   const clauses: string[] = [];
   const params: unknown[] = [];
@@ -296,6 +346,13 @@ function compileLeaf(
     if (isPlainObject(condition)) {
       for (const [operator, value] of Object.entries(condition)) {
         if (operator === "occurs_between") {
+          if (!conjunctive) {
+            throw new InvalidQueryError(
+              `'occurs_between' is only supported in conjunctive position; ` +
+                `'${fieldName}' appears under 'or' or 'not', where the deferred ` +
+                `post-filter could not be applied without changing the query`,
+            );
+          }
           postFilters.push(
             compileOccursBetween(
               fieldName,

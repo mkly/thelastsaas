@@ -162,6 +162,23 @@ describe("policy seams", () => {
     expect(result.params).toEqual(["Ada", "us"]);
   });
 
+  test("exempts the injected predicate from the caller's field allowlist", () => {
+    const result = compileWhere({ name: "Ada" }, schema, "sqlite", {
+      extraWhere: { region: "us" },
+      isFieldAllowed: (field) => field !== "region",
+    });
+    expect(result.sql).toContain(" AND ");
+    expect(result.params).toEqual(["Ada", "us"]);
+  });
+
+  test("compiles the injected predicate alone when no Where is requested", () => {
+    const result = compileWhere(null, schema, "sqlite", {
+      extraWhere: { region: "us" },
+    });
+    expect(result.sql).toBe("json_extract(data, '$.region') = ?");
+    expect(result.params).toEqual(["us"]);
+  });
+
   test("calls the allowlist for Where and ordering references", () => {
     const allowed = (field: string) => field !== "status";
     expect(() =>
@@ -248,7 +265,7 @@ describe("occurs_between extraction", () => {
     });
   });
 
-  test("keeps safe AND prefilters but widens unsafe OR and NOT expressions", () => {
+  test("keeps safe AND prefilters and rejects non-conjunctive positions", () => {
     const recurrence = { schedule: { occurs_between: window } } as Where;
     const andResult = compileWhere(
       { and: [{ status: "open" }, recurrence] } as Where,
@@ -257,22 +274,40 @@ describe("occurs_between extraction", () => {
     );
     expect(andResult.sql).toContain("status");
     expect(andResult.params).toEqual(["open"]);
+    expect(andResult.postFilters).toHaveLength(1);
 
-    const orResult = compileWhere(
-      { or: [{ status: "open" }, recurrence] } as Where,
+    // A post-filter descriptor carries no boolean position, so the caller can
+    // only apply it as a conjunction — under 'or' or 'not' that would return
+    // the wrong rows, so the compiler rejects it instead.
+    expect(() =>
+      compileWhere(
+        { or: [{ status: "open" }, recurrence] } as Where,
+        schema,
+        "sqlite",
+      ),
+    ).toThrow(/only supported in conjunctive position/);
+
+    expect(() =>
+      compileWhere({ not: recurrence } as Where, schema, "sqlite"),
+    ).toThrow(/only supported in conjunctive position/);
+
+    expect(() =>
+      compileWhere(
+        { and: [{ or: [recurrence, { status: "open" }] }] } as Where,
+        schema,
+        "sqlite",
+      ),
+    ).toThrow(/only supported in conjunctive position/);
+  });
+
+  test("still applies an always-true OR branch as no SQL restriction", () => {
+    const result = compileWhere(
+      { or: [{ status: "open" }, {}] } as Where,
       schema,
       "sqlite",
     );
-    expect(orResult.sql).toBe("");
-    expect(orResult.params).toEqual([]);
-
-    const notResult = compileWhere(
-      { not: recurrence } as Where,
-      schema,
-      "sqlite",
-    );
-    expect(notResult.sql).toBe("");
-    expect(notResult.postFilters).toHaveLength(1);
+    expect(result.sql).toBe("");
+    expect(result.params).toEqual([]);
   });
 
   test("rejects use on non-recurrence fields and malformed windows", () => {
