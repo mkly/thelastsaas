@@ -7,6 +7,7 @@ import { fileRouter } from "./files";
 import { healthRouter } from "./health";
 import { notificationRouter } from "./notifications";
 import { permissionRouter } from "./permissions";
+import { recordsRouter } from "./records";
 import { systemRouter } from "./system";
 
 export interface DomainRouter {
@@ -19,6 +20,10 @@ export const domainRouters: readonly DomainRouter[] = [
   { basePath: "/auth/device", router: deviceAuthRouter },
   { basePath: "/health", router: healthRouter },
   { basePath: "/v1/orgs/:orgId/collections", router: collectionsRouter },
+  {
+    basePath: "/v1/orgs/:orgId/collections/:name/records",
+    router: recordsRouter,
+  },
   { basePath: "/v1/orgs/:orgId/files", router: fileRouter },
   { basePath: "/v1/orgs/:orgId/notifications", router: notificationRouter },
   { basePath: "/v1/orgs/:orgId/permissions", router: permissionRouter },
