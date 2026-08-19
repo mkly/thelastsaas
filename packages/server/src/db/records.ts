@@ -12,6 +12,7 @@ import {
 import { Prisma, type PrismaClient } from "@prisma/client";
 
 import { getCollection, validateCollectionRecordData } from "./collections";
+import { expandRecurrences } from "../lib/recurrence";
 import {
   applyOrgScope,
   compileAggregate,
@@ -105,9 +106,45 @@ function serializedRecord(
 function rejectDeferredFilters(filters: QueryPostFilter[]): void {
   if (filters.some((filter) => filter.kind === "occurs_between")) {
     throw new InvalidQueryError(
-      "'occurs_between' is not yet supported by record queries",
+      "'occurs_between' is only supported by record query and count operations",
     );
   }
+}
+
+type QueryRow = {
+  id: string;
+  data: string | Prisma.JsonObject;
+  created_by: string;
+  created_at: Date;
+  updated_at: Date;
+};
+
+function queryRecordData(row: QueryRow): Record<string, unknown> {
+  const data =
+    typeof row.data === "string" ? (JSON.parse(row.data) as unknown) : row.data;
+  if (!isPlainObject(data)) {
+    throw new SchemaValidationError([
+      "Corrupt record data in database (expected an object)",
+    ]);
+  }
+  return data;
+}
+
+function serializedQueryRecord(
+  row: QueryRow,
+  data: Record<string, unknown>,
+  occurrences?: Date[],
+) {
+  return {
+    id: row.id,
+    data,
+    created_by: row.created_by,
+    created_at: new Date(row.created_at).toISOString(),
+    updated_at: new Date(row.updated_at).toISOString(),
+    ...(occurrences === undefined
+      ? {}
+      : { occurrences: occurrences.map((date) => date.toISOString()) }),
+  };
 }
 
 export async function insertRecord(
@@ -244,7 +281,14 @@ export async function queryRecords(
   const collection = await getCollection(prisma, orgId, collectionName);
   const schema = schemaFromCollection(collection);
   const compiled = compileWhere(where, schema, PROVIDER);
-  rejectDeferredFilters(compiled.postFilters);
+  const recurrenceFilters = compiled.postFilters.filter(
+    (filter) => filter.kind === "occurs_between",
+  );
+  if (recurrenceFilters.length > 1) {
+    throw new InvalidQueryError(
+      "Only one 'occurs_between' clause may be used in a record query",
+    );
+  }
   const scoped = applyOrgScope(
     orgId,
     collection.id,
@@ -254,6 +298,45 @@ export async function queryRecords(
   const order = compileOrderBy(orderBy, schema, PROVIDER);
   const safeLimit = Math.max(1, Math.min(Math.trunc(limit), 1000));
   const safeOffset = Math.max(0, Math.trunc(offset));
+  const recurrenceFilter = recurrenceFilters[0];
+
+  if (recurrenceFilter) {
+    // Pagination must happen after recurrence expansion. Fetch the SQL-filtered
+    // candidate set once so a large offset never turns into repeated database
+    // page crawling and records with no occurrence cannot consume a page.
+    const recordsSql = dialectSql(
+      `SELECT id, data, created_by, created_at, updated_at FROM records WHERE ${scoped.sql} ${order}`,
+      PROVIDER,
+    );
+    const rows = await prisma.$queryRawUnsafe<QueryRow[]>(
+      recordsSql,
+      ...scoped.params,
+    );
+    const candidates = rows.map((row) => ({ row, data: queryRecordData(row) }));
+    const recurringCandidates = candidates.filter(
+      (candidate) => typeof candidate.data[recurrenceFilter.field] === "string",
+    );
+    const expanded = expandRecurrences(
+      recurringCandidates.map(
+        (candidate) => candidate.data[recurrenceFilter.field] as string,
+      ),
+      { from: recurrenceFilter.start, to: recurrenceFilter.end },
+    );
+    const matching = recurringCandidates.flatMap((candidate, index) => {
+      const occurrences = expanded[index] ?? [];
+      return occurrences.length === 0
+        ? []
+        : [serializedQueryRecord(candidate.row, candidate.data, occurrences)];
+    });
+
+    return {
+      records: matching.slice(safeOffset, safeOffset + safeLimit),
+      total: matching.length,
+      limit: safeLimit,
+      offset: safeOffset,
+    };
+  }
+
   const countSql = dialectSql(
     `SELECT COUNT(*) AS count FROM records WHERE ${scoped.sql}`,
     PROVIDER,
@@ -267,28 +350,18 @@ export async function queryRecords(
       countSql,
       ...scoped.params,
     ),
-    prisma.$queryRawUnsafe<
-      Array<{
-        id: string;
-        data: string | Prisma.JsonObject;
-        created_by: string;
-        created_at: Date;
-        updated_at: Date;
-      }>
-    >(recordsSql, ...scoped.params, safeLimit, safeOffset),
+    prisma.$queryRawUnsafe<QueryRow[]>(
+      recordsSql,
+      ...scoped.params,
+      safeLimit,
+      safeOffset,
+    ),
   ]);
 
   return {
-    records: rows.map((row) => ({
-      id: row.id,
-      data:
-        typeof row.data === "string"
-          ? (JSON.parse(row.data) as Record<string, unknown>)
-          : row.data,
-      created_by: row.created_by,
-      created_at: new Date(row.created_at).toISOString(),
-      updated_at: new Date(row.updated_at).toISOString(),
-    })),
+    records: rows.map((row) =>
+      serializedQueryRecord(row, queryRecordData(row)),
+    ),
     total: Number(counts[0]?.count ?? 0),
     limit: safeLimit,
     offset: safeOffset,

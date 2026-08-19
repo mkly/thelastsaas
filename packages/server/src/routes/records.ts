@@ -22,6 +22,12 @@ import {
 } from "../db/records";
 import { whereSchema } from "../db/query/validation";
 import type { AppEnvironment } from "../env";
+import {
+  InvalidRecurrenceError,
+  RecurrenceQueryLimitError,
+  RecurrenceRecordLimitError,
+  RecurrenceWindowLimitError,
+} from "../lib/recurrence";
 
 const dataSchema = z.record(z.string(), z.unknown());
 const insertSchema = z.object({ data: dataSchema }).strict();
@@ -117,6 +123,14 @@ function recordsError(
   }
   if (error instanceof LastSaasError) {
     return context.json(error.toResponse(), 400);
+  }
+  if (
+    error instanceof InvalidRecurrenceError ||
+    error instanceof RecurrenceWindowLimitError ||
+    error instanceof RecurrenceRecordLimitError ||
+    error instanceof RecurrenceQueryLimitError
+  ) {
+    return context.json(errorResponse(error.code, error.message), 400);
   }
   throw error;
 }
