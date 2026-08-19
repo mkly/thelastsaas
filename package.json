@@ -12,7 +12,7 @@
     "test:server": "bun test packages/server",
     "test:client": "bun test packages/client",
     "typecheck": "bun run --filter '*' typecheck",
-    "lint": "eslint packages/*/{src,test}/**/*.ts",
+    "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },
