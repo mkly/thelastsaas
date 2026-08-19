@@ -14,6 +14,7 @@
     "@lastsaas/shared": "workspace:*",
     "@prisma/client": "^6.16.2",
     "better-auth": "1.5.5",
+    "casbin": "^5.49.0",
     "hono": "^4.9.8",
     "luxon": "^3.7.2",
     "rrule": "^2.8.1",
