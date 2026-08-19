@@ -151,6 +151,33 @@ export async function unassignRole(
   });
 }
 
+export async function syncMemberRole(
+  prisma: PrismaClient,
+  orgId: string,
+  userId: string,
+  previousRole: string,
+  role: string,
+): Promise<void> {
+  if (previousRole !== role) {
+    await unassignRole(prisma, orgId, userId, previousRole);
+  }
+  if (role === "member") {
+    await addPolicy(prisma, orgId, roleSubject(orgId, role), "/*", "read");
+  }
+  await assignRole(prisma, orgId, userId, role);
+}
+
+export async function removeMemberAccess(
+  prisma: PrismaClient,
+  orgId: string,
+  userId: string,
+): Promise<void> {
+  await Promise.all([
+    prisma.casbinRule.deleteMany({ where: { orgId, ptype: "g", v0: userId } }),
+    prisma.casbinRule.deleteMany({ where: { orgId, ptype: "p", v0: userId } }),
+  ]);
+}
+
 export async function bootstrapOrgPolicies(
   prisma: PrismaClient,
   orgId: string,
@@ -180,6 +207,5 @@ export async function bootstrapMemberPolicies(
   orgId: string,
   userId: string,
 ): Promise<void> {
-  await addPolicy(prisma, orgId, roleSubject(orgId, "member"), "/*", "read");
-  await assignRole(prisma, orgId, userId, "member");
+  await syncMemberRole(prisma, orgId, userId, "member", "member");
 }

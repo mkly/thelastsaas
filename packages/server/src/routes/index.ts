@@ -2,6 +2,8 @@ import type { Hono } from "hono";
 
 import type { AppEnvironment } from "../env";
 import { healthRouter } from "./health";
+import { invitationRouter } from "./invitations";
+import { memberRouter } from "./members";
 import { permissionRouter } from "./permissions";
 
 export interface DomainRouter {
@@ -16,4 +18,6 @@ export const domainRouters: readonly DomainRouter[] = [
     basePath: "/v1/orgs/:orgId/permissions",
     router: permissionRouter,
   },
+  { basePath: "/v1/orgs/:orgId/members", router: memberRouter },
+  { basePath: "/v1/orgs/:orgId/invitations", router: invitationRouter },
 ];

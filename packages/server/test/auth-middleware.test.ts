@@ -23,6 +23,12 @@ function createProtectedApp(auth: unknown, prisma: unknown) {
       userId: context.get("userId"),
     }),
   );
+  app.post("/v1/orgs/:orgId/invitations/accept", (context) =>
+    context.json({
+      orgId: context.get("orgId"),
+      userId: context.get("userId"),
+    }),
+  );
   return app;
 }
 
@@ -79,6 +85,36 @@ describe("organization session middleware", () => {
       },
       select: { id: true },
     });
+  });
+
+  test("allows a session user to reach only invitation acceptance before joining", async () => {
+    const member = {
+      findFirst: mock().mockResolvedValue({ organizationId: "org_personal" }),
+      findUnique: mock().mockResolvedValue(null),
+    };
+    const app = createProtectedApp(
+      {
+        api: {
+          getSession: mock().mockResolvedValue({
+            session: { id: "session_123" },
+            user,
+          }),
+        },
+      },
+      { member },
+    );
+
+    const response = await app.request(
+      "/v1/orgs/org_invited/invitations/accept",
+      { method: "POST" },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      orgId: "org_invited",
+      userId: "user_123",
+    });
+    expect(member.findUnique).not.toHaveBeenCalled();
   });
 
   test("creates a personal org and its default policies on first access", async () => {
