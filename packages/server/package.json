@@ -24,6 +24,7 @@
     "luxon": "^3.7.2",
     "nodemailer": "^7.0.6",
     "pg-boss": "^12.15.0",
+    "rate-limiter-flexible": "^11.2.0",
     "rrule": "^2.8.1",
     "zod": "^4.1.11"
   },

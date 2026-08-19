@@ -8,6 +8,7 @@ import {
   createAccountAuthMiddleware,
   createAuthMiddleware,
 } from "./middleware/auth";
+import { createApiRateLimitMiddleware } from "./middleware/rate-limit";
 import { domainRouters } from "./routes";
 import { authPagesRouter } from "./routes/auth-pages";
 import { downloadsRouter } from "./routes/downloads";
@@ -61,6 +62,14 @@ export function createApp({
   app.use("/v1/orgs", accountAuthMiddleware);
   app.use("/v1/orgs/:orgId", authMiddleware);
   app.use("/v1/orgs/:orgId/*", authMiddleware);
+  app.use(
+    "/v1/*",
+    createApiRateLimitMiddleware({
+      enabled: config.rateLimitEnabled,
+      requests: config.rateLimitRequests,
+      windowSeconds: config.rateLimitWindowSeconds,
+    }),
+  );
 
   for (const { basePath, router } of domainRouters) {
     app.route(basePath, router);

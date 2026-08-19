@@ -25,6 +25,9 @@ const environmentSchema = z.object({
     .positive()
     .max(2_147_483_647)
     .default(50 * 1024 * 1024),
+  RATE_LIMIT_ENABLED: z.stringbool().default(true),
+  RATE_LIMIT_REQUESTS: z.coerce.number().int().positive().default(6_000),
+  RATE_LIMIT_WINDOW_SECONDS: z.coerce.number().int().positive().default(60),
   S3_ENDPOINT: z.string().default(""),
   S3_REGION: z.string().default("us-east-1"),
   S3_BUCKET: z.string().default(""),
@@ -48,6 +51,9 @@ export interface AppConfig {
   storageType: "local" | "s3";
   storagePath: string;
   maxUploadSize: number;
+  rateLimitEnabled: boolean;
+  rateLimitRequests: number;
+  rateLimitWindowSeconds: number;
   s3Endpoint: string;
   s3Region: string;
   s3Bucket: string;
@@ -105,6 +111,9 @@ export function loadConfig(
     storageType: parsed.STORAGE_TYPE,
     storagePath: parsed.STORAGE_PATH,
     maxUploadSize: parsed.MAX_UPLOAD_SIZE,
+    rateLimitEnabled: parsed.RATE_LIMIT_ENABLED,
+    rateLimitRequests: parsed.RATE_LIMIT_REQUESTS,
+    rateLimitWindowSeconds: parsed.RATE_LIMIT_WINDOW_SECONDS,
     s3Endpoint: parsed.S3_ENDPOINT,
     s3Region: parsed.S3_REGION,
     s3Bucket: parsed.S3_BUCKET,

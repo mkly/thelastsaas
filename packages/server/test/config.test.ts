@@ -12,6 +12,9 @@ describe("auth configuration", () => {
     expect(config.betterAuthSecret).not.toBe("");
     expect(config.googleClientId).toBe("");
     expect(config.maxUploadSize).toBe(50 * 1024 * 1024);
+    expect(config.rateLimitEnabled).toBe(true);
+    expect(config.rateLimitRequests).toBe(6_000);
+    expect(config.rateLimitWindowSeconds).toBe(60);
   });
 
   test("requires a BetterAuth secret in production", () => {
@@ -54,5 +57,19 @@ describe("auth configuration", () => {
       1_048_576,
     );
     expect(() => loadConfig({ MAX_UPLOAD_SIZE: "0" })).toThrow();
+  });
+
+  test("parses API rate limit settings", () => {
+    const config = loadConfig({
+      RATE_LIMIT_ENABLED: "false",
+      RATE_LIMIT_REQUESTS: "12000",
+      RATE_LIMIT_WINDOW_SECONDS: "120",
+    });
+
+    expect(config.rateLimitEnabled).toBe(false);
+    expect(config.rateLimitRequests).toBe(12_000);
+    expect(config.rateLimitWindowSeconds).toBe(120);
+    expect(() => loadConfig({ RATE_LIMIT_REQUESTS: "0" })).toThrow();
+    expect(() => loadConfig({ RATE_LIMIT_WINDOW_SECONDS: "0" })).toThrow();
   });
 });
