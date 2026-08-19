@@ -26,6 +26,7 @@ describe("login", () => {
 
     const requests: Array<{ path: string; body: Record<string, string> }> = [];
     const sleeps: number[] = [];
+    const statuses: string[] = [];
     let openedUrl = "";
     let tokenPolls = 0;
     const now = Date.parse("2026-08-19T12:00:00.000Z");
@@ -33,7 +34,9 @@ describe("login", () => {
     const result = await login("http://example.com/", {
       configPath,
       now: () => now,
-      onStatus: () => undefined,
+      onStatus: (message) => {
+        statuses.push(message);
+      },
       openBrowser: (url) => {
         openedUrl = url;
       },
@@ -79,6 +82,10 @@ describe("login", () => {
     expect(openedUrl).toBe(
       "http://example.com/auth/device?user_code=ABCD-EFGH",
     );
+    expect(statuses).toEqual([
+      "Device code: ABCD-EFGH",
+      "Open this URL to authorize the CLI: http://example.com/auth/device?user_code=ABCD-EFGH",
+    ]);
     expect(sleeps).toEqual([5_000, 5_000]);
     expect(requests).toEqual([
       {

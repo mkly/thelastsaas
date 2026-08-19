@@ -166,7 +166,9 @@ export async function login(
 
   const device = codeResult.value;
   onStatus(`Device code: ${device.user_code}`);
-  onStatus(`Open this URL to authorize the CLI: ${device.verification_uri}`);
+  onStatus(
+    `Open this URL to authorize the CLI: ${device.verification_uri_complete}`,
+  );
   (dependencies.openBrowser ?? openBrowser)(device.verification_uri_complete);
 
   const deadline = now() + device.expires_in * 1000;
