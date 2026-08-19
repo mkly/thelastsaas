@@ -169,6 +169,12 @@ export const notificationRouter = new Hono<AppEnvironment>()
         404,
       );
     }
+    await context.get("audit")(
+      "update_notification_read_status",
+      "notification",
+      context.req.param("id"),
+      { read: body.read },
+    );
     return context.json({ status: "ok" as const, read: body.read });
   })
   .delete("/:id", async (context) => {

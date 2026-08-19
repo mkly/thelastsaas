@@ -1,16 +1,20 @@
 import { describe, expect, mock, test } from "bun:test";
 import { Hono } from "hono";
 
+import type { AuditWriter } from "../src/db/audit";
 import type { AppEnvironment } from "../src/env";
 import { notificationRouter } from "../src/routes/notifications";
 
-function createRouterApp(services: Record<string, unknown>) {
+function createRouterApp(
+  services: Record<string, unknown>,
+  audit: AuditWriter = async () => undefined,
+) {
   const app = new Hono<AppEnvironment>();
   app.use("*", async (context, next) => {
     context.set("orgId", "org_1");
     context.set("userId", "user_1");
     context.set("services", services as never);
-    context.set("audit", async () => undefined);
+    context.set("audit", audit);
     await next();
   });
   app.route("/v1/orgs/:orgId/notifications", notificationRouter);
@@ -150,9 +154,13 @@ describe("notification routes", () => {
   test("scopes read and delete mutations to the current org and user", async () => {
     const updateMany = mock().mockResolvedValue({ count: 1 });
     const deleteMany = mock().mockResolvedValue({ count: 1 });
-    const app = createRouterApp({
-      prisma: { notification: { updateMany, deleteMany } },
-    });
+    const audit = mock().mockResolvedValue(undefined);
+    const app = createRouterApp(
+      {
+        prisma: { notification: { updateMany, deleteMany } },
+      },
+      audit,
+    );
 
     const patchResponse = await app.request(
       "/v1/orgs/org_1/notifications/notification_1",
@@ -172,6 +180,12 @@ describe("notification routes", () => {
       },
       data: { read: true },
     });
+    expect(audit).toHaveBeenCalledWith(
+      "update_notification_read_status",
+      "notification",
+      "notification_1",
+      { read: true },
+    );
 
     const deleteResponse = await app.request(
       "/v1/orgs/org_1/notifications/notification_1",
