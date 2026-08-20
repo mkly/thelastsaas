@@ -1,11 +1,11 @@
 ---
 name: lastsaas
-description: Use the saas CLI to manage Last SaaS collections, records, access rules, members, notifications, and files on behalf of an authenticated user.
+description: Use the saas CLI to manage The Last SaaS collections, records, access rules, members, notifications, and files on behalf of an authenticated user.
 ---
 
-# Last SaaS Agent Guide
+# The Last SaaS Agent Guide
 
-Last SaaS is an organization-scoped data store for assistants. Its server
+The Last SaaS is an organization-scoped data store for assistants. Its server
 provides horizontal primitives; compose application behavior from collections,
 records, Casbin policies, row filters, field filters, recurrence values,
 notifications, and files.

@@ -37,7 +37,7 @@ export function registerSkills(
   const skills = program
     .command("skills")
     .alias("skill")
-    .description("Print or install the bundled Last SaaS agent guide");
+    .description("Print or install the bundled The Last SaaS agent guide");
 
   skills
     .command("print")

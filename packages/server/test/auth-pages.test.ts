@@ -128,7 +128,10 @@ describe("browser auth pages", () => {
     expect(dashboard.status).toBe(200);
     const dashboardHtml = await dashboard.text();
     expect(dashboardHtml).toContain('<a href="/auth/install">Install CLI</a>');
-    expect(dashboardHtml).toContain('<a href="/auth/logout">Log Out</a>');
+    /* Log out is an icon in the header, so the name is only in the label. */
+    expect(dashboardHtml).toContain(
+      '<a class="icon-link" href="/auth/logout" aria-label="Log Out"',
+    );
     expect(dashboardHtml).not.toContain('<a href="/auth/login">');
     expect(dashboardHtml).not.toContain('<a href="/auth/signup">');
     expect(dashboardHtml).toContain("auth-user@example.com");
@@ -146,7 +149,9 @@ describe("browser auth pages", () => {
       headers: { Cookie: cookie! },
     });
     const installHtml = await install.text();
-    expect(installHtml).toContain('<a href="/auth/logout">Log Out</a>');
+    expect(installHtml).toContain(
+      '<a class="icon-link" href="/auth/logout" aria-label="Log Out"',
+    );
     expect(installHtml).not.toContain('<a href="/auth/login">');
     expect(installHtml).not.toContain('<a href="/auth/signup">');
 

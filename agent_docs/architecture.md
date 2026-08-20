@@ -1,6 +1,6 @@
 # Architecture
 
-Last SaaS is a Bun and TypeScript monorepo. Hono exposes an organization-scoped
+The Last SaaS is a Bun and TypeScript monorepo. Hono exposes an organization-scoped
 REST API; Prisma persists application and BetterAuth data; Casbin handles
 resource gates; the CLI consumes the Hono route type through `hc`.
 

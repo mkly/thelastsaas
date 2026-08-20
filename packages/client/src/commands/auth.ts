@@ -14,7 +14,7 @@ export function registerAuthCommands(program: Command): void {
   program
     .command("login")
     .description("log in through the browser using PKCE")
-    .option("--server <url>", "Last SaaS server URL")
+    .option("--server <url>", "The Last SaaS server URL")
     .action(
       withErrorHandling(async (options, command: Command) => {
         await login(options, command.optsWithGlobals<AuthGlobalOptions>());

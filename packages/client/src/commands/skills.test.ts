@@ -30,7 +30,7 @@ describe("skills commands", () => {
     await program.parseAsync(["bun", "saas", "skills", "print"]);
 
     expect(output).toBe(SKILL_MD);
-    expect(output).toContain("# Last SaaS Agent Guide");
+    expect(output).toContain("# The Last SaaS Agent Guide");
   });
 
   test("installs the guide below a caller-selected skill root", async () => {

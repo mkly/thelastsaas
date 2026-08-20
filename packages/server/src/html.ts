@@ -21,7 +21,6 @@ interface NavLink {
 const SIGNED_IN_LINKS: ReadonlyArray<NavLink> = [
   { href: "/auth/dashboard", label: "Dashboard" },
   { href: "/auth/install", label: "Install CLI" },
-  { href: "/auth/logout", label: "Log Out" },
 ];
 
 const SIGNED_OUT_LINKS: ReadonlyArray<NavLink> = [
@@ -84,6 +83,17 @@ function navLink(link: NavLink, current: string | undefined): string {
 
 /* Drawn inline so the pages ship no icon font and no sprite request. */
 const ICON_OPEN = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">`;
+
+/**
+ * Log out, as an icon rather than a third nav link.
+ *
+ * It is the one item in the bar that ends the session rather than going
+ * somewhere, and sitting in the row as a word of equal weight it read like a
+ * destination. As an icon it keeps its place without competing with the two
+ * links that are actually navigation. The label survives in aria-label and
+ * title, so it is still announced and still nameable on hover.
+ */
+const LOGOUT_LINK = `<a class="icon-link" href="/auth/logout" aria-label="Log Out" title="Log Out">${ICON_OPEN}<path d="M15 16.5v2a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v2"/><path d="M19.5 12h-11m8-3.5 3.5 3.5-3.5 3.5"/></svg></a>`;
 
 const THEME_OPTIONS: ReadonlyArray<{
   readonly value: "system" | Theme;
@@ -153,7 +163,9 @@ ${root}<head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
-<title>${escapeHtml(title)} - Last SaaS</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect x='2' y='2' width='12' height='12' rx='3.5' fill='%23197c8c'/%3E%3C/svg%3E">
+<link rel="preload" href="/assets/switzer.woff2" as="font" type="font/woff2" crossorigin>
+<title>${escapeHtml(title)} - The Last SaaS</title>
 <style>${STYLESHEET}</style>
 </head>
 <body class="shell">
@@ -162,12 +174,14 @@ ${root}<head>
   <div class="topbar__inner">
     <a class="brand" href="${options.authenticated ? "/auth/dashboard" : "/"}">
       <span class="brand__mark" aria-hidden="true"></span>
-      <span>Last SaaS</span>
+      <span>The Last SaaS</span>
     </a>
     <nav class="nav" aria-label="Main">${navigation}</nav>
+    ${options.authenticated ? LOGOUT_LINK : ""}
     ${themeSwitch(theme, page?.path ?? "/")}
   </div>
 </header>
+<div class="scroll">
 <main class="page${options.narrow ? " page--narrow" : ""}" id="main">
   <div class="page__header">
     <h1>${escapeHtml(title)}</h1>
@@ -177,10 +191,11 @@ ${body}
 </main>
 <footer class="footer">
   <div class="footer__inner">
-    <span>Last SaaS</span>
+    <span>The Last SaaS</span>
     <a href="/auth/install">Install CLI</a>
   </div>
 </footer>
+</div>
 </body></html>`;
 }
 

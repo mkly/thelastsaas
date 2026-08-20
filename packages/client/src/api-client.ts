@@ -74,7 +74,7 @@ export function withErrorHandling<Args extends unknown[]>(
     } catch (error) {
       if (error instanceof CliError) throw error;
       if (error instanceof TypeError && /fetch|network/i.test(error.message)) {
-        throw new CliError("Could not connect to the Last SaaS server.", 1, {
+        throw new CliError("Could not connect to The Last SaaS server.", 1, {
           cause: error,
         });
       }

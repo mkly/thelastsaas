@@ -133,7 +133,7 @@ authPagesRouter.get("/login", async (context) => {
       Don't have an account? <a href="${escapeHtml(signupHref)}">Sign up</a> ·
       <a href="/auth/forgot-password">Forgot password?</a>
     </p>`,
-      { narrow: true, description: "Sign in to your Last SaaS account." },
+      { narrow: true, description: "Sign in to The Last SaaS." },
     ),
   );
 });
@@ -505,7 +505,7 @@ authPagesRouter.get("/install", async (context) => {
         authenticated: await isAuthenticated(context),
         current: "/auth/install",
         description:
-          "The saas CLI lets you manage your Last SaaS account from a terminal.",
+          "The saas CLI lets you manage your account on The Last SaaS from a terminal.",
       },
     ),
   );

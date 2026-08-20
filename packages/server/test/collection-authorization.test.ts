@@ -95,7 +95,7 @@ async function inviteAndAccept(
 }
 
 describe("private collection authorization", () => {
-  test("separates membership, delegated creation, creator access, and admin deletion", async () => {
+  test("separates membership, delegated creation, and creator-owned access", async () => {
     const { app, services } = await createHarness();
     const adminToken = await signUp(app, "mike@example.com", "Mike Admin");
     const creatorToken = await signUp(
@@ -255,15 +255,6 @@ describe("private collection authorization", () => {
         )
       ).status,
     ).toBe(200);
-    expect(
-      (
-        await app.request(`${collectionsUrl}/notes?confirm=true`, {
-          method: "DELETE",
-          headers: { authorization: `Bearer ${creatorToken}` },
-        })
-      ).status,
-    ).toBe(403);
-
     for (const path of ["stats", "audit-log", "files"]) {
       expect(
         (
@@ -296,13 +287,26 @@ describe("private collection authorization", () => {
         orderBy: { v2: "asc" },
         select: { v2: true },
       }),
-    ).toEqual([{ v2: "manage" }, { v2: "read" }, { v2: "write" }]);
+    ).toEqual([
+      { v2: "delete" },
+      { v2: "manage" },
+      { v2: "read" },
+      { v2: "write" },
+    ]);
 
     expect(
       (
         await app.request(`${collectionsUrl}/notes?confirm=true`, {
           method: "DELETE",
-          headers: { authorization: `Bearer ${adminToken}` },
+          headers: { authorization: `Bearer ${memberToken}` },
+        })
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await app.request(`${collectionsUrl}/notes?confirm=true`, {
+          method: "DELETE",
+          headers: { authorization: `Bearer ${creatorToken}` },
         })
       ).status,
     ).toBe(200);

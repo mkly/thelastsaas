@@ -29,4 +29,4 @@ function shutdown(signal: NodeJS.Signals): void {
 process.once("SIGINT", shutdown);
 process.once("SIGTERM", shutdown);
 
-console.log(`Last SaaS server listening on ${server.url}`);
+console.log(`The Last SaaS server listening on ${server.url}`);

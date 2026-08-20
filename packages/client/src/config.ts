@@ -29,20 +29,24 @@ export function loadConfig(path = getConfigPath()): ClientConfig | null {
   try {
     const value: unknown = JSON.parse(readFileSync(path, "utf8"));
     if (!isClientConfig(value)) {
-      throw new CliError(`Invalid Last SaaS config at ${path}.`);
+      throw new CliError(`Invalid config for The Last SaaS at ${path}.`);
     }
     return value;
   } catch (error) {
     if (error instanceof CliError) throw error;
-    throw new CliError(`Could not read Last SaaS config at ${path}.`, 1, {
-      cause: error,
-    });
+    throw new CliError(
+      `Could not read config for The Last SaaS at ${path}.`,
+      1,
+      {
+        cause: error,
+      },
+    );
   }
 }
 
 export function saveConfig(config: ClientConfig, path = getConfigPath()): void {
   if (!isClientConfig(config)) {
-    throw new CliError("Refusing to save an invalid Last SaaS config.");
+    throw new CliError("Refusing to save an invalid config for The Last SaaS.");
   }
 
   mkdirSync(dirname(path), { mode: 0o700, recursive: true });

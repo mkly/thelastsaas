@@ -22,3 +22,8 @@ declare module "*/dist/saas-windows-x64.exe" {
   const path: string;
   export default path;
 }
+
+declare module "*.woff2" {
+  const path: string;
+  export default path;
+}

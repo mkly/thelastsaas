@@ -70,7 +70,7 @@ export async function createCollection(
       });
       if (creatorUserId) {
         await transaction.casbinRule.createMany({
-          data: ["read", "write", "manage"].map((action) => ({
+          data: ["read", "write", "manage", "delete"].map((action) => ({
             orgId,
             ptype: "p",
             v0: creatorUserId,

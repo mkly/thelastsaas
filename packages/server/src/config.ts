@@ -16,7 +16,7 @@ const environmentSchema = z.object({
   SMTP_PORT: z.coerce.number().int().min(1).max(65_535).default(587),
   SMTP_USER: z.string().default(""),
   SMTP_PASS: z.string().default(""),
-  SMTP_FROM: z.string().default("Last SaaS <notifications@localhost>"),
+  SMTP_FROM: z.string().default("The Last SaaS <notifications@localhost>"),
   STORAGE_TYPE: z.enum(["local", "s3"]).default("local"),
   STORAGE_PATH: z.string().default("./data/files"),
   MAX_UPLOAD_SIZE: z.coerce

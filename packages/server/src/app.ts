@@ -10,6 +10,7 @@ import {
 } from "./middleware/auth";
 import { createApiRateLimitMiddleware } from "./middleware/rate-limit";
 import { domainRouters } from "./routes";
+import { assetsRouter } from "./routes/assets";
 import { authPagesRouter } from "./routes/auth-pages";
 import { downloadsRouter } from "./routes/downloads";
 import { homeRouter } from "./routes/home";
@@ -48,6 +49,7 @@ export function createApp({
 
   app.route("/auth", authPagesRouter);
   app.route("/", downloadsRouter);
+  app.route("/", assetsRouter);
   app.route("/", homeRouter);
 
   const authMiddleware = createAuthMiddleware({

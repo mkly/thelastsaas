@@ -17,7 +17,7 @@ export function createProgram(
 ): Command {
   const program = new Command()
     .name("saas")
-    .description("CLI client for Last SaaS")
+    .description("CLI client for The Last SaaS")
     .version(CLI_VERSION)
     .option("--org <org-id>", "organization ID (defaults to the stored config)")
     .option("--json", "write machine-readable JSON output")
