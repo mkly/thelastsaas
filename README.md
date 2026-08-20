@@ -1,7 +1,7 @@
 # The Last SaaS
 
 
-https://github.com/user-attachments/assets/b7baf243-13ad-42f0-b325-ffa32ce4fd63
+https://github.com/user-attachments/assets/3a401024-d3c0-417c-93e2-5d3867048989
 
 
 **Your assistant is the interface.** The Last SaaS is a server that holds
