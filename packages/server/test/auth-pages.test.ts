@@ -160,7 +160,7 @@ describe("browser auth pages", () => {
     );
     expect(createdOrganization.status).toBe(303);
     expect(createdOrganization.headers.get("location")).toBe(
-      "/auth/dashboard?message=Browser+Organization+created.",
+      "/auth/mcp?message=Browser+Organization+created.+Next%2C+connect+your+assistant.",
     );
 
     const dashboardAfterCreation = await app.request(
