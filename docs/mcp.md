@@ -113,7 +113,7 @@ stable tool identifiers.
 | `notifications preferences show`        | `notification_preferences_show`               |
 | `notifications preferences set-default` | `notification_preferences_set` without `kind` |
 | `notifications preferences set-kind`    | `notification_preferences_set` with `kind`    |
-| `audit-log`                             | `audit_log`                                   |
+| `audit`                                 | `audit_log`                                   |
 | `stats`                                 | `stats`                                       |
 | `export`                                | `org_export`                                  |
 | `import`                                | `org_import`                                  |
