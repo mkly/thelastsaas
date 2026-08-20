@@ -14,7 +14,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@hono/mcp": "^0.3.2",
     "@lastsaas/shared": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@prisma/client": "^6.16.2",
     "better-auth": "1.5.5",
     "busboy": "^1.6.0",
