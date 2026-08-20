@@ -6,6 +6,7 @@ import { collectionsRouter } from "./collections";
 import { fileRouter } from "./files";
 import { healthRouter } from "./health";
 import { invitationRouter } from "./invitations";
+import { mcpRouter } from "./mcp";
 import { memberRouter } from "./members";
 import { notificationScheduleRouter } from "./notification-schedules";
 import { notificationRouter } from "./notifications";
@@ -31,6 +32,7 @@ export const domainRouters: readonly DomainRouter[] = [
   },
   { basePath: "/v1/orgs/:orgId/files", router: fileRouter },
   { basePath: "/v1/orgs/:orgId/invitations", router: invitationRouter },
+  { basePath: "/v1/orgs/:orgId/mcp", router: mcpRouter },
   { basePath: "/v1/orgs/:orgId/members", router: memberRouter },
   {
     basePath: "/v1/orgs/:orgId/notifications/schedules",
