@@ -29,6 +29,9 @@ import {
 import { getStats } from "../../db/stats";
 import { InvalidRecurrenceError, parseRecurrence } from "../../lib/recurrence";
 import type { PermissionAction } from "../../middleware/permission";
+import { scheduleResponse } from "../../routes/notification-schedules";
+import { channelPatchSchema } from "../../routes/notifications";
+import { portableDataSchema } from "../../routes/system";
 import type { McpToolContext } from "../context";
 
 const MAX_PATH_BYTES = 1024;
@@ -88,10 +91,10 @@ async function withToolErrors(
         "A file with that path already exists in this organization",
       );
     }
-    return toolError(
-      "InternalError",
-      error instanceof Error ? error.message : "Tool execution failed",
-    );
+    // Route handlers surface an unexpected fault as a bare 500; mirror that
+    // here rather than echoing internal error text back to the MCP client.
+    console.error("[mcp] tool execution failed", error);
+    return toolError("InternalError", "Tool execution failed");
   }
 }
 
@@ -218,55 +221,6 @@ async function readLimitedContent(
   return Buffer.concat(chunks, total);
 }
 
-interface ScheduleRow {
-  id: string;
-  userId: string;
-  channel: string;
-  message: string;
-  data: Prisma.JsonValue | null;
-  deliverAt: Date | null;
-  recurrence: string | null;
-  nextOccurrenceAt: Date | null;
-  status: string;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-function scheduleResponse(row: ScheduleRow): ToolPayload {
-  const timezone = row.recurrence
-    ? (/^DTSTART;TZID=([^:;\r\n]+):/.exec(row.recurrence)?.[1] ?? null)
-    : null;
-  return {
-    id: row.id,
-    kind: row.recurrence ? "recurring" : "one_shot",
-    channel: row.channel,
-    recipient: row.userId,
-    subject: null,
-    message: row.message,
-    data: row.data,
-    deliver_at: row.deliverAt?.toISOString() ?? null,
-    recurrence: row.recurrence,
-    timezone,
-    enabled: row.status === "scheduled",
-    next_delivery_at:
-      row.nextOccurrenceAt?.toISOString() ??
-      row.deliverAt?.toISOString() ??
-      null,
-    created_at: row.createdAt.toISOString(),
-    updated_at: row.updatedAt.toISOString(),
-  };
-}
-
-const channelPatchSchema = z
-  .object({
-    in_app: z.boolean().optional(),
-    email: z.boolean().optional(),
-  })
-  .refine(
-    (value) => value.in_app !== undefined || value.email !== undefined,
-    "At least one channel preference must be provided",
-  );
-
 const deliverySchema = {
   message: z.string().min(1),
   type: z.string().min(1).default("direct_notification"),
@@ -275,108 +229,6 @@ const deliverySchema = {
   channel: z.string().min(1).optional(),
   dedupe_key: z.string().min(1).optional(),
 };
-
-const portableDataSchema = z
-  .object({
-    status: z.literal("ok").optional(),
-    version: z.literal(1),
-    collections: z.array(
-      z
-        .object({
-          name: z.string().min(1),
-          schema: z.record(z.string(), z.unknown()),
-          description: z.string(),
-          records: z.array(
-            z
-              .object({
-                id: z.string().min(1),
-                data: z.record(z.string(), z.unknown()),
-                created_by: z.string(),
-                created_at: z.string().min(1),
-                updated_at: z.string().min(1),
-              })
-              .strict(),
-          ),
-        })
-        .strict(),
-    ),
-    files: z.array(
-      z
-        .object({
-          id: z.string().min(1),
-          path: z.string().min(1),
-          filename: z.string().min(1),
-          mime_type: z.string().nullable(),
-          size_bytes: z.number().int().nonnegative().nullable(),
-          collection: z.string().nullable(),
-          record_id: z.string().nullable(),
-          uploaded_by: z.string(),
-          created_at: z.string().min(1),
-          updated_at: z.string().min(1),
-        })
-        .strict(),
-    ),
-    policies: z.array(
-      z
-        .object({
-          subject: z.string().min(1),
-          resource: z.string().min(1),
-          action: z.string().min(1),
-        })
-        .strict(),
-    ),
-    role_assignments: z.array(
-      z
-        .object({
-          user_id: z.string().min(1),
-          role: z.string().min(1),
-        })
-        .strict(),
-    ),
-    row_filters: z.array(
-      z
-        .object({
-          collection: z.string().min(1),
-          role: z.string().min(1),
-          action: z.string().min(1),
-          condition: z.record(z.string(), z.unknown()),
-        })
-        .strict(),
-    ),
-    field_filters: z.array(
-      z
-        .object({
-          collection: z.string().min(1),
-          role: z.string().min(1),
-          action: z.string().min(1),
-          readable_fields: z.array(z.string()),
-          writable_fields: z.array(z.string()),
-        })
-        .strict(),
-    ),
-    notification_schedules: z.array(
-      z
-        .object({
-          id: z.string().min(1),
-          user_id: z.string().min(1),
-          dedupe_key: z.string().min(1),
-          type: z.string().min(1),
-          message: z.string(),
-          data: z.record(z.string(), z.unknown()).nullable(),
-          in_app: z.boolean(),
-          channel: z.string().min(1),
-          deliver_at: z.string().min(1).nullable(),
-          recurrence: z.string().nullable(),
-          next_occurrence_at: z.string().min(1).nullable(),
-          status: z.string().min(1),
-          last_enqueued_at: z.string().min(1).nullable(),
-          created_at: z.string().min(1),
-          updated_at: z.string().min(1),
-        })
-        .strict(),
-    ),
-  })
-  .strict();
 
 function registerFileTools(server: McpServer, context: McpToolContext): void {
   server.registerTool(

@@ -14,7 +14,7 @@ import {
 } from "../db/notifications";
 import type { AppEnvironment } from "../env";
 
-const channelPatchSchema = z
+export const channelPatchSchema = z
   .object({
     in_app: z.boolean().optional(),
     email: z.boolean().optional(),
