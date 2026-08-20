@@ -194,10 +194,19 @@ describe("MCP access tools", () => {
     });
     expect(denied.isError).toBe(true);
     expect(denied.structuredContent).toEqual({
-      error: {
-        code: "PermissionDenied",
-        message: "User does not have manage permission on /permissions",
-      },
+      status: "error",
+      error: "PermissionDenied",
+      message: "User does not have manage permission on /permissions",
+    });
+
+    const invalid = await admin.callTool({
+      name: "permissions_grant",
+      arguments: { subject: "nobody", resource: "/tasks", action: "read" },
+    });
+    expect(invalid.isError).toBe(true);
+    expect(invalid.structuredContent).toMatchObject({
+      status: "error",
+      error: "InvalidRequest",
     });
   });
 
@@ -223,7 +232,8 @@ describe("MCP access tools", () => {
     });
     expect(denied.isError).toBe(true);
     expect(denied.structuredContent).toMatchObject({
-      error: { code: "PermissionDenied" },
+      status: "error",
+      error: "PermissionDenied",
     });
   });
 
@@ -248,7 +258,8 @@ describe("MCP access tools", () => {
     });
     expect(denied.isError).toBe(true);
     expect(denied.structuredContent).toMatchObject({
-      error: { code: "PermissionDenied" },
+      status: "error",
+      error: "PermissionDenied",
     });
   });
 
@@ -270,7 +281,8 @@ describe("MCP access tools", () => {
     });
     expect(denied.isError).toBe(true);
     expect(denied.structuredContent).toMatchObject({
-      error: { code: "PermissionDenied" },
+      status: "error",
+      error: "PermissionDenied",
     });
   });
 });

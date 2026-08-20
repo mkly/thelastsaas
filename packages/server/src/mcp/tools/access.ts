@@ -57,31 +57,50 @@ class ToolError extends Error {
   }
 }
 
-function success(data: Record<string, unknown>): CallToolResult {
+function toolResult(payload: Record<string, unknown>): CallToolResult {
   return {
-    content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
-    structuredContent: data,
+    content: [{ type: "text", text: JSON.stringify(payload) }],
+    structuredContent: payload,
   };
 }
 
+function success(data: Record<string, unknown>): CallToolResult {
+  return toolResult(data);
+}
+
 function failure(error: unknown): CallToolResult {
-  const normalized =
-    error instanceof ToolError || error instanceof LastSaasError
-      ? {
-          code: error instanceof ToolError ? error.code : error.code,
-          message: error.message,
-        }
-      : {
-          code: "InternalError",
-          message:
-            error instanceof Error ? error.message : "Unexpected tool failure",
-        };
-  const data = { error: normalized };
+  let code: string;
+  let message: string;
+  if (error instanceof ToolError || error instanceof LastSaasError) {
+    code = error.code;
+    message = error.message;
+  } else {
+    // Route handlers surface an unexpected fault as a bare 500; mirror that
+    // here rather than echoing internal error text back to the MCP client.
+    console.error("[mcp] access tool execution failed", error);
+    code = "InternalError";
+    message = "Tool execution failed";
+  }
   return {
+    ...toolResult({ status: "error", error: code, message }),
     isError: true,
-    content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
-    structuredContent: data,
   };
+}
+
+// The members/invitations routes translate a better-auth API rejection into a
+// 400 InvalidRequest carrying its message; keep the same contract for tools.
+async function callAuthApi<T>(
+  operation: () => Promise<T>,
+  fallback: string,
+): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    throw new ToolError(
+      "InvalidRequest",
+      error instanceof Error ? error.message : fallback,
+    );
+  }
 }
 
 function run(handler: () => Promise<Record<string, unknown>>) {
@@ -644,10 +663,15 @@ function registerInvitationTools(
     (input) =>
       run(async () => {
         await requirePermission(context, "/members");
-        const invitation = await context.services.auth.api.createInvitation({
-          body: { ...input, organizationId: context.orgId },
-          headers: await authHeaders(context),
-        });
+        const headers = await authHeaders(context);
+        const invitation = await callAuthApi(
+          () =>
+            context.services.auth.api.createInvitation({
+              body: { ...input, organizationId: context.orgId },
+              headers,
+            }),
+          "Failed to create invitation",
+        );
         await audit(
           context,
           "create_invitation",
@@ -712,10 +736,15 @@ function registerInvitationTools(
         ) {
           throw new ToolError("NotFound", "Invitation not found");
         }
-        await context.services.auth.api.acceptInvitation({
-          body: { invitationId: invitation_id },
-          headers: await authHeaders(context),
-        });
+        const headers = await authHeaders(context);
+        await callAuthApi(
+          () =>
+            context.services.auth.api.acceptInvitation({
+              body: { invitationId: invitation_id },
+              headers,
+            }),
+          "Failed to accept invitation",
+        );
         return { status: "ok" };
       })(),
   );
@@ -739,10 +768,15 @@ function registerInvitationTools(
         ) {
           throw new ToolError("NotFound", "Invitation not found");
         }
-        await context.services.auth.api.cancelInvitation({
-          body: { invitationId: invitation_id },
-          headers: await authHeaders(context),
-        });
+        const headers = await authHeaders(context);
+        await callAuthApi(
+          () =>
+            context.services.auth.api.cancelInvitation({
+              body: { invitationId: invitation_id },
+              headers,
+            }),
+          "Failed to cancel invitation",
+        );
         await audit(context, "cancel_invitation", "invitation", invitation_id);
         return { status: "ok" };
       })(),
@@ -835,14 +869,19 @@ function registerMemberTools(server: McpServer, context: McpToolContext): void {
           select: { id: true, userId: true, role: true },
         });
         if (!member) throw new ToolError("NotFound", "Member not found");
-        await context.services.auth.api.updateMemberRole({
-          body: {
-            memberId: member.id,
-            organizationId: context.orgId,
-            role: input.role,
-          },
-          headers: await authHeaders(context),
-        });
+        const headers = await authHeaders(context);
+        await callAuthApi(
+          () =>
+            context.services.auth.api.updateMemberRole({
+              body: {
+                memberId: member.id,
+                organizationId: context.orgId,
+                role: input.role,
+              },
+              headers,
+            }),
+          "Failed to update member role",
+        );
         await syncMemberRole(
           context.services.prisma,
           context.orgId,
@@ -872,13 +911,18 @@ function registerMemberTools(server: McpServer, context: McpToolContext): void {
           select: { id: true, userId: true },
         });
         if (!member) throw new ToolError("NotFound", "Member not found");
-        await context.services.auth.api.removeMember({
-          body: {
-            memberIdOrEmail: member.id,
-            organizationId: context.orgId,
-          },
-          headers: await authHeaders(context),
-        });
+        const headers = await authHeaders(context);
+        await callAuthApi(
+          () =>
+            context.services.auth.api.removeMember({
+              body: {
+                memberIdOrEmail: member.id,
+                organizationId: context.orgId,
+              },
+              headers,
+            }),
+          "Failed to remove member",
+        );
         await removeMemberAccess(
           context.services.prisma,
           context.orgId,
