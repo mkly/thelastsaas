@@ -397,6 +397,13 @@ h3 { font-size: var(--text-lg); font-weight: 600; letter-spacing: -0.01em; }
 
 .page > h2, .card + h2, section > h2 { margin-block: 2.25rem 0.875rem; }
 
+/* The page header already spaces the first section; stacking the section gap
+   on top of it opens a hole under the title. */
+.page > h2:first-child { margin-block-start: 0; }
+
+/* An alert that closes a page stands off from the content above it. */
+.page > * + .alert { margin-block-start: 1.5rem; }
+
 p { margin-block: 0 0.875rem; text-wrap: pretty; }
 p:last-child { margin-block-end: 0; }
 
@@ -598,6 +605,16 @@ form { display: grid; gap: 0.875rem; }
    route. Labels become their own grid so the caption sits above the input. */
 form br { display: none; }
 
+/* A form set on a full-width page keeps to a readable measure, and the submit
+   sizes to its label; the narrow auth pages keep their column-wide button,
+   which is a deliberate look at that width. */
+form.form--narrow { max-inline-size: 26rem; }
+form.form--narrow button { justify-self: start; }
+
+/* A caption inside a label — "(optional)", a usage note — reads quieter than
+   the label itself. */
+form label .hint { font-weight: 400; font-size: var(--text-sm); color: var(--text-subtle); }
+
 form label {
   display: grid;
   gap: 0.3125rem;
@@ -606,7 +623,7 @@ form label {
   color: var(--text-muted);
 }
 
-input[type="text"], input[type="email"], input[type="password"],
+input:not([type]), input[type="text"], input[type="email"], input[type="password"],
 input[type="search"], input[type="url"], input[type="number"], select, textarea {
   inline-size: 100%;
   padding: 0.5rem 0.6875rem;

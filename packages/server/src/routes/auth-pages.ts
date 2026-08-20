@@ -10,6 +10,11 @@ import {
   htmlPage,
   parseTheme,
 } from "../html";
+import {
+  createOrganizationForUser,
+  createOrganizationSchema,
+  OrganizationSlugExistsError,
+} from "../organizations";
 
 export const authPagesRouter = new Hono<AppEnvironment>();
 
@@ -54,8 +59,20 @@ function messageBanner(context: Context<AppEnvironment>): string {
 
 function authNext(context: Context<AppEnvironment>): string | undefined {
   const next = context.req.query("next");
-  return next?.startsWith("/auth/") && !next.startsWith("//")
+  return next &&
+    !next.startsWith("//") &&
+    (next.startsWith("/auth/") ||
+      next.startsWith("/api/auth/oauth2/authorize?"))
     ? next
+    : undefined;
+}
+
+function oauthContinuation(
+  context: Context<AppEnvironment>,
+): string | undefined {
+  const parameters = new URL(context.req.url).searchParams;
+  return parameters.has("client_id") && parameters.has("sig")
+    ? `/api/auth/oauth2/authorize?${parameters.toString()}`
     : undefined;
 }
 
@@ -104,7 +121,7 @@ async function isAuthenticated(
 authPagesRouter.get("/login", async (context) => {
   if (await isAuthenticated(context))
     return context.redirect("/auth/dashboard");
-  const next = authNext(context);
+  const next = authNext(context) ?? oauthContinuation(context);
   const action = authPath("/auth/login", { next });
   const signupHref = authPath("/auth/signup", { next });
   const googleHref = authPath("/auth/google", { next });
@@ -416,7 +433,7 @@ authPagesRouter.get("/dashboard", async (context) => {
     orderBy: { createdAt: "asc" },
     select: {
       role: true,
-      organization: { select: { id: true, name: true } },
+      organization: { select: { id: true, name: true, slug: true } },
     },
   });
   const organizations = memberships.length
@@ -426,7 +443,7 @@ authPagesRouter.get("/dashboard", async (context) => {
             `<li class="record">
               <div class="record__body">
                 <div class="record__title">${escapeHtml(organization.name)}</div>
-                <div class="record__meta">${escapeHtml(organization.id)}</div>
+                <div class="record__meta">${escapeHtml(organization.slug)}</div>
               </div>
               <span class="badge">${escapeHtml(role)}</span>
             </li>`,
@@ -434,8 +451,7 @@ authPagesRouter.get("/dashboard", async (context) => {
         .join("")}</ul>`
     : `<div class="empty">
         <h3>No organizations yet</h3>
-        <p>Install the CLI to create your first organization, or accept an invitation from an existing one.</p>
-        <p style="margin-block-start:1.25rem"><a class="button" href="/auth/install">Install the CLI</a></p>
+        <p>Create your first organization below, or accept an invitation from an existing one.</p>
       </div>`;
 
   return context.html(
@@ -452,6 +468,40 @@ authPagesRouter.get("/dashboard", async (context) => {
 
     <h2>Organizations</h2>
     ${organizations}
+
+    <h2>Create an organization</h2>
+    <form method="POST" action="/auth/dashboard/organizations" class="form--narrow">
+      <label>Name<input type="text" name="name" id="organization-name" required maxlength="100" autocomplete="organization"></label>
+      <label>
+        Slug
+        <input type="text" name="slug" id="organization-slug" maxlength="64" pattern="[a-z0-9]+(?:-[a-z0-9]+)*">
+        <span class="hint">Used in URLs.</span>
+      </label>
+      <button type="submit">Create Organization</button>
+    </form>
+    <script>
+      // Previews the slug the server would generate (organizations.ts,
+      // slugifyOrganizationName) while the slug field is untouched; typing in
+      // the field takes it over, clearing it hands it back.
+      {
+        const name = document.getElementById("organization-name");
+        const slug = document.getElementById("organization-slug");
+        let edited = false;
+        slug.addEventListener("input", () => {
+          edited = slug.value !== "";
+        });
+        name.addEventListener("input", () => {
+          if (edited) return;
+          slug.value = name.value
+            .normalize("NFKD")
+            .replace(/[\\u0300-\\u036f]/g, "")
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, "-")
+            .replace(/^-|-$/g, "")
+            .slice(0, 64);
+        });
+      }
+    </script>
     `,
       {
         authenticated: true,
@@ -459,6 +509,49 @@ authPagesRouter.get("/dashboard", async (context) => {
       },
     ),
   );
+});
+
+authPagesRouter.post("/dashboard/organizations", csrf(), async (context) => {
+  const services = context.get("services");
+  const session = await services.auth.api.getSession({
+    headers: context.req.raw.headers,
+  });
+  if (!session?.user) return context.redirect("/auth/login");
+
+  const form = await context.req.parseBody();
+  const slug = String(form.slug ?? "").trim();
+  const parsed = createOrganizationSchema.safeParse({
+    name: String(form.name ?? ""),
+    slug: slug || undefined,
+  });
+  if (!parsed.success) {
+    const error = parsed.error.issues
+      .map((issue) => `${issue.path.join(".") || "form"}: ${issue.message}`)
+      .join("; ");
+    return context.redirect(authPath("/auth/dashboard", { error }), 303);
+  }
+
+  try {
+    const organization = await createOrganizationForUser(
+      services,
+      session.user.id,
+      parsed.data,
+    );
+    return context.redirect(
+      authPath("/auth/dashboard", {
+        message: `${organization.name} created.`,
+      }),
+      303,
+    );
+  } catch (error) {
+    if (error instanceof OrganizationSlugExistsError) {
+      return context.redirect(
+        authPath("/auth/dashboard", { error: error.message }),
+        303,
+      );
+    }
+    throw error;
+  }
 });
 
 function initial(name: string, email: string): string {
@@ -511,6 +604,251 @@ authPagesRouter.get("/install", async (context) => {
   );
 });
 
+authPagesRouter.get("/mcp", async (context) => {
+  const { auth, prisma } = context.get("services");
+  const session = await auth.api.getSession({
+    headers: context.req.raw.headers,
+  });
+  if (!session?.user) return context.redirect("/auth/login");
+
+  const server = getExternalOrigin(
+    context.req.raw,
+    context.get("config")?.betterAuthUrl,
+  );
+  const memberships = await prisma.member.count({
+    where: { userId: session.user.id },
+  });
+  const endpoint = `${server}/v1/mcp`;
+  const availability = memberships
+    ? ""
+    : `<div class="empty">
+        <h3>No organizations yet</h3>
+        <p><a href="/auth/dashboard">Create an organization</a> or join one before connecting ChatGPT or Claude.</p>
+      </div>`;
+
+  return context.html(
+    htmlPage(
+      "MCP Server",
+      `${availability}
+      <h2>Remote MCP URL</h2>
+      <pre><code>${escapeHtml(endpoint)}</code></pre>
+      <p class="small muted">Your AI client opens this site so you can sign in, choose an organization, and approve access. No CLI or copied token is required.</p>
+
+      <h2>Connect ChatGPT</h2>
+      <ol>
+        <li>Enable developer mode in ChatGPT's app settings.</li>
+        <li>Create a custom app and enter the remote MCP URL above.</li>
+        <li>Choose OAuth authentication, then select <strong>Scan tools</strong>.</li>
+        <li>Sign in here, select an organization, and approve access.</li>
+      </ol>
+
+      <h2>Connect Claude</h2>
+      <ol>
+        <li>Open <strong>Customize → Connectors</strong>.</li>
+        <li>Add a custom connector and enter the remote MCP URL above.</li>
+        <li>Select <strong>Connect</strong>.</li>
+        <li>Sign in here, select an organization, and approve access.</li>
+      </ol>`,
+      {
+        authenticated: true,
+        current: "/auth/mcp",
+        description:
+          "Connect ChatGPT, Claude, or any MCP client to The Last SaaS.",
+      },
+    ),
+  );
+});
+
+function oauthQuery(context: Context<AppEnvironment>): string {
+  return new URL(context.req.url).searchParams.toString();
+}
+
+function redirectFromOAuthResult(
+  context: Context<AppEnvironment>,
+  result: { url?: string },
+): Response {
+  if (!result.url) {
+    return context.html(
+      htmlPage(
+        "Connection Failed",
+        '<p class="alert alert--error">The authorization server did not provide a return URL. Start the connection again from your MCP client.</p>',
+        { authenticated: true, narrow: true },
+      ),
+      400,
+    );
+  }
+  return context.redirect(result.url, 303);
+}
+
+async function runOAuthAction(
+  context: Context<AppEnvironment>,
+  path: string,
+  body: Record<string, unknown>,
+): Promise<{ url?: string }> {
+  const response = await context
+    .get("services")
+    .auth.handler(authRequest(context, path, body));
+  if (!response.ok) {
+    throw new Error(`OAuth action failed with status ${response.status}`);
+  }
+  return (await response.json()) as { url?: string };
+}
+
+authPagesRouter.get("/mcp/select-organization", async (context) => {
+  const { auth, prisma } = context.get("services");
+  const session = await auth.api.getSession({
+    headers: context.req.raw.headers,
+  });
+  if (!session?.user) return context.redirect("/auth/login");
+
+  const memberships = await prisma.member.findMany({
+    where: { userId: session.user.id },
+    orderBy: { createdAt: "asc" },
+    select: {
+      role: true,
+      organization: { select: { id: true, name: true } },
+    },
+  });
+  const choices = memberships.length
+    ? memberships
+        .map(
+          ({ organization, role }, index) => `<label class="record">
+            <input type="radio" name="organizationId" value="${escapeHtml(organization.id)}"${index === 0 ? " checked" : ""} required>
+            <span class="record__body">
+              <span class="record__title">${escapeHtml(organization.name)}</span>
+              <span class="record__meta">${escapeHtml(role)}</span>
+            </span>
+          </label>`,
+        )
+        .join("")
+    : '<div class="empty"><h3>No organizations available</h3><p>Create or join an organization, then start the connection again.</p></div>';
+  const action = memberships.length
+    ? `<button type="submit">Continue</button>`
+    : "";
+
+  return context.html(
+    htmlPage(
+      "Choose an Organization",
+      `<form method="POST" action="/auth/mcp/select-organization">
+        <input type="hidden" name="oauth_query" value="${escapeHtml(oauthQuery(context))}">
+        <div class="record-list">${choices}</div>
+        <div class="button-row" style="margin-block-start:1rem">${action}</div>
+      </form>`,
+      {
+        authenticated: true,
+        narrow: true,
+        description:
+          "Choose which organization's data this connection may access.",
+      },
+    ),
+  );
+});
+
+authPagesRouter.post("/mcp/select-organization", csrf(), async (context) => {
+  const form = await context.req.parseBody();
+  const organizationId = String(form.organizationId ?? "");
+  const oauth_query = String(form.oauth_query ?? "");
+  const { auth, prisma } = context.get("services");
+  const session = await auth.api.getSession({
+    headers: context.req.raw.headers,
+  });
+  if (!session?.user) return context.redirect("/auth/login");
+  const membership = await prisma.member.findUnique({
+    where: {
+      organizationId_userId: {
+        organizationId,
+        userId: session.user.id,
+      },
+    },
+    select: { id: true },
+  });
+  if (!membership) {
+    return context.html(
+      htmlPage(
+        "Choose an Organization",
+        '<p class="alert alert--error">You are not a member of that organization. Start the connection again.</p>',
+        { authenticated: true, narrow: true },
+      ),
+      403,
+    );
+  }
+
+  await auth.api.setActiveOrganization({
+    body: { organizationId },
+    headers: context.req.raw.headers,
+  });
+  const result = await runOAuthAction(context, "/api/auth/oauth2/continue", {
+    postLogin: true,
+    oauth_query,
+  });
+  return redirectFromOAuthResult(context, result);
+});
+
+authPagesRouter.get("/mcp/consent", async (context) => {
+  const { auth } = context.get("services");
+  const session = await auth.api.getSession({
+    headers: context.req.raw.headers,
+  });
+  if (!session?.user) return context.redirect("/auth/login");
+  const clientId = context.req.query("client_id") ?? "";
+  const client = await auth.api
+    .getOAuthClientPublic({
+      query: { client_id: clientId },
+      headers: context.req.raw.headers,
+    })
+    .catch(() => null);
+  if (!client) {
+    return context.html(
+      htmlPage(
+        "Authorize Connection",
+        '<p class="alert alert--error">The requesting MCP client is unknown or the authorization request has expired.</p>',
+        { authenticated: true, narrow: true },
+      ),
+      400,
+    );
+  }
+  const clientName = client.client_name || "MCP client";
+  const scopes = (context.req.query("scope") ?? "")
+    .split(" ")
+    .filter(Boolean)
+    .map((scope) => `<li><code>${escapeHtml(scope)}</code></li>`)
+    .join("");
+
+  return context.html(
+    htmlPage(
+      "Authorize Connection",
+      `<div class="card">
+        <p><strong>${escapeHtml(clientName)}</strong> is requesting access to the organization you selected.</p>
+        <p class="small muted">Requested access:</p>
+        <ul>${scopes}</ul>
+        <p>The client will be able to use Last SaaS tools with your existing organization permissions.</p>
+      </div>
+      <form method="POST" action="/auth/mcp/consent" style="margin-block-start:1rem">
+        <input type="hidden" name="oauth_query" value="${escapeHtml(oauthQuery(context))}">
+        <div class="button-row">
+          <button type="submit" name="decision" value="allow">Allow access</button>
+          <button class="secondary" type="submit" name="decision" value="deny">Deny</button>
+        </div>
+      </form>`,
+      {
+        authenticated: true,
+        narrow: true,
+        description:
+          "Review this request before sharing access to your organization.",
+      },
+    ),
+  );
+});
+
+authPagesRouter.post("/mcp/consent", csrf(), async (context) => {
+  const form = await context.req.parseBody();
+  const result = await runOAuthAction(context, "/api/auth/oauth2/consent", {
+    accept: form.decision === "allow",
+    oauth_query: String(form.oauth_query ?? ""),
+  });
+  return redirectFromOAuthResult(context, result);
+});
+
 authPagesRouter.get("/device", async (context) => {
   const userCode = context.req.query("user_code") ?? "";
   const next = authPath("/auth/device", { user_code: userCode });
@@ -526,9 +864,16 @@ authPagesRouter.get("/device", async (context) => {
   }
 
   try {
-    const result = await context
+    const response = await context
       .get("services")
-      .auth.api.deviceVerify({ query: { user_code: userCode } });
+      .auth.handler(
+        authRequest(
+          context,
+          `/api/auth/device?user_code=${encodeURIComponent(userCode)}`,
+        ),
+      );
+    if (!response.ok) throw new Error(`Device verification failed`);
+    const result = (await response.json()) as { status: string };
     if (result.status !== "pending") {
       return context.html(
         htmlPage(

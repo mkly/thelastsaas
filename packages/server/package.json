@@ -14,11 +14,13 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@better-auth/mcp": "1.7.1",
+    "@better-auth/oauth-provider": "1.7.1",
     "@hono/mcp": "^0.3.2",
     "@lastsaas/shared": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@prisma/client": "^6.16.2",
-    "better-auth": "1.5.5",
+    "better-auth": "1.7.1",
     "busboy": "^1.6.0",
     "casbin": "^5.49.0",
     "croner": "^10.0.1",

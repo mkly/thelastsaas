@@ -32,7 +32,7 @@ export const domainRouters: readonly DomainRouter[] = [
   },
   { basePath: "/v1/orgs/:orgId/files", router: fileRouter },
   { basePath: "/v1/orgs/:orgId/invitations", router: invitationRouter },
-  { basePath: "/v1/orgs/:orgId/mcp", router: mcpRouter },
+  { basePath: "/v1/mcp", router: mcpRouter },
   { basePath: "/v1/orgs/:orgId/members", router: memberRouter },
   {
     basePath: "/v1/orgs/:orgId/notifications/schedules",

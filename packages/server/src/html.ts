@@ -21,6 +21,7 @@ interface NavLink {
 const SIGNED_IN_LINKS: ReadonlyArray<NavLink> = [
   { href: "/auth/dashboard", label: "Dashboard" },
   { href: "/auth/install", label: "Install CLI" },
+  { href: "/auth/mcp", label: "MCP Server" },
 ];
 
 const SIGNED_OUT_LINKS: ReadonlyArray<NavLink> = [

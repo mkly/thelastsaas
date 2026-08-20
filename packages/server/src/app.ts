@@ -46,6 +46,9 @@ export function createApp({
   app.on(["GET", "POST"], "/api/auth/*", (context) =>
     services.auth.handler(context.req.raw),
   );
+  app.on(["GET", "HEAD"], "/.well-known/*", (context) =>
+    services.auth.handler(context.req.raw),
+  );
 
   app.route("/auth", authPagesRouter);
   app.route("/", downloadsRouter);

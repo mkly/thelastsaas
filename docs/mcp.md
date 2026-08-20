@@ -3,45 +3,27 @@
 Last SaaS exposes its organization-scoped data, access-control, file,
 notification, and system operations as MCP tools over Streamable HTTP.
 
-## Connect a client
+## Connect ChatGPT or Claude
 
-The endpoint for an organization is:
+Browser-based MCP clients connect through OAuth. They do not require the Last
+SaaS CLI or a manually copied bearer token.
+
+Add this remote MCP server URL to the client's custom connector or app setup:
 
 ```text
-https://<lastsaas-host>/v1/orgs/<org-id>/mcp
+https://<lastsaas-host>/v1/mcp
 ```
 
-Every request must use `POST` and include a bearer session for a user who is a
-member of that organization:
+The client discovers Last SaaS's OAuth endpoints automatically. When the
+browser opens, sign in, choose the organization to connect, and approve the
+requested access. The resulting connection is limited to that organization and
+to the permissions of the signed-in user. Last SaaS issues a refresh token so
+the client can renew its access without asking the user to reconnect each time.
 
-```http
-Authorization: Bearer <session-token>
-Content-Type: application/json
-Accept: application/json
-```
-
-The organization is selected by the URL, not by a tool argument. Each request
-is stateless, so clients should use the HTTP endpoint directly rather than
-expecting a long-lived server session.
-
-For an MCP client that accepts JSON server configuration, the corresponding
-configuration is:
-
-```json
-{
-  "mcpServers": {
-    "lastsaas": {
-      "url": "https://<lastsaas-host>/v1/orgs/<org-id>/mcp",
-      "headers": {
-        "Authorization": "Bearer <session-token>"
-      }
-    }
-  }
-}
-```
-
-Keep the bearer token out of source control. How a client injects secrets into
-this configuration varies by client.
+In ChatGPT, add the URL as a custom app in **Settings > Apps > Advanced
+settings > Developer mode**. In Claude, add it as a custom connector in
+**Settings > Connectors**. Product and workspace plans can affect whether those
+controls are available.
 
 The `server_info` tool returns the API version and the authenticated `userId`
 and `orgId`. Authorization is identical to the REST API: collection tools apply
@@ -120,13 +102,12 @@ stable tool identifiers.
 
 The following commands deliberately do not have MCP tools:
 
-- `login` and `logout` manage the CLI's local bearer session. An MCP client
-  supplies its own bearer token in the HTTP `Authorization` header.
+- `login` and `logout` manage the CLI's local session. MCP clients authenticate
+  through the browser OAuth flow described above.
 - `whoami` includes CLI configuration and credential-store state. Use
   `server_info` for the server-confirmed user and organization identity.
-- `orgs list`, `orgs create`, and `orgs use` operate outside or select the
-  organization-scoped MCP endpoint. Configure one endpoint per organization;
-  use the REST API or CLI to discover or create organizations first.
+- `orgs list`, `orgs create`, and `orgs use` operate outside the MCP server.
+  MCP clients choose an existing organization in the browser.
 - `skills print` and `skills install` read an asset embedded in the CLI build
   and write the user's local filesystem, so they are not server operations.
 - Accepting an invitation as a not-yet-member user cannot go through the

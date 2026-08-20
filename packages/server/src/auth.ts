@@ -1,3 +1,4 @@
+import { mcp } from "@better-auth/mcp";
 import type { PrismaClient } from "@prisma/client";
 import { genId } from "@lastsaas/shared";
 import { betterAuth } from "better-auth";
@@ -5,6 +6,7 @@ import { prismaAdapter } from "better-auth/adapters/prisma";
 import {
   bearer,
   deviceAuthorization,
+  jwt,
   magicLink,
   organization,
 } from "better-auth/plugins";
@@ -15,6 +17,13 @@ import { syncMemberRole } from "./db/casbin";
 
 export const SESSION_EXPIRES_IN_SECONDS = 60 * 60 * 24 * 90;
 const SESSION_UPDATE_AGE = 60 * 60 * 24;
+export const MCP_TOOLS_SCOPE = "mcp:tools";
+export const MCP_ORGANIZATION_CLAIM =
+  "https://thelastsaas.com/claims/organization_id";
+
+export function mcpResourceUrl(config: AppConfig): string {
+  return new URL("/v1/mcp", config.betterAuthUrl).toString();
+}
 
 export interface AuthEmail {
   type: "magic-link" | "password-reset" | "email-verification" | "invitation";
@@ -33,6 +42,8 @@ export function createAuth(
   config: AppConfig,
   sendAuthEmail: AuthEmailSender = logAuthEmail,
 ) {
+  const mcpResource = mcpResourceUrl(config);
+
   return betterAuth({
     secret: config.betterAuthSecret,
     baseURL: config.betterAuthUrl,
@@ -68,6 +79,43 @@ export function createAuth(
         : {},
     plugins: [
       bearer(),
+      jwt(),
+      mcp({
+        resource: mcpResource,
+        loginPage: "/auth/login",
+        consentPage: "/auth/mcp/consent",
+        scopes: ["openid", "profile", "offline_access", MCP_TOOLS_SCOPE],
+        allowDynamicClientRegistration: true,
+        allowUnauthenticatedClientRegistration: true,
+        postLogin: {
+          page: "/auth/mcp/select-organization",
+          shouldRedirect: async ({ session, scopes }) => {
+            if (!scopes.includes(MCP_TOOLS_SCOPE)) return false;
+            const organizationId = session.activeOrganizationId;
+            if (typeof organizationId !== "string") return true;
+            const membership = await prisma.member.findUnique({
+              where: {
+                organizationId_userId: {
+                  organizationId,
+                  userId: session.userId,
+                },
+              },
+              select: { id: true },
+            });
+            return !membership;
+          },
+          consentReferenceId: ({ session, scopes }) => {
+            if (!scopes.includes(MCP_TOOLS_SCOPE)) return undefined;
+            const organizationId = session?.activeOrganizationId;
+            if (typeof organizationId !== "string") {
+              throw new Error("Select an organization before granting access");
+            }
+            return organizationId;
+          },
+        },
+        customAccessTokenClaims: ({ referenceId }) =>
+          referenceId ? { [MCP_ORGANIZATION_CLAIM]: referenceId } : {},
+      }),
       deviceAuthorization({
         verificationUri: "/auth/device",
         schema: {},
@@ -80,6 +128,9 @@ export function createAuth(
       organization({
         allowUserToCreateOrganization: true,
         creatorRole: "admin",
+        // Last SaaS generates opaque UUIDv7 invitation IDs. Better Auth cannot
+        // infer that from a custom generator, so preserve the emailed-link flow.
+        requireEmailVerificationOnInvitation: false,
         organizationHooks: {
           afterAcceptInvitation: async ({ invitation, member, user }) => {
             await syncMemberRole(

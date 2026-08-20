@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { createHash, randomBytes } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -79,17 +80,26 @@ afterEach(async () => {
 
 async function createHarness() {
   const directory = mkdtempSync(join(tmpdir(), "lastsaas-mcp-e2e-"));
+  let app: ReturnType<typeof createApp> | undefined;
+  const server = Bun.serve({
+    port: 0,
+    fetch: (request) =>
+      app?.fetch(request) ?? new Response("Starting", { status: 503 }),
+  });
+  const origin = server.url.origin;
   const config = loadConfig({
     NODE_ENV: "test",
-    PORT: "0",
+    PORT: String(server.port),
     DATABASE_URL: `file:${join(directory, "test.sqlite")}`,
     STORAGE_PATH: join(directory, "storage"),
+    BETTER_AUTH_URL: origin,
   });
   const services = await createServices(config);
   if (!services.database) throw new Error("Expected SQLite database handle");
   services.database.exec(migration);
-  const app = createApp({ config, services });
+  app = createApp({ config, services });
   cleanups.push(async () => {
+    server.stop(true);
     await closeServices(services);
     rmSync(directory, { recursive: true, force: true });
   });
@@ -104,13 +114,16 @@ async function createHarness() {
     }),
   });
   expect(signUp.status).toBe(200);
-  const token = signUp.headers.get("set-auth-token");
-  if (!token) throw new Error("Sign-up did not return a bearer token");
+  const cookie = signUp.headers
+    .getSetCookie()
+    .map((value) => value.split(";", 1)[0])
+    .join("; ");
+  if (!cookie) throw new Error("Sign-up did not return a browser session");
 
   const organization = await app.request("/v1/orgs", {
     method: "POST",
     headers: {
-      authorization: `Bearer ${token}`,
+      cookie,
       "content-type": "application/json",
     },
     body: JSON.stringify({ name: "MCP E2E Org", slug: "mcp-e2e-org" }),
@@ -124,10 +137,103 @@ async function createHarness() {
   });
   if (!user) throw new Error("Expected MCP admin user");
 
+  const registration = await app.request("/api/auth/oauth2/register", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      client_name: "MCP E2E Client",
+      redirect_uris: ["https://client.example/callback"],
+      token_endpoint_auth_method: "none",
+      grant_types: ["authorization_code", "refresh_token"],
+      response_types: ["code"],
+      scope: "openid profile offline_access mcp:tools",
+    }),
+  });
+  expect(registration.status).toBe(201);
+  const client = (await registration.json()) as { client_id: string };
+  const verifier = randomBytes(48).toString("base64url");
+  const challenge = createHash("sha256").update(verifier).digest("base64url");
+  const authorize = new URL("/api/auth/oauth2/authorize", origin);
+  authorize.search = new URLSearchParams({
+    client_id: client.client_id,
+    redirect_uri: "https://client.example/callback",
+    response_type: "code",
+    scope: "openid profile offline_access mcp:tools",
+    resource: `${origin}/v1/mcp`,
+    state: "mcp-e2e-state",
+    code_challenge: challenge,
+    code_challenge_method: "S256",
+  }).toString();
+  const authorization = await app.request(authorize, {
+    headers: { cookie },
+  });
+  expect(authorization.status).toBe(302);
+  const selectionLocation = authorization.headers.get("location");
+  expect(selectionLocation).toStartWith("/auth/mcp/select-organization?");
+  const oauthQuery = new URL(
+    selectionLocation!,
+    origin,
+  ).searchParams.toString();
+  const selection = await app.request(
+    `${origin}/auth/mcp/select-organization`,
+    {
+      method: "POST",
+      headers: {
+        cookie,
+        "content-type": "application/x-www-form-urlencoded",
+        origin,
+      },
+      body: new URLSearchParams({
+        organizationId: organizationBody.organization.id,
+        oauth_query: oauthQuery,
+      }).toString(),
+    },
+  );
+  expect(selection.status).toBe(303);
+  const consentLocation = selection.headers.get("location");
+  expect(consentLocation).toStartWith("/auth/mcp/consent?");
+  const consentQuery = new URL(
+    consentLocation!,
+    origin,
+  ).searchParams.toString();
+  const consent = await app.request(`${origin}/auth/mcp/consent`, {
+    method: "POST",
+    headers: {
+      cookie,
+      "content-type": "application/x-www-form-urlencoded",
+      origin,
+    },
+    body: new URLSearchParams({
+      decision: "allow",
+      oauth_query: consentQuery,
+    }).toString(),
+  });
+  expect(consent.status).toBe(303);
+  const callback = new URL(consent.headers.get("location")!);
+  const code = callback.searchParams.get("code");
+  if (!code) throw new Error("OAuth authorization did not return a code");
+  const tokenResponse = await app.request("/api/auth/oauth2/token", {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "authorization_code",
+      client_id: client.client_id,
+      redirect_uri: "https://client.example/callback",
+      code,
+      code_verifier: verifier,
+      resource: `${origin}/v1/mcp`,
+    }).toString(),
+  });
+  expect(tokenResponse.status).toBe(200);
+  const tokens = (await tokenResponse.json()) as { access_token: string };
+
   return {
     app,
-    endpoint: `/v1/orgs/${organizationBody.organization.id}/mcp`,
-    token,
+    endpoint: "/v1/mcp",
+    removedEndpointPath: `/v1/orgs/${organizationBody.organization.id}/mcp`,
+    cookie,
+    token: tokens.access_token,
+    orgId: organizationBody.organization.id,
     userId: user.id,
   };
 }
@@ -178,7 +284,19 @@ async function callTool(
 
 describe("MCP end-to-end walkthrough", () => {
   test("lists the complete tool surface and runs a representative workflow", async () => {
-    const { app, endpoint, token, userId } = await createHarness();
+    const { app, endpoint, removedEndpointPath, cookie, token, orgId, userId } =
+      await createHarness();
+
+    const removedEndpoint = await app.request(removedEndpointPath, {
+      method: "POST",
+      headers: {
+        cookie,
+        accept: "application/json",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 0, method: "tools/list" }),
+    });
+    expect(removedEndpoint.status).toBe(404);
 
     const listed = await app.request(
       endpoint,
@@ -190,11 +308,21 @@ describe("MCP end-to-end walkthrough", () => {
     expect(new Set(names).size).toBe(names.length);
     expect([...names].sort()).toEqual([...expectedTools].sort());
 
-    const created = await callTool(
+    const serverInfo = await callTool(
       app,
       endpoint,
       token,
       2,
+      "server_info",
+      {},
+    );
+    expect(serverInfo).toMatchObject({ orgId, userId });
+
+    const created = await callTool(
+      app,
+      endpoint,
+      token,
+      3,
       "collections_create",
       {
         name: "mcp_events",
@@ -204,7 +332,7 @@ describe("MCP end-to-end walkthrough", () => {
     );
     expect(created).toMatchObject({ status: "ok", name: "mcp_events" });
 
-    const inserted = await callTool(app, endpoint, token, 3, "records_insert", {
+    const inserted = await callTool(app, endpoint, token, 4, "records_insert", {
       collection: "mcp_events",
       data: { title: "Ship MCP", priority: 1 },
     });
@@ -213,7 +341,7 @@ describe("MCP end-to-end walkthrough", () => {
       data: { title: "Ship MCP", priority: 1 },
     });
 
-    const queried = await callTool(app, endpoint, token, 4, "records_query", {
+    const queried = await callTool(app, endpoint, token, 5, "records_query", {
       collection: "mcp_events",
       where: { priority: 1 },
     });
@@ -226,7 +354,7 @@ describe("MCP end-to-end walkthrough", () => {
       app,
       endpoint,
       token,
-      5,
+      6,
       "permissions_grant",
       {
         subject: `user:${userId}`,
@@ -236,7 +364,7 @@ describe("MCP end-to-end walkthrough", () => {
     );
     expect(granted).toMatchObject({ status: "ok", subject: `user:${userId}` });
 
-    const uploaded = await callTool(app, endpoint, token, 6, "files_upload", {
+    const uploaded = await callTool(app, endpoint, token, 7, "files_upload", {
       filename: "mcp.txt",
       path: "walkthrough/mcp.txt",
       mime_type: "text/plain",
@@ -247,7 +375,7 @@ describe("MCP end-to-end walkthrough", () => {
       file: { path: "walkthrough/mcp.txt", filename: "mcp.txt" },
     });
 
-    const files = await callTool(app, endpoint, token, 7, "files_list", {
+    const files = await callTool(app, endpoint, token, 8, "files_list", {
       prefix: "walkthrough",
     });
     expect(files).toMatchObject({
@@ -259,7 +387,7 @@ describe("MCP end-to-end walkthrough", () => {
       app,
       endpoint,
       token,
-      8,
+      9,
       "notifications_queue",
       {
         subject: "MCP walkthrough",
@@ -272,7 +400,7 @@ describe("MCP end-to-end walkthrough", () => {
       message: "Notification queued",
     });
 
-    const stats = await callTool(app, endpoint, token, 9, "stats", {});
+    const stats = await callTool(app, endpoint, token, 10, "stats", {});
     expect(stats).toMatchObject({
       status: "ok",
       collections: 1,
@@ -281,7 +409,7 @@ describe("MCP end-to-end walkthrough", () => {
       storage_bytes: 13,
     });
 
-    const audit = await callTool(app, endpoint, token, 10, "audit_log", {
+    const audit = await callTool(app, endpoint, token, 11, "audit_log", {
       limit: 100,
     });
     const actions = (audit.entries as Array<{ action: string }>).map(
