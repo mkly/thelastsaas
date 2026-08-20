@@ -27,7 +27,7 @@ const recordSchema = z
     updated_at: dateString,
   })
   .strict();
-const portableDataSchema = z
+export const portableDataSchema = z
   .object({
     status: z.literal("ok").optional(),
     version: z.literal(1),

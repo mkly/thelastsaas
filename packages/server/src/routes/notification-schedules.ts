@@ -23,7 +23,7 @@ const scheduleSchema = z
     "Provide exactly one of deliver_at or recurrence",
   );
 
-interface ScheduleRow {
+export interface ScheduleRow {
   id: string;
   userId: string;
   channel: string;
@@ -37,7 +37,7 @@ interface ScheduleRow {
   updatedAt: Date;
 }
 
-function scheduleResponse(row: ScheduleRow) {
+export function scheduleResponse(row: ScheduleRow) {
   const timezone = row.recurrence
     ? (/^DTSTART;TZID=([^:;\r\n]+):/.exec(row.recurrence)?.[1] ?? null)
     : null;
