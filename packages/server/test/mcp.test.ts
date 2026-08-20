@@ -118,11 +118,17 @@ describe("MCP endpoint", () => {
       mcpRequest(memberToken, 2, "tools/list"),
     );
     expect(listed.status).toBe(200);
-    expect(await listed.json()).toMatchObject({
-      jsonrpc: "2.0",
-      id: 2,
-      result: { tools: [{ name: "server_info" }] },
-    });
+    /* Assert containment rather than the whole array: sibling tasks register
+       further tool families against the same registry. */
+    const listedBody = (await listed.json()) as {
+      jsonrpc: string;
+      id: number;
+      result: { tools: Array<{ name: string }> };
+    };
+    expect(listedBody).toMatchObject({ jsonrpc: "2.0", id: 2 });
+    expect(listedBody.result.tools.map((tool) => tool.name)).toContain(
+      "server_info",
+    );
 
     const called = await app.request(
       endpoint,
