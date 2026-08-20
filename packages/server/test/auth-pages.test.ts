@@ -171,6 +171,10 @@ describe("browser auth pages", () => {
     const dashboardAfterCreationHtml = await dashboardAfterCreation.text();
     expect(dashboardAfterCreationHtml).toContain("Browser Organization");
     expect(dashboardAfterCreationHtml).toContain(">admin</span>");
+    expect(dashboardAfterCreationHtml).not.toContain(
+      'action="/auth/dashboard/organizations"',
+    );
+    expect(dashboardAfterCreationHtml).not.toContain("Create Organization");
 
     for (const path of ["/auth/login", "/auth/signup"]) {
       const response = await app.request(`http://localhost:3000${path}`, {

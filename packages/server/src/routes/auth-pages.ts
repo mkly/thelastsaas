@@ -453,23 +453,9 @@ authPagesRouter.get("/dashboard", async (context) => {
         <h3>No organizations yet</h3>
         <p>Create your first organization below, or accept an invitation from an existing one.</p>
       </div>`;
-
-  return context.html(
-    htmlPage(
-      "Dashboard",
-      `${messageBanner(context)}
-    <div class="identity">
-      <span class="identity__avatar" aria-hidden="true">${escapeHtml(initial(session.user.name, session.user.email))}</span>
-      <div>
-        <div class="identity__name">${escapeHtml(session.user.name)}</div>
-        <div class="identity__detail">${escapeHtml(session.user.email)}</div>
-      </div>
-    </div>
-
-    <h2>Organizations</h2>
-    ${organizations}
-
-    <h2>Create an organization</h2>
+  const createOrganizationForm = memberships.length
+    ? ""
+    : `<h2>Create an organization</h2>
     <form method="POST" action="/auth/dashboard/organizations" class="form--narrow">
       <label>Name<input type="text" name="name" id="organization-name" required maxlength="100" autocomplete="organization"></label>
       <label>
@@ -501,7 +487,23 @@ authPagesRouter.get("/dashboard", async (context) => {
             .slice(0, 64);
         });
       }
-    </script>
+    </script>`;
+
+  return context.html(
+    htmlPage(
+      "Dashboard",
+      `${messageBanner(context)}
+    <div class="identity">
+      <span class="identity__avatar" aria-hidden="true">${escapeHtml(initial(session.user.name, session.user.email))}</span>
+      <div>
+        <div class="identity__name">${escapeHtml(session.user.name)}</div>
+        <div class="identity__detail">${escapeHtml(session.user.email)}</div>
+      </div>
+    </div>
+
+    <h2>Organizations</h2>
+    ${organizations}
+    ${createOrganizationForm}
     `,
       {
         authenticated: true,
