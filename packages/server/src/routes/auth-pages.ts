@@ -196,12 +196,16 @@ authPagesRouter.get("/signup", async (context) => {
         <label>Email<br><input type="email" name="email" required autocomplete="email"${emailAttributes}></label><br><br>
         <label>Password<br><input type="password" name="password" required minlength="8" autocomplete="new-password"></label><br><br>
         <button type="submit">Create Account</button>
+        <p class="small muted" style="margin-block-start:0.75rem">Free while in beta. No card, no sales call.</p>
       </form>
     </div>
     <p class="small muted" style="margin-block-start:1.25rem;text-align:center">
+      Next, connecting your assistant is one paste. Then you just ask.
+    </p>
+    <p class="small muted" style="margin-block-start:0.5rem;text-align:center">
       Already have an account? <a href="/auth/login">Log in</a>
     </p>`,
-      { narrow: true, description: "Create an account to get started." },
+      { narrow: true, description: "One account, then your assistant does the rest." },
     ),
   );
 });
@@ -539,6 +543,19 @@ authPagesRouter.post("/dashboard/organizations", csrf(), async (context) => {
       session.user.id,
       parsed.data,
     );
+    // A first organization means a brand-new workspace: send the user
+    // straight to connecting a client instead of back to the dashboard.
+    const memberships = await services.prisma.member.count({
+      where: { userId: session.user.id },
+    });
+    if (memberships === 1) {
+      return context.redirect(
+        authPath("/auth/mcp", {
+          message: `${organization.name} created. Next, connect your assistant.`,
+        }),
+        303,
+      );
+    }
     return context.redirect(
       authPath("/auth/dashboard", {
         message: `${organization.name} created.`,
@@ -631,7 +648,7 @@ authPagesRouter.get("/mcp", async (context) => {
   return context.html(
     htmlPage(
       "MCP Server",
-      `${availability}
+      `${messageBanner(context)}${availability}
       <h2>Remote MCP URL</h2>
       <pre><code>${escapeHtml(endpoint)}</code></pre>
       <p class="small muted">Your AI client opens this site so you can sign in, choose an organization, and approve access. No CLI or copied token is required.</p>
@@ -650,7 +667,9 @@ authPagesRouter.get("/mcp", async (context) => {
         <li>Add a custom connector and enter the remote MCP URL above.</li>
         <li>Select <strong>Connect</strong>.</li>
         <li>Sign in here, select an organization, and approve access.</li>
-      </ol>`,
+      </ol>
+
+      <p class="small muted">Prefer a terminal? <a href="/auth/install">Install the CLI</a> instead.</p>`,
       {
         authenticated: true,
         current: "/auth/mcp",
