@@ -34,6 +34,24 @@ production.
 | `S3_SECRET_KEY`        | empty                                     | Optional explicit S3 credential                    |
 | `S3_FORCE_PATH_STYLE`  | `false`                                   | Use path-style S3 URLs                             |
 
+## PostgreSQL
+
+Setting `DATABASE_URL` to a `postgres://` URL switches the database provider,
+the BetterAuth adapter dialect, and the background scheduler (croner in-process
+polling becomes a pg-boss worker). The canonical Prisma schema is SQLite;
+`schema.postgres.prisma` is generated from it and is not checked in.
+
+To apply the schema to a PostgreSQL database:
+
+```sh
+DATABASE_URL=postgres://… bun run --cwd packages/server prisma:push:postgres
+```
+
+Re-run it after pulling schema changes. To build a server binary for a
+PostgreSQL deployment, use `bun run build:server:postgres` (the Prisma client's
+provider is fixed when it is generated, so a binary built with the default
+`build:server` only works with SQLite).
+
 The CLI stores `server`, `session_token`, and optional default `org` in
 `~/.lastsaas/config.json`. `--org` overrides the saved organization for one
 command. Production should use HTTPS so BetterAuth can issue secure cookies.

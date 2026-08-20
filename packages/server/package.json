@@ -11,6 +11,7 @@
     "dev": "bun --watch src/index.ts",
     "prisma:generate": "prisma generate --schema prisma/schema.prisma",
     "prisma:generate:postgres": "bun ../../scripts/generate-postgres-schema.ts && prisma generate --schema prisma/schema.postgres.prisma",
+    "prisma:push:postgres": "bun ../../scripts/generate-postgres-schema.ts && prisma db push --schema prisma/schema.postgres.prisma --skip-generate",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

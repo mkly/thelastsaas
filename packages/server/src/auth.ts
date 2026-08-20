@@ -11,7 +11,7 @@ import {
   organization,
 } from "better-auth/plugins";
 
-import type { AppConfig } from "./config";
+import { databaseProvider, type AppConfig } from "./config";
 import { createAuditWriter } from "./db/audit";
 import { syncMemberRole } from "./db/casbin";
 
@@ -47,7 +47,9 @@ export function createAuth(
   return betterAuth({
     secret: config.betterAuthSecret,
     baseURL: config.betterAuthUrl,
-    database: prismaAdapter(prisma, { provider: "sqlite" }),
+    database: prismaAdapter(prisma, {
+      provider: databaseProvider(config.databaseUrl),
+    }),
     session: {
       expiresIn: SESSION_EXPIRES_IN_SECONDS,
       updateAge: SESSION_UPDATE_AGE,
