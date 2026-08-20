@@ -1,5 +1,9 @@
 # The Last SaaS
 
+
+https://github.com/user-attachments/assets/b7baf243-13ad-42f0-b325-ffa32ce4fd63
+
+
 **Your assistant is the interface.** The Last SaaS is a server that holds
 your work, and it has no screens of its own. Your Claude, your ChatGPT, or
 any agent connects to it over MCP, and the conversation is the interface.
