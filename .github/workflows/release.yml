@@ -20,6 +20,8 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
+      - run: bun run --cwd packages/server prisma:generate
+
       - run: bun run typecheck
 
       - run: bun test
