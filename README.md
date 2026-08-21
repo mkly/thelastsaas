@@ -1,17 +1,17 @@
 # The Last SaaS
 
 **Your assistant is the interface.** The Last SaaS is a server that holds
-your work, and it has no screens of its own. Your Claude, your ChatGPT, or
+your records and files, and it has no user interface of its own. Your Claude, your ChatGPT, or
 any agent connects to it over MCP and operates it for you.
 
 https://github.com/user-attachments/assets/3a401024-d3c0-417c-93e2-5d3867048989
 
-Every SaaS is a database with an interface on top: forms going in,
-dashboards coming out. The interface is work a model now does well, so
+Every SaaS is a database with a user interface on top: forms going in,
+dashboards coming out. That interface is work a model now does well, so
 this server keeps only the database side. It holds records, files,
 people, permissions, reminders, and history. Your assistant assembles
-whichever app you ask for, a gear tracker today, a client base tomorrow,
-and reshapes it as your work changes.
+whichever app you ask for, a gear tracker today, a client base tomorrow.
+When you need a new field or a different rule, you say so.
 
 There's a hosted version, free while in beta, at
 [thelastsaas.com](https://thelastsaas.com). Or run it yourself; that's what
