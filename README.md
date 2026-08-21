@@ -74,11 +74,11 @@ claude mcp add --transport http lastsaas https://your-server/v1/mcp
 **Cursor and other MCP clients**: add the same address wherever the
 client takes an MCP server URL, and approve the sign-in.
 
-**ChatGPT**: the desktop app connects in developer mode: enable it in
-settings, create a custom connector with the same address, and choose
-OAuth. On the web, custom MCP connectors currently require a Business,
-Enterprise, or Edu workspace, where an admin adds the connector under
-workspace settings. A listing in the ChatGPT apps directory is planned.
+**ChatGPT**: in the desktop app, add a custom connector with the same
+address and approve the sign-in. On the web, custom MCP connectors
+currently require a Business, Enterprise, or Edu workspace, where an
+admin adds the connector under workspace settings. A listing in the
+ChatGPT apps directory is planned.
 
 From there, setup is a conversation:
 

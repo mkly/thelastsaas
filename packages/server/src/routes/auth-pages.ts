@@ -673,9 +673,8 @@ authPagesRouter.get("/mcp", async (context) => {
 
       <h2>Connect ChatGPT</h2>
       <ol>
-        <li>In the desktop app, enable developer mode in ChatGPT's settings.</li>
-        <li>Create a custom connector and enter the remote MCP URL above.</li>
-        <li>Choose OAuth authentication, then select <strong>Scan tools</strong>.</li>
+        <li>In the desktop app, add a custom connector in ChatGPT's settings and enter the remote MCP URL above.</li>
+        <li>Approve the connection when ChatGPT asks.</li>
         <li>Sign in here, select an organization, and approve access.</li>
       </ol>
       <p class="small muted">On the web, custom connectors currently require a Business, Enterprise, or Edu workspace, where an admin adds the connector in workspace settings.</p>
