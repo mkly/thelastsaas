@@ -205,7 +205,10 @@ authPagesRouter.get("/signup", async (context) => {
     <p class="small muted" style="margin-block-start:0.5rem;text-align:center">
       Already have an account? <a href="/auth/login">Log in</a>
     </p>`,
-      { narrow: true, description: "One account, then your assistant does the rest." },
+      {
+        narrow: true,
+        description: "One account, then your assistant does the rest.",
+      },
     ),
   );
 });

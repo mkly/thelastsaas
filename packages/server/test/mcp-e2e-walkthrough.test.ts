@@ -80,6 +80,9 @@ afterEach(async () => {
 
 async function createHarness() {
   const directory = mkdtempSync(join(tmpdir(), "lastsaas-mcp-e2e-"));
+  // Assigned after Bun.serve so the app can be built with the real origin;
+  // the fetch closure below reads it lazily, which prefer-const cannot see.
+  // eslint-disable-next-line prefer-const
   let app: ReturnType<typeof createApp> | undefined;
   const server = Bun.serve({
     port: 0,
