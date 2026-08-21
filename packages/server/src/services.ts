@@ -6,6 +6,7 @@ import { dirname, resolve } from "node:path";
 import type { AppConfig } from "./config";
 import { createStorage, databaseProvider } from "./config";
 import { createAuth, type Auth, type AuthEmailSender } from "./auth";
+import { createAuthEmailSender } from "./auth-email";
 import {
   createNotificationServices,
   type NotificationDispatcher,
@@ -56,8 +57,13 @@ export async function createServices(
     datasourceUrl = path === ":memory:" ? "file::memory:" : `file:${path}`;
   }
   const prisma = new PrismaClient({ datasourceUrl });
-  const auth = createAuth(prisma, config, sendAuthEmail);
   const notificationServices = createNotificationServices(prisma, config);
+  const auth = createAuth(
+    prisma,
+    config,
+    sendAuthEmail ??
+      createAuthEmailSender(notificationServices.notifications, config),
+  );
   const scheduler = createBackgroundScheduler(
     prisma,
     notificationServices.notificationQueue,
