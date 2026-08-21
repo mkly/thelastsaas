@@ -13,6 +13,7 @@ import { Buffer } from "node:buffer";
 import { z } from "zod";
 
 import { addAuditLog, getAuditLog } from "../../db/audit";
+import { log } from "../../logger";
 import { hasPermission } from "../../db/casbin";
 import { exportData, importData } from "../../db/export-import";
 import { createFile, deleteFile, getFile, listFiles } from "../../db/files";
@@ -93,7 +94,7 @@ async function withToolErrors(
     }
     // Route handlers surface an unexpected fault as a bare 500; mirror that
     // here rather than echoing internal error text back to the MCP client.
-    console.error("[mcp] tool execution failed", error);
+    log.error("mcp", "tool execution failed", error);
     return toolError("InternalError", "Tool execution failed");
   }
 }

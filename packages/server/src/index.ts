@@ -1,11 +1,12 @@
 import { createApp } from "./app";
-import { loadConfig } from "./config";
+import { databaseProvider, loadConfig } from "./config";
+import { log } from "./logger";
 import { closeServices, createServices } from "./services";
 
 const config = loadConfig();
 const services = await createServices(config);
 await services.scheduler.start();
-const app = createApp({ config, services });
+const app = createApp({ config, services, logRequests: true });
 
 // Multipart framing is bounded separately by Busboy. This allowance keeps a
 // file exactly at MAX_UPLOAD_SIZE from being rejected for its MIME headers.
@@ -22,11 +23,15 @@ let shuttingDown = false;
 function shutdown(signal: NodeJS.Signals): void {
   if (shuttingDown) return;
   shuttingDown = true;
-  console.log(`${signal} received. Shutting down...`);
+  log.info("server", `${signal} received. Shutting down...`);
   void server.stop().finally(async () => closeServices(services));
 }
 
 process.once("SIGINT", shutdown);
 process.once("SIGTERM", shutdown);
 
-console.log(`The Last SaaS server listening on ${server.url}`);
+log.info("server", `The Last SaaS server listening on ${server.url}`);
+log.info(
+  "server",
+  `database=${databaseProvider(config.databaseUrl)} storage=${config.storageType} scheduler=${services.scheduler.name} log_level=${process.env.LOG_LEVEL ?? "info"}`,
+);

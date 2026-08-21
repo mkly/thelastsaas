@@ -1,5 +1,7 @@
 import nodemailer, { type Transporter } from "nodemailer";
 
+import { log } from "../logger";
+
 export interface NotificationMessage {
   to: string;
   subject: string;
@@ -55,11 +57,12 @@ export class ConsoleChannel implements NotificationChannel {
   readonly name = "console";
 
   async send(message: NotificationMessage): Promise<boolean> {
-    console.log(
-      `[Notification] To: ${message.to} | Subject: ${message.subject}`,
+    log.info(
+      "notifications",
+      `console delivery to ${message.to} | ${message.subject}`,
     );
     if (process.env.NODE_ENV !== "production") {
-      console.log(`[Notification] ${message.text}`);
+      log.info("notifications", message.text);
     }
     return true;
   }
@@ -90,14 +93,34 @@ export class EmailChannel implements NotificationChannel {
 
   async send(message: NotificationMessage): Promise<boolean> {
     const normalized = normalizeNotificationMessage(message);
-    await this.transporter.sendMail({
+    const info = await this.transporter.sendMail({
       from: this.options.from,
       to: normalized.to,
       subject: normalized.subject,
       text: normalized.text,
       html: normalized.html,
     });
+    log.info(
+      "notifications",
+      `email sent to ${normalized.to} (${normalized.subject}) id=${info.messageId}`,
+    );
     return true;
+  }
+
+  /* Opens a connection and authenticates without sending anything, so a bad
+     host or credential surfaces at startup instead of on the first send. */
+  async verify(): Promise<void> {
+    const target = `${this.options.host}:${this.options.port}`;
+    try {
+      await this.transporter.verify();
+      log.info("notifications", `SMTP connection to ${target} verified`);
+    } catch (error) {
+      log.error(
+        "notifications",
+        `SMTP verification failed for ${target}`,
+        error,
+      );
+    }
   }
 }
 
@@ -121,14 +144,36 @@ export class NotificationDispatcher {
       : [...this.channels.values()];
 
     if (channels.length === 0 || channels.some((channel) => !channel)) {
+      log.error(
+        "notifications",
+        `no usable channel for ${message.to}: requested [${
+          requestedChannels?.join(", ") ?? ""
+        }], registered [${[...this.channels.keys()].join(", ")}]`,
+      );
       return false;
     }
 
     const results = await Promise.allSettled(
       channels.map((channel) => channel!.send(message)),
     );
-    return results.every(
-      (result) => result.status === "fulfilled" && result.value,
-    );
+    let delivered = true;
+    for (const [index, result] of results.entries()) {
+      const name = channels[index]!.name;
+      if (result.status === "rejected") {
+        delivered = false;
+        log.error(
+          "notifications",
+          `${name} channel failed for ${message.to} (${message.subject})`,
+          result.reason,
+        );
+      } else if (!result.value) {
+        delivered = false;
+        log.error(
+          "notifications",
+          `${name} channel reported failure for ${message.to} (${message.subject})`,
+        );
+      }
+    }
+    return delivered;
   }
 }

@@ -10,6 +10,7 @@ import type { PrismaClient } from "@prisma/client";
 import { z } from "zod";
 
 import { addAuditLog } from "../../db/audit";
+import { log } from "../../logger";
 import {
   addPolicy,
   assignRole,
@@ -77,7 +78,7 @@ function failure(error: unknown): CallToolResult {
   } else {
     // Route handlers surface an unexpected fault as a bare 500; mirror that
     // here rather than echoing internal error text back to the MCP client.
-    console.error("[mcp] access tool execution failed", error);
+    log.error("mcp", "access tool execution failed", error);
     code = "InternalError";
     message = "Tool execution failed";
   }

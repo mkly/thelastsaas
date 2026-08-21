@@ -4,6 +4,7 @@ import { Cron } from "croner";
 import type { AppConfig } from "../config";
 import { databaseProvider } from "../config";
 import { parseRecurrence } from "../lib/recurrence";
+import { log } from "../logger";
 import type { NotificationQueue } from "../notifications/queue";
 
 const SQLITE_POLL_PATTERN = "*/10 * * * * *";
@@ -282,7 +283,7 @@ abstract class BaseBackgroundScheduler implements BackgroundScheduler {
   }
 
   protected logError(error: unknown): void {
-    console.error(`[Scheduler:${this.name}] background flush failed`, error);
+    log.error(`scheduler:${this.name}`, "background flush failed", error);
   }
 }
 

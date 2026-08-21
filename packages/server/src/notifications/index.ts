@@ -1,6 +1,7 @@
 import type { PrismaClient } from "@prisma/client";
 
 import type { AppConfig } from "../config";
+import { log } from "../logger";
 import {
   ConsoleChannel,
   EmailChannel,
@@ -19,14 +20,24 @@ export function createNotificationServices(
 } {
   const configuredChannels = channels ?? [new ConsoleChannel()];
   if (!channels && config.smtpHost) {
-    configuredChannels.push(
-      new EmailChannel({
-        host: config.smtpHost,
-        port: config.smtpPort,
-        user: config.smtpUser,
-        pass: config.smtpPass,
-        from: config.smtpFrom,
-      }),
+    const email = new EmailChannel({
+      host: config.smtpHost,
+      port: config.smtpPort,
+      user: config.smtpUser,
+      pass: config.smtpPass,
+      from: config.smtpFrom,
+    });
+    configuredChannels.push(email);
+    /* Fire-and-forget: surfaces a bad SMTP host/credential in the logs at
+       startup instead of on the first delivery attempt. */
+    void email.verify();
+  }
+  if (!channels) {
+    log.info(
+      "notifications",
+      config.smtpHost
+        ? `email channel enabled via ${config.smtpHost}:${config.smtpPort}, from ${config.smtpFrom}`
+        : "SMTP not configured (SMTP_HOST unset) — notifications and auth emails only reach the console channel",
     );
   }
   const notifications = new NotificationDispatcher(configuredChannels);

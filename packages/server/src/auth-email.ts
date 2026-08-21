@@ -1,5 +1,6 @@
 import type { AuthEmail, AuthEmailSender } from "./auth";
 import type { AppConfig } from "./config";
+import { log } from "./logger";
 import type { NotificationDispatcher } from "./notifications";
 
 const TEMPLATES: Record<
@@ -44,11 +45,13 @@ export function createAuthEmailSender(
 
   return async ({ type, to, url }) => {
     const template = TEMPLATES[type];
+    log.info("auth-email", `sending ${type} email to ${to} via ${channels[0]}`);
     const delivered = await notifications.send(
       { to, subject: template.subject, text: template.body(url) },
       channels,
     );
     if (!delivered) {
+      log.error("auth-email", `failed to send ${type} email to ${to}`);
       throw new Error(`Failed to send ${type} email to ${to}`);
     }
   };

@@ -5,6 +5,7 @@ import {
   extractQueuedDelivery,
   type QueuedDelivery,
 } from "../db/notifications";
+import { log } from "../logger";
 import type { NotificationDispatcher } from "./channels";
 
 const MAX_ATTEMPTS = 3;
@@ -127,6 +128,14 @@ export class NotificationQueue {
       const exhausted = attempts >= MAX_ATTEMPTS;
       const message =
         error instanceof Error ? error.message : "Notification delivery failed";
+      log.error(
+        "notifications",
+        `delivery ${row.id} attempt ${attempts}/${MAX_ATTEMPTS} failed${
+          exhausted
+            ? "; giving up"
+            : `; retrying in ${(RETRY_BACKOFF_MS * attempts) / 1000}s`
+        }: ${message}`,
+      );
       await this.prisma.notification.update({
         where: { id: row.id },
         data: {

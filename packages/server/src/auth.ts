@@ -12,6 +12,7 @@ import {
 } from "better-auth/plugins";
 
 import { databaseProvider, type AppConfig } from "./config";
+import { log } from "./logger";
 import { createAuditWriter } from "./db/audit";
 import { syncMemberRole } from "./db/casbin";
 
@@ -34,7 +35,7 @@ export interface AuthEmail {
 export type AuthEmailSender = (email: AuthEmail) => Promise<void>;
 
 const logAuthEmail: AuthEmailSender = async ({ type, to, url }) => {
-  console.info(`[auth:${type}] ${to}: ${url}`);
+  log.info(`auth:${type}`, `${to}: ${url}`);
 };
 
 export function createAuth(

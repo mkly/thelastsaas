@@ -1,5 +1,7 @@
 import { Hono } from "hono";
 import { getCookie } from "hono/cookie";
+import { HTTPException } from "hono/http-exception";
+import { logger } from "hono/logger";
 
 import type { AppConfig } from "./config";
 import type { AppEnvironment } from "./env";
@@ -14,18 +16,42 @@ import { assetsRouter } from "./routes/assets";
 import { authPagesRouter } from "./routes/auth-pages";
 import { downloadsRouter } from "./routes/downloads";
 import { homeRouter } from "./routes/home";
+import { log } from "./logger";
 import type { AppServices } from "./services";
 
 export interface CreateAppOptions {
   config: AppConfig;
   services: AppServices;
+  /* Request logging to stdout (journald in production). Off by default so
+     tests stay quiet; the server entry point turns it on. */
+  logRequests?: boolean;
 }
 
 export function createApp({
   config,
   services,
+  logRequests = false,
 }: CreateAppOptions): Hono<AppEnvironment> {
   const app = new Hono<AppEnvironment>();
+
+  if (logRequests) {
+    app.use(
+      "*",
+      logger((line, ...rest) => log.info("http", line, ...rest)),
+    );
+  }
+
+  /* Hono's default handler prints the error without any request context.
+     HTTPExceptions are deliberate responses, not faults — pass them through. */
+  app.onError((error, context) => {
+    if (error instanceof HTTPException) return error.getResponse();
+    log.error(
+      "http",
+      `unhandled error on ${context.req.method} ${context.req.path}`,
+      error,
+    );
+    return context.text("Internal Server Error", 500);
+  });
 
   app.use("*", async (context, next) => {
     context.set("config", config);
