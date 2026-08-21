@@ -11,6 +11,7 @@ import {
 } from "@lastsaas/shared";
 import { Prisma, type PrismaClient } from "@prisma/client";
 
+import { databaseProvider } from "../config";
 import { getCollection, validateCollectionRecordData } from "./collections";
 import {
   assertWritableFields,
@@ -28,7 +29,10 @@ import {
   type QueryPostFilter,
 } from "./query/compile";
 
-const PROVIDER = "sqlite" as const;
+// Raw record queries must speak the dialect of the database actually behind
+// Prisma: on PostgreSQL, `?` placeholders are never converted and get parsed
+// as the jsonb `?` operator, producing 42601 syntax errors.
+const PROVIDER = databaseProvider(process.env.DATABASE_URL ?? "file:");
 
 function jsonObject(value: Record<string, unknown>): Prisma.InputJsonObject {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonObject;
