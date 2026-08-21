@@ -631,21 +631,27 @@ authPagesRouter.get("/mcp", async (context) => {
   const session = await auth.api.getSession({
     headers: context.req.raw.headers,
   });
-  if (!session?.user) return context.redirect("/auth/login");
 
   const server = getExternalOrigin(
     context.req.raw,
     context.get("config")?.betterAuthUrl,
   );
-  const memberships = await prisma.member.count({
-    where: { userId: session.user.id },
-  });
+  const memberships = session?.user
+    ? await prisma.member.count({
+        where: { userId: session.user.id },
+      })
+    : 0;
   const endpoint = `${server}/v1/mcp`;
-  const availability = memberships
-    ? ""
-    : `<div class="empty">
+  const availability = session?.user
+    ? memberships
+      ? ""
+      : `<div class="empty">
         <h3>No organizations yet</h3>
         <p><a href="/auth/dashboard">Create an organization</a> or join one before connecting ChatGPT or Claude.</p>
+      </div>`
+    : `<div class="empty">
+        <h3>No account yet</h3>
+        <p><a href="/auth/signup">Sign up</a> and create an organization before connecting. Your AI client sends you back here to sign in when it connects.</p>
       </div>`;
 
   return context.html(
@@ -656,25 +662,30 @@ authPagesRouter.get("/mcp", async (context) => {
       <pre><code>${escapeHtml(endpoint)}</code></pre>
       <p class="small muted">Your AI client opens this site so you can sign in, choose an organization, and approve access. No CLI or copied token is required.</p>
 
+      <h2>Connect Claude</h2>
+      <ol>
+        <li>Open <strong>Settings → Connectors</strong> in claude.ai or the desktop app.</li>
+        <li>Select <strong>Add custom connector</strong> and enter the remote MCP URL above.</li>
+        <li>Select <strong>Add</strong>.</li>
+        <li>Sign in here, select an organization, and approve access.</li>
+      </ol>
+      <p class="small muted">New chats can use it right away. If you don't see it, enable it in the tools menu under the message box.</p>
+
       <h2>Connect ChatGPT</h2>
       <ol>
-        <li>Enable developer mode in ChatGPT's app settings.</li>
-        <li>Create a custom app and enter the remote MCP URL above.</li>
+        <li>In the desktop app, enable developer mode in ChatGPT's settings.</li>
+        <li>Create a custom connector and enter the remote MCP URL above.</li>
         <li>Choose OAuth authentication, then select <strong>Scan tools</strong>.</li>
         <li>Sign in here, select an organization, and approve access.</li>
       </ol>
+      <p class="small muted">On the web, custom connectors currently require a Business, Enterprise, or Edu workspace, where an admin adds the connector in workspace settings.</p>
 
-      <h2>Connect Claude</h2>
-      <ol>
-        <li>Open <strong>Customize → Connectors</strong>.</li>
-        <li>Add a custom connector and enter the remote MCP URL above.</li>
-        <li>Select <strong>Connect</strong>.</li>
-        <li>Sign in here, select an organization, and approve access.</li>
-      </ol>
+      <h2>Connect Claude Code</h2>
+      <pre><code>claude mcp add --transport http lastsaas ${escapeHtml(endpoint)}</code></pre>
 
       <p class="small muted">Prefer a terminal? <a href="/auth/install">Install the CLI</a> instead.</p>`,
       {
-        authenticated: true,
+        authenticated: Boolean(session?.user),
         current: "/auth/mcp",
         description:
           "Connect ChatGPT, Claude, or any MCP client to The Last SaaS.",

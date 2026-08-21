@@ -215,8 +215,11 @@ describe("browser auth pages", () => {
     expect(cookie).toBeTruthy();
 
     const unauthenticated = await app.request("http://localhost:3000/auth/mcp");
-    expect(unauthenticated.status).toBe(302);
-    expect(unauthenticated.headers.get("location")).toBe("/auth/login");
+    expect(unauthenticated.status).toBe(200);
+    const anonymousHtml = await unauthenticated.text();
+    expect(anonymousHtml).toContain("No account yet");
+    expect(anonymousHtml).toContain('<a href="/auth/signup">');
+    expect(anonymousHtml).toContain("http://localhost:3000/v1/mcp");
 
     const created = await app.request("http://localhost:3000/v1/orgs", {
       method: "POST",

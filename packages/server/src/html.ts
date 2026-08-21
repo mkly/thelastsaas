@@ -27,7 +27,7 @@ const SIGNED_IN_LINKS: ReadonlyArray<NavLink> = [
 const SIGNED_OUT_LINKS: ReadonlyArray<NavLink> = [
   { href: "/auth/login", label: "Log In" },
   { href: "/auth/signup", label: "Sign Up" },
-  { href: "/auth/install", label: "Install CLI" },
+  { href: "/auth/mcp", label: "MCP Server" },
 ];
 
 /** An explicit override of the operating system's light/dark preference. */

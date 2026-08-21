@@ -57,9 +57,30 @@ The server listens on http://localhost:8787. Sign up at `/auth/signup`.
 ## Connect an assistant
 
 Agents use the API through the MCP endpoint at `/v1/mcp`, authorized via
-OAuth. Connecting is one paste: add your server's MCP address to your
-assistant's connector settings (Claude, ChatGPT, Cursor, or your own
-agent) and approve the sign-in. From there, setup is a conversation:
+OAuth.
+
+**Claude** (claude.ai or the desktop app): Settings → Connectors →
+Add custom connector. Paste your server's MCP address
+(`https://your-server/v1/mcp`), click Add, and approve the sign-in when
+Claude asks. New chats can use it right away; if you don't see it, enable
+it in the tools menu under the message box.
+
+**Claude Code**:
+
+```sh
+claude mcp add --transport http lastsaas https://your-server/v1/mcp
+```
+
+**Cursor and other MCP clients**: add the same address wherever the
+client takes an MCP server URL, and approve the sign-in.
+
+**ChatGPT**: the desktop app connects in developer mode: enable it in
+settings, create a custom connector with the same address, and choose
+OAuth. On the web, custom MCP connectors currently require a Business,
+Enterprise, or Edu workspace, where an admin adds the connector under
+workspace settings. A listing in the ChatGPT apps directory is planned.
+
+From there, setup is a conversation:
 
 > "Set up gear tracking for the studio. Anyone on the team can check
 > equipment out, but purchase prices stay between us."
