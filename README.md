@@ -9,7 +9,7 @@ https://github.com/user-attachments/assets/3a401024-d3c0-417c-93e2-5d3867048989
 Every SaaS is a database with a user interface on top: forms going in,
 dashboards coming out. That interface is work a model now does well, so
 this server keeps only the database side. It holds records, files,
-people, permissions, reminders, and history. Your assistant assembles
+people, permissions, notifications, and audit logs. Your assistant assembles
 whichever app you ask for, a gear tracker today, a client base tomorrow.
 When you need a new field or a different rule, you say so.
 
