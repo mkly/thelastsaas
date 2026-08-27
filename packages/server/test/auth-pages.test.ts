@@ -507,11 +507,26 @@ describe("browser auth pages", () => {
     ).toBe("/auth/dashboard");
   });
 
-  test("starts configured Google OAuth and preserves a safe auth next path", async () => {
+  test("renders configured Google OAuth links and preserves a safe auth next path", async () => {
     const { app } = await createAuthPageApp({ google: true });
 
     const loginPage = await app.request("http://localhost:3000/auth/login");
     expect(await loginPage.text()).toContain("Continue with Google");
+
+    const signupPage = await app.request(
+      "http://localhost:3000/auth/signup?next=%2Fauth%2Fdevice%2Fauthorize%3Fstate%3Dcli",
+    );
+    expect(await signupPage.text()).toContain(
+      'href="/auth/google?next=%2Fauth%2Fdevice%2Fauthorize%3Fstate%3Dcli"',
+    );
+
+    const { app: appWithoutGoogle } = await createAuthPageApp();
+    const signupWithoutGoogle = await appWithoutGoogle.request(
+      "http://localhost:3000/auth/signup",
+    );
+    expect(await signupWithoutGoogle.text()).not.toContain(
+      "Continue with Google",
+    );
 
     const response = await app.request(
       "http://localhost:3000/auth/google?next=%2Fauth%2Fdevice%2Fauthorize%3Fstate%3Dcli",

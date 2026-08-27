@@ -181,6 +181,12 @@ authPagesRouter.get("/signup", async (context) => {
     return context.redirect("/auth/dashboard");
   const next = authNext(context);
   const action = authPath("/auth/signup", { next });
+  const googleHref = authPath("/auth/google", { next });
+  const { googleClientId, googleClientSecret } = context.get("config");
+  const googleLogin =
+    googleClientId && googleClientSecret
+      ? `<a class="button secondary" href="${escapeHtml(googleHref)}">Continue with Google</a>`
+      : "";
   const prefillEmail = context.req.query("email") ?? "";
   const emailAttributes = prefillEmail
     ? ` value="${escapeHtml(prefillEmail)}" readonly`
@@ -198,6 +204,9 @@ authPagesRouter.get("/signup", async (context) => {
         <button type="submit">Create Account</button>
         <p class="small muted" style="margin-block-start:0.75rem">Free while in beta. No card, no sales call.</p>
       </form>
+    </div>
+    <div class="stack" style="margin-block-start:1rem">
+      ${googleLogin}
     </div>
     <p class="small muted" style="margin-block-start:1.25rem;text-align:center">
       Next, connecting your assistant is one paste. Then you just ask.
