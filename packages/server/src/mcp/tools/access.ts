@@ -428,17 +428,24 @@ function registerFilterTools(server: McpServer, context: McpToolContext): void {
   server.registerTool(
     "row_filter_set",
     {
-      description: "Create or replace a row-level permission filter",
+      description:
+        "Create or replace a row-level permission filter. condition is a filter object, " +
+        'e.g. {"and": [{"status": "active"}, {"age": {"gt": 18}}]}; leaf operators: ' +
+        "eq, not, gt, lt, gte, lte, contains, in, is_null, between, occurs_between; " +
+        "boolean nodes: and, or, not (max 8 levels deep)",
       inputSchema: {
         collection: z.string().min(1),
         role: roleName,
         action: z.enum(filterActions),
-        condition: whereSchema,
+        // Loose at the wire so the advertised JSON Schema stays small
+        // (whereSchema serializes to ~10MB); strict parse happens below.
+        condition: z.record(z.string(), z.unknown()),
       },
     },
     (input) =>
       run(async () => {
         await requirePermission(context, "/permissions");
+        const condition = whereSchema.parse(input.condition);
         const collection = await getCollection(
           context.services.prisma,
           context.orgId,
@@ -450,7 +457,7 @@ function registerFilterTools(server: McpServer, context: McpToolContext): void {
           collection.id,
           input.role,
           input.action,
-          input.condition as Where,
+          condition as Where,
         );
         await audit(context, "set_row_filter", "permission", row.id, {
           collection: input.collection,

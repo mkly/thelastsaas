@@ -74,6 +74,10 @@ export function createAuth(
     account: {
       accountLinking: {
         trustedProviders: ["google"],
+        // Google verifies the email on its side, so an unverified local
+        // password account with the same address may still link. Trades the
+        // pre-registration takeover guard for smoother sign-in.
+        requireLocalEmailVerified: false,
       },
     },
     socialProviders:
