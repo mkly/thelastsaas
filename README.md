@@ -1,35 +1,36 @@
 # The Last SaaS
 
-**Your assistant is the interface.** The Last SaaS is a server that holds
-your records and files, and it has no user interface of its own. Your Claude, your ChatGPT, or
-any agent connects to it over MCP and operates it for you.
+**The assistant is the interface.** The Last SaaS is a server that holds
+records and files, tracks who is on the team and what each person can
+see, sends notifications, and logs the changes. It does not provide a
+user interface on its own; an assistant — Claude, ChatGPT, or any MCP
+client — connects over MCP and operates it.
 
 https://github.com/user-attachments/assets/3a401024-d3c0-417c-93e2-5d3867048989
 
-Every SaaS is a database with a user interface on top: forms going in,
-dashboards coming out. That interface is work a model now does well, so
-this server keeps only the database side. It holds records, files,
-people, permissions, notifications, and audit logs. Your assistant assembles
-whichever app you ask for, a gear tracker today, a client base tomorrow.
-When you need a new field or a different rule, you say so.
-
-There's a hosted version, free while in beta, at
-[thelastsaas.com](https://thelastsaas.com). Or run it yourself; that's what
-the rest of this README is for.
+Most SaaS is built from the same parts: data, files, users, permissions,
+and notifications, with a user interface on top. That interface is a
+large part of what the subscription pays for, and it is work a model
+does well, so this server keeps the parts underneath. The assistant
+handles setup from a description of what's needed — gear tracking today,
+a client base tomorrow — and later changes, like a new field or a
+different rule, the same way.
 
 ## What's in the box
 
-- **Records.** Organizations own collections with dynamic schemas, and
-  every record is validated against them.
-- **Permissions.** Access is controlled per member with row- and
-  field-level filters. The bookkeeper reads every invoice and cannot open
-  payroll.
-- **Files.** File storage attached to the records it belongs to
-  (S3-compatible backends supported).
-- **Reminders.** Scheduled notifications, recurring or one-off, delivered
-  by email.
-- **History.** Audit logging of every change, who made it and when,
-  whether it was a person or an agent.
+- **Records.** Structured lists of anything from gear to invoices.
+  Organizations own collections with dynamic schemas, and every record
+  is validated against them.
+- **Files.** Receipts and contracts, attached to the records they
+  belong to (S3-compatible backends supported).
+- **People.** Teammates join by invitation and work from the same
+  records, each with their own assistant or none at all.
+- **Permissions.** Rules apply down to the row and the field. The
+  bookkeeper reads every invoice and cannot open payroll.
+- **Notifications.** Due-date reminders and weekly digests, recurring
+  or one-off, delivered by email.
+- **Audit logs.** Changes are recorded with who made them and when,
+  whether it was a person or an assistant.
 - **Agent access.** An MCP endpoint with OAuth, plus a typed CLI that
   embeds an operator guide for agents.
 
@@ -56,8 +57,8 @@ The server listens on http://localhost:8787. Sign up at `/auth/signup`.
 
 ## Connect an assistant
 
-Agents use the API through the MCP endpoint at `/v1/mcp`, authorized via
-OAuth.
+Assistants connect through the MCP endpoint at `/v1/mcp`, authorized
+via OAuth.
 
 **Claude** (claude.ai or the desktop app): Settings → Connectors →
 Add custom connector. Paste your server's MCP address
@@ -132,9 +133,3 @@ bun run lint
 ```
 
 Implementation notes live in [agent_docs/](agent_docs/).
-
-## License and leaving
-
-Open source under the [MIT License](LICENSE). Your data exports with one
-command, and the server is yours to run yourself, now or if you ever
-decide to leave. There is no pricing page here either.
