@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { createHash, randomBytes } from "node:crypto";
+import {
+  createHash,
+  generateKeyPairSync,
+  randomBytes,
+  sign,
+} from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -44,7 +49,28 @@ async function createAuthPageApp(options: { google?: boolean } = {}) {
     await closeServices(services);
     rmSync(directory, { recursive: true, force: true });
   });
-  return { app, emails };
+  return { app, emails, services };
+}
+
+function googleIdToken(claims: Record<string, unknown>) {
+  const { privateKey, publicKey } = generateKeyPairSync("rsa", {
+    modulusLength: 2048,
+  });
+  const header = Buffer.from(
+    JSON.stringify({ alg: "RS256", kid: "test-google-key", typ: "JWT" }),
+  ).toString("base64url");
+  const payload = Buffer.from(JSON.stringify(claims)).toString("base64url");
+  const signature = sign(
+    "RSA-SHA256",
+    Buffer.from(`${header}.${payload}`),
+    privateKey,
+  ).toString("base64url");
+  const jwk = publicKey.export({ format: "jwk" });
+
+  return {
+    token: `${header}.${payload}.${signature}`,
+    jwk: { ...jwk, alg: "RS256", kid: "test-google-key", use: "sig" },
+  };
 }
 
 function formBody(fields: Record<string, string>): URLSearchParams {
@@ -521,12 +547,30 @@ describe("browser auth pages", () => {
     );
 
     const { app: appWithoutGoogle } = await createAuthPageApp();
+    const loginWithoutGoogle = await appWithoutGoogle.request(
+      "http://localhost:3000/auth/login",
+    );
+    expect(await loginWithoutGoogle.text()).not.toContain(
+      "Continue with Google",
+    );
+
     const signupWithoutGoogle = await appWithoutGoogle.request(
       "http://localhost:3000/auth/signup",
     );
     const signupWithoutGoogleHtml = await signupWithoutGoogle.text();
     expect(signupWithoutGoogleHtml).not.toContain("Continue with Google");
     expect(signupWithoutGoogleHtml).not.toContain('<div class="stack"');
+
+    const unavailable = await appWithoutGoogle.request(
+      "http://localhost:3000/auth/google",
+    );
+    expect(unavailable.status).toBe(302);
+    const unavailablePage = await appWithoutGoogle.request(
+      new URL(unavailable.headers.get("location")!, "http://localhost:3000"),
+    );
+    expect(await unavailablePage.text()).toContain(
+      "Google login is not configured",
+    );
 
     const response = await app.request(
       "http://localhost:3000/auth/google?next=%2Fauth%2Fdevice%2Fauthorize%3Fstate%3Dcli",
@@ -536,6 +580,83 @@ describe("browser auth pages", () => {
       "https://accounts.google.com/",
     );
     expect(response.headers.get("set-cookie")).toBeTruthy();
+  });
+
+  test("links Google sign-in to an existing verified password user", async () => {
+    const { app, services } = await createAuthPageApp({ google: true });
+    await signUp(app);
+    const passwordUser = await services.prisma.user.findUniqueOrThrow({
+      where: { email: "auth-user@example.com" },
+    });
+    await services.prisma.user.update({
+      where: { id: passwordUser.id },
+      data: { emailVerified: true },
+    });
+
+    const authorization = await app.request(
+      "http://localhost:3000/auth/google",
+    );
+    const authorizationUrl = new URL(authorization.headers.get("location")!);
+    const state = authorizationUrl.searchParams.get("state");
+    const cookie = authorization.headers.get("set-cookie")?.split(";")[0];
+    expect(state).toBeTruthy();
+    expect(cookie).toBeTruthy();
+
+    const now = Math.floor(Date.now() / 1000);
+    const { token, jwk } = googleIdToken({
+      iss: "https://accounts.google.com",
+      aud: "google-client-id",
+      sub: "google-user-id",
+      email: "auth-user@example.com",
+      email_verified: true,
+      name: "Google Auth User",
+      picture: "https://example.com/avatar.png",
+      iat: now,
+      exp: now + 3600,
+    });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input) => {
+      const url = String(input);
+      if (url === "https://oauth2.googleapis.com/token") {
+        return Response.json({
+          access_token: "google-access-token",
+          expires_in: 3600,
+          id_token: token,
+          token_type: "Bearer",
+        });
+      }
+      if (url === "https://www.googleapis.com/oauth2/v3/certs") {
+        return Response.json({ keys: [jwk] });
+      }
+      throw new Error(`Unexpected Google OAuth request: ${url}`);
+    }) as typeof fetch;
+
+    try {
+      const callback = await app.request(
+        `http://localhost:3000/api/auth/callback/google?code=test-code&state=${encodeURIComponent(state!)}`,
+        { headers: { Cookie: cookie! } },
+      );
+      expect(callback.status).toBe(302);
+      expect(callback.headers.get("location")).toBe("/auth/dashboard");
+
+      const users = await services.prisma.user.findMany({
+        where: { email: "auth-user@example.com" },
+        include: { accounts: true },
+      });
+      expect(users).toHaveLength(1);
+      expect(users[0]?.id).toBe(passwordUser.id);
+      expect(users[0]?.accounts).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            accountId: "google-user-id",
+            providerId: "google",
+            userId: passwordUser.id,
+          }),
+        ]),
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   test("escapes auth-page query values and rejects external next redirects", async () => {

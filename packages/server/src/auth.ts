@@ -71,6 +71,11 @@ export function createAuth(
         });
       },
     },
+    account: {
+      accountLinking: {
+        trustedProviders: ["google"],
+      },
+    },
     socialProviders:
       config.googleClientId && config.googleClientSecret
         ? {
