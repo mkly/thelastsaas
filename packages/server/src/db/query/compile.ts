@@ -125,6 +125,40 @@ function numericExpr(extract: string, provider: DbProvider): string {
   return `CAST(${extract} AS REAL)`;
 }
 
+/**
+ * Comparison expression typed by the schema. Postgres `->>` yields text, so
+ * boolean and numeric fields must be cast before comparing against a typed
+ * parameter; SQLite's `json_extract` already yields numbers for both.
+ * Datetime and string fields compare as text — ISO-8601 order is
+ * chronological — and metadata columns keep their native types.
+ */
+function comparisonExpr(
+  field: string,
+  schema: Schema,
+  provider: DbProvider,
+): string {
+  const extract = extractField(field, provider);
+  const type = fieldType(field, schema);
+  if (type === "boolean" && provider === "postgresql") {
+    return `(${extract})::boolean`;
+  }
+  if (type !== undefined && NUMERIC_TYPES.has(type)) {
+    return numericExpr(extract, provider);
+  }
+  return extract;
+}
+
+/**
+ * SQLite has no boolean type: `json_extract` returns JSON true/false as
+ * 1/0, so boolean parameters must be bound as integers to match.
+ */
+function comparisonParam(value: unknown, provider: DbProvider): unknown {
+  if (provider === "sqlite" && typeof value === "boolean") {
+    return value ? 1 : 0;
+  }
+  return value;
+}
+
 /** Convert `?` placeholders to `$1, $2, ...` for PostgreSQL. */
 export function toPgParams(sql: string): string {
   let index = 0;
@@ -373,13 +407,19 @@ function compileLeaf(
           );
           continue;
         }
-        const compiled = compileFilterOp(fieldName, operator, value, provider);
+        const compiled = compileFilterOp(
+          fieldName,
+          operator,
+          value,
+          schema,
+          provider,
+        );
         clauses.push(compiled.sql);
         params.push(...compiled.params);
       }
     } else {
-      clauses.push(`${extractField(fieldName, provider)} = ?`);
-      params.push(condition);
+      clauses.push(`${comparisonExpr(fieldName, schema, provider)} = ?`);
+      params.push(comparisonParam(condition, provider));
     }
   }
 
@@ -418,24 +458,31 @@ function compileFilterOp(
   field: string,
   operator: string,
   value: unknown,
+  schema: Schema,
   provider: DbProvider,
 ): Omit<CompiledFragment, "postFilters"> {
   const extract = extractField(field, provider);
-  const numeric = numericExpr(extract, provider);
+  const comparison = comparisonExpr(field, schema, provider);
 
   switch (operator) {
     case "eq":
-      return { sql: `${extract} = ?`, params: [value] };
+      return {
+        sql: `${comparison} = ?`,
+        params: [comparisonParam(value, provider)],
+      };
     case "not":
-      return { sql: `${extract} != ?`, params: [value] };
+      return {
+        sql: `${comparison} != ?`,
+        params: [comparisonParam(value, provider)],
+      };
     case "gt":
-      return { sql: `${numeric} > ?`, params: [value] };
+      return { sql: `${comparison} > ?`, params: [value] };
     case "lt":
-      return { sql: `${numeric} < ?`, params: [value] };
+      return { sql: `${comparison} < ?`, params: [value] };
     case "gte":
-      return { sql: `${numeric} >= ?`, params: [value] };
+      return { sql: `${comparison} >= ?`, params: [value] };
     case "lte":
-      return { sql: `${numeric} <= ?`, params: [value] };
+      return { sql: `${comparison} <= ?`, params: [value] };
     case "contains": {
       if (typeof value !== "string") {
         throw new InvalidQueryError(
@@ -459,8 +506,8 @@ function compileFilterOp(
       }
       if (value.length === 0) return { sql: "1 = 0", params: [] };
       return {
-        sql: `${extract} IN (${value.map(() => "?").join(", ")})`,
-        params: value,
+        sql: `${comparison} IN (${value.map(() => "?").join(", ")})`,
+        params: value.map((item) => comparisonParam(item, provider)),
       };
     }
     case "is_null":
@@ -474,7 +521,7 @@ function compileFilterOp(
         );
       }
       return {
-        sql: `${numeric} BETWEEN ? AND ?`,
+        sql: `${comparison} BETWEEN ? AND ?`,
         params: [value[0], value[1]],
       };
     }
@@ -504,7 +551,9 @@ export function compileOrderBy(
     return `ORDER BY ${field} ${direction}`;
   }
   validateFieldReference(field, schema, "order_by", options);
-  return `ORDER BY ${extractField(field, provider)} ${direction}`;
+  // Typed expression so numeric fields sort numerically on Postgres, where
+  // `->>` would otherwise sort them as text ("10" before "9").
+  return `ORDER BY ${comparisonExpr(field, schema, provider)} ${direction}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -550,7 +599,10 @@ export function compileAggregate(
     if (aliasSources.has(field)) {
       throw new InvalidQueryError(`Duplicate group_by field '${field}'`);
     }
-    const expression = extractField(field, provider);
+    // Typed expression so boolean/numeric group columns come back with
+    // their schema type on Postgres (and HAVING can compare them against
+    // typed parameters) instead of as `->>` text.
+    const expression = comparisonExpr(field, schema, provider);
     selectParts.push(`${expression} AS "${field}"`);
     groupExpressions.push(expression);
     aliasSources.set(field, field);
@@ -606,6 +658,7 @@ export function compileAggregate(
     const having = compileLeafAgainstAliases(
       request.having,
       aliasSources,
+      provider,
       options,
     );
     if (having.sql) {
@@ -647,6 +700,7 @@ function clampOffset(value: number): number {
 function compileLeafAgainstAliases(
   leaf: WhereLeaf,
   aliasSources: Map<string, string | undefined>,
+  provider: DbProvider,
   options: CompileOptions,
 ): Omit<CompiledFragment, "postFilters"> {
   const clauses: string[] = [];
@@ -677,13 +731,13 @@ function compileLeafAgainstAliases(
     const reference = `"${name}"`;
     if (isPlainObject(condition)) {
       for (const [operator, value] of Object.entries(condition)) {
-        const compiled = compileAliasOp(reference, operator, value);
+        const compiled = compileAliasOp(reference, operator, value, provider);
         clauses.push(compiled.sql);
         params.push(...compiled.params);
       }
     } else {
       clauses.push(`${reference} = ?`);
-      params.push(condition);
+      params.push(comparisonParam(condition, provider));
     }
   }
 
@@ -694,12 +748,19 @@ function compileAliasOp(
   reference: string,
   operator: string,
   value: unknown,
+  provider: DbProvider,
 ): Omit<CompiledFragment, "postFilters"> {
   switch (operator) {
     case "eq":
-      return { sql: `${reference} = ?`, params: [value] };
+      return {
+        sql: `${reference} = ?`,
+        params: [comparisonParam(value, provider)],
+      };
     case "not":
-      return { sql: `${reference} != ?`, params: [value] };
+      return {
+        sql: `${reference} != ?`,
+        params: [comparisonParam(value, provider)],
+      };
     case "gt":
       return { sql: `${reference} > ?`, params: [value] };
     case "lt":
@@ -715,7 +776,7 @@ function compileAliasOp(
       if (value.length === 0) return { sql: "1 = 0", params: [] };
       return {
         sql: `${reference} IN (${value.map(() => "?").join(", ")})`,
-        params: value,
+        params: value.map((item) => comparisonParam(item, provider)),
       };
     }
     case "is_null":

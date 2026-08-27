@@ -22,6 +22,8 @@ const schema: Schema = {
   status: { type: "string", description: "Order status" },
   score: "float",
   count: "integer",
+  active: "boolean",
+  due_at: "datetime",
   schedule: "recurrence",
 };
 
@@ -59,6 +61,83 @@ describe("compileWhere — flat leaves", () => {
     expect(
       compileWhere({ amount: { gt: 100 } } as Where, schema, "postgresql").sql,
     ).toBe("(data->>'amount')::numeric > ?");
+  });
+
+  test("casts boolean fields for typed comparison on both dialects", () => {
+    // Postgres `->>` yields text, so an uncast comparison against a boolean
+    // parameter raises `operator does not exist: text = boolean` (500 on
+    // live). SQLite has no boolean type, so the parameter binds as 1/0 to
+    // match json_extract's output.
+    expect(compileWhere({ active: true }, schema, "postgresql")).toEqual({
+      sql: "(data->>'active')::boolean = ?",
+      params: [true],
+      postFilters: [],
+    });
+    expect(compileWhere({ active: true }, schema, "sqlite")).toEqual({
+      sql: "json_extract(data, '$.active') = ?",
+      params: [1],
+      postFilters: [],
+    });
+    expect(
+      compileWhere({ active: { not: false } } as Where, schema, "postgresql"),
+    ).toMatchObject({
+      sql: "(data->>'active')::boolean != ?",
+      params: [false],
+    });
+    expect(
+      compileWhere({ active: { not: false } } as Where, schema, "sqlite"),
+    ).toMatchObject({
+      sql: "json_extract(data, '$.active') != ?",
+      params: [0],
+    });
+  });
+
+  test("casts numeric fields for equality on both dialects", () => {
+    expect(
+      compileWhere({ amount: { eq: 5 } } as Where, schema, "postgresql"),
+    ).toMatchObject({
+      sql: "(data->>'amount')::numeric = ?",
+      params: [5],
+    });
+    expect(compileWhere({ amount: 5 }, schema, "sqlite")).toMatchObject({
+      sql: "CAST(json_extract(data, '$.amount') AS REAL) = ?",
+      params: [5],
+    });
+    expect(
+      compileWhere({ count: { in: [1, 2] } } as Where, schema, "postgresql"),
+    ).toMatchObject({
+      sql: "(data->>'count')::numeric IN (?, ?)",
+      params: [1, 2],
+    });
+  });
+
+  test("compares datetime and string fields as text, not numeric", () => {
+    // The former unconditional numeric cast made ordered comparisons on
+    // ISO-8601 strings fail on Postgres (uncastable text) and silently
+    // truncate on SQLite (CAST('2026-01-01' AS REAL) = 2026).
+    expect(
+      compileWhere({ due_at: { gte: "2026-01-01" } } as Where, schema, "postgresql"),
+    ).toMatchObject({
+      sql: "data->>'due_at' >= ?",
+      params: ["2026-01-01"],
+    });
+    expect(
+      compileWhere({ due_at: { gte: "2026-01-01" } } as Where, schema, "sqlite"),
+    ).toMatchObject({
+      sql: "json_extract(data, '$.due_at') >= ?",
+      params: ["2026-01-01"],
+    });
+    expect(
+      compileWhere(
+        { due_at: { between: ["2026-01-01", "2026-12-31"] } } as Where,
+        schema,
+        "postgresql",
+      ).sql,
+    ).toBe("data->>'due_at' BETWEEN ? AND ?");
+    // Metadata datetime columns are native, so they compare uncast.
+    expect(
+      compileWhere({ created_at: { lt: "2026-01-01" } } as Where, schema, "postgresql").sql,
+    ).toBe("created_at < ?");
   });
 
   test("compiles contains with LIKE escaping", () => {
@@ -343,6 +422,13 @@ describe("compileOrderBy", () => {
       "ORDER BY created_at ASC",
     );
     expect(compileOrderBy("name", schema, "sqlite")).toContain("json_extract");
+    // Numeric fields sort numerically on Postgres, not as `->>` text.
+    expect(compileOrderBy("-amount", schema, "postgresql")).toBe(
+      "ORDER BY (data->>'amount')::numeric DESC",
+    );
+    expect(compileOrderBy("active", schema, "postgresql")).toBe(
+      "ORDER BY (data->>'active')::boolean ASC",
+    );
     expect(compileOrderBy("name", schema, "postgresql")).toContain(
       "data->>'name'",
     );
@@ -511,6 +597,40 @@ describe("compileAggregate", () => {
     );
     expect(result.sql.split("SELECT * FROM agg")[1]).toContain("WHERE");
     expect(result.sql).toContain('ORDER BY "n" DESC');
+  });
+
+  test("types boolean and numeric group columns for both dialects", () => {
+    const postgres = compileAggregate(
+      {
+        group_by: ["active", "amount"],
+        metrics: [{ op: "count", as: "n" }],
+        having: { active: true },
+      },
+      schema,
+      "postgresql",
+      "org1",
+      "col1",
+    );
+    expect(postgres.sql).toContain(`(data->>'active')::boolean AS "active"`);
+    expect(postgres.sql).toContain(`(data->>'amount')::numeric AS "amount"`);
+    expect(postgres.params).toContain(true);
+
+    // SQLite group columns surface JSON booleans as 1/0, so the having
+    // parameter binds as an integer.
+    const sqlite = compileAggregate(
+      {
+        group_by: ["active"],
+        metrics: [{ op: "count", as: "n" }],
+        having: { active: true },
+      },
+      schema,
+      "sqlite",
+      "org1",
+      "col1",
+    );
+    expect(sqlite.sql).toContain(`json_extract(data, '$.active') AS "active"`);
+    expect(sqlite.params).toContain(1);
+    expect(sqlite.params).not.toContain(true);
   });
 
   test("rejects undefined having and order aliases and collisions", () => {
