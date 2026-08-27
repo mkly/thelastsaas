@@ -524,9 +524,9 @@ describe("browser auth pages", () => {
     const signupWithoutGoogle = await appWithoutGoogle.request(
       "http://localhost:3000/auth/signup",
     );
-    expect(await signupWithoutGoogle.text()).not.toContain(
-      "Continue with Google",
-    );
+    const signupWithoutGoogleHtml = await signupWithoutGoogle.text();
+    expect(signupWithoutGoogleHtml).not.toContain("Continue with Google");
+    expect(signupWithoutGoogleHtml).not.toContain('<div class="stack"');
 
     const response = await app.request(
       "http://localhost:3000/auth/google?next=%2Fauth%2Fdevice%2Fauthorize%3Fstate%3Dcli",
