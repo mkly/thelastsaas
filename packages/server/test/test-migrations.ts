@@ -1,10 +1,14 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 
-const migrationPaths = [
-  "../prisma/migrations/20260819015000_init/migration.sql",
-  "../prisma/migrations/20260828190000_add_user_kind/migration.sql",
-] as const;
+const migrationsDirectory = fileURLToPath(
+  new URL("../prisma/migrations", import.meta.url),
+);
 
-export const testMigrationSql = migrationPaths
-  .map((path) => readFileSync(new URL(path, import.meta.url), "utf8"))
+export const testMigrationSql = readdirSync(migrationsDirectory)
+  .sort()
+  .map((name) => join(migrationsDirectory, name, "migration.sql"))
+  .filter((path) => existsSync(path))
+  .map((path) => readFileSync(path, "utf8"))
   .join("\n");
