@@ -58,11 +58,14 @@ export function createAuth(
     emailAndPassword: {
       enabled: true,
       minPasswordLength: 8,
+      requireEmailVerification: true,
       sendResetPassword: async ({ user, url }) => {
         await sendAuthEmail({ type: "password-reset", to: user.email, url });
       },
     },
     emailVerification: {
+      sendOnSignUp: true,
+      autoSignInAfterVerification: true,
       sendVerificationEmail: async ({ user, url }) => {
         await sendAuthEmail({
           type: "email-verification",
