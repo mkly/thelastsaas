@@ -166,9 +166,17 @@ authPagesRouter.post("/login", async (context) => {
 
   const next = authNext(context);
   if (!authResponse.ok) {
-    return context.redirect(
-      authPath("/auth/login", { next, error: "Invalid credentials" }),
-    );
+    const authError =
+      authResponse.status === 403
+        ? ((await authResponse.json().catch(() => null)) as {
+            code?: unknown;
+          } | null)
+        : null;
+    const error =
+      authError?.code === "EMAIL_NOT_VERIFIED"
+        ? "Email not verified. Check your email for a new verification link."
+        : "Invalid credentials";
+    return context.redirect(authPath("/auth/login", { next, error }));
   }
 
   const redirect = context.redirect(next ?? "/auth/dashboard");
@@ -236,7 +244,8 @@ authPagesRouter.post("/signup", async (context) => {
     return context.redirect(
       authPath("/auth/login", {
         next,
-        message: "Account created. Please log in.",
+        message:
+          "Account created. Check your email to verify your address before logging in.",
       }),
     );
   } catch (error) {
