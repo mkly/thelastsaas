@@ -54,7 +54,9 @@ export const memberRouter = new Hono<AppEnvironment>()
     const [rows, total, groupingRules] = await Promise.all([
       prisma.member.findMany({
         where,
-        include: { user: { select: { id: true, email: true, name: true } } },
+        include: {
+          user: { select: { id: true, email: true, name: true, kind: true } },
+        },
         orderBy: { createdAt: "asc" },
         take: limit,
         skip: offset,
@@ -82,6 +84,7 @@ export const memberRouter = new Hono<AppEnvironment>()
         user_id: member.user.id,
         email: member.user.email,
         name: member.user.name,
+        kind: member.user.kind,
         member_role: member.role,
         casbin_roles: rolesByUser.get(member.user.id) ?? [],
         joined_at: member.createdAt,

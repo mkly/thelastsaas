@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -7,14 +7,7 @@ import { createApp } from "../src/app";
 import { loadConfig } from "../src/config";
 import { closeServices, createServices } from "../src/services";
 import { verifyTestUser } from "./auth-helpers";
-
-const migration = readFileSync(
-  new URL(
-    "../prisma/migrations/20260819015000_init/migration.sql",
-    import.meta.url,
-  ),
-  "utf8",
-);
+import { testMigrationSql } from "./test-migrations";
 
 const RECURRENCE_VALUE =
   "DTSTART;TZID=America/New_York:20260901T090000\nRRULE:FREQ=WEEKLY;COUNT=4";
@@ -33,7 +26,7 @@ async function createWalkthroughStack() {
   });
   const services = await createServices(config);
   if (!services.database) throw new Error("Expected SQLite database handle");
-  services.database.exec(migration);
+  services.database.exec(testMigrationSql);
   cleanups.push(async () => {
     await closeServices(services);
     rmSync(directory, { recursive: true, force: true });

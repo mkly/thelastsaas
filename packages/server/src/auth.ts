@@ -44,6 +44,13 @@ export function createAuth(
   sendAuthEmail: AuthEmailSender = logAuthEmail,
 ) {
   const mcpResource = mcpResourceUrl(config);
+  const permitsInteractiveAuth = async (userId: string) => {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { kind: true },
+    });
+    return user?.kind !== "service";
+  };
 
   return betterAuth({
     secret: config.betterAuthSecret,
@@ -54,6 +61,27 @@ export function createAuth(
     session: {
       expiresIn: SESSION_EXPIRES_IN_SECONDS,
       updateAge: SESSION_UPDATE_AGE,
+    },
+    user: {
+      additionalFields: {
+        kind: {
+          type: "string",
+          input: false,
+          defaultValue: "human",
+        },
+      },
+    },
+    databaseHooks: {
+      session: {
+        create: {
+          before: async (session) => permitsInteractiveAuth(session.userId),
+        },
+      },
+      account: {
+        create: {
+          before: async (account) => permitsInteractiveAuth(account.userId),
+        },
+      },
     },
     emailAndPassword: {
       enabled: true,

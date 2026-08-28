@@ -10,6 +10,7 @@ interface UserRow {
   id: string;
   email: string;
   name: string;
+  kind: "human" | "service";
 }
 
 interface MemberRow {
@@ -43,8 +44,18 @@ function createFixture() {
   let nextRuleId = 3;
   let nextInvitationId = 1;
   const users: UserRow[] = [
-    { id: "user_admin", email: "admin@example.com", name: "Admin" },
-    { id: "user_agent", email: "agent@example.com", name: "Agent User" },
+    {
+      id: "user_admin",
+      email: "admin@example.com",
+      name: "Admin",
+      kind: "human",
+    },
+    {
+      id: "user_agent",
+      email: "agent@example.com",
+      name: "Agent User",
+      kind: "service",
+    },
   ];
   const members: MemberRow[] = [
     {
@@ -309,8 +320,16 @@ describe("organization members and invitations", () => {
     expect(directory.status).toBe(200);
     expect(await directory.json()).toMatchObject({
       members: [
-        { email: "admin@example.com", member_role: "admin" },
-        { email: "agent@example.com", member_role: "member" },
+        {
+          email: "admin@example.com",
+          kind: "human",
+          member_role: "admin",
+        },
+        {
+          email: "agent@example.com",
+          kind: "service",
+          member_role: "member",
+        },
       ],
     });
 

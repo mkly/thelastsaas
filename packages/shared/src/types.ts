@@ -218,12 +218,14 @@ export interface Stats {
 }
 
 export type MemberRole = "admin" | "member";
+export type UserKind = "human" | "service";
 
 export interface Member {
   member_id: string;
   user_id: string;
   email: string;
   name: string | null;
+  kind: UserKind;
   member_role: string;
   casbin_roles: string[];
   joined_at: string;

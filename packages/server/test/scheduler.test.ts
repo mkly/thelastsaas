@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -10,14 +10,7 @@ import {
   SqliteBackgroundScheduler,
 } from "../src/scheduler";
 import { closeServices, createServices } from "../src/services";
-
-const migration = readFileSync(
-  new URL(
-    "../prisma/migrations/20260819015000_init/migration.sql",
-    import.meta.url,
-  ),
-  "utf8",
-);
+import { testMigrationSql } from "./test-migrations";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -33,7 +26,7 @@ async function createSchedulerServices() {
   });
   const services = await createServices(config);
   if (!services.database) throw new Error("Expected SQLite database handle");
-  services.database.exec(migration);
+  services.database.exec(testMigrationSql);
   await services.prisma.organization.create({
     data: { id: "org_test", name: "Test Org", slug: "test-org" },
   });

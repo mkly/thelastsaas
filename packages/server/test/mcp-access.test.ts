@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -14,6 +14,7 @@ import {
   createServices,
   type AppServices,
 } from "../src/services";
+import { testMigrationSql } from "./test-migrations";
 
 const toolNames = [
   "permissions_list",
@@ -36,13 +37,6 @@ const toolNames = [
   "members_change_role",
   "members_remove",
 ] as const;
-const migration = readFileSync(
-  new URL(
-    "../prisma/migrations/20260819015000_init/migration.sql",
-    import.meta.url,
-  ),
-  "utf8",
-);
 
 async function connect(
   services: AppServices,
@@ -82,7 +76,7 @@ describe("MCP access tools", () => {
       DATABASE_URL: `file:${join(directory, "test.sqlite")}`,
     });
     services = await createServices(config);
-    services.database!.exec(migration);
+    services.database!.exec(testMigrationSql);
     await services.prisma.user.createMany({
       data: [
         {
@@ -96,6 +90,7 @@ describe("MCP access tools", () => {
           email: "reader@example.com",
           name: "Reader",
           emailVerified: true,
+          kind: "service",
         },
       ],
     });
@@ -273,6 +268,12 @@ describe("MCP access tools", () => {
     expect(listed.structuredContent).toMatchObject({
       status: "ok",
       total: 2,
+      members: expect.arrayContaining([
+        expect.objectContaining({
+          email: "reader@example.com",
+          kind: "service",
+        }),
+      ]),
     });
 
     const denied = await reader.callTool({

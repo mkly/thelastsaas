@@ -823,7 +823,9 @@ function registerMemberTools(server: McpServer, context: McpToolContext): void {
           context.services.prisma.member.findMany({
             where,
             include: {
-              user: { select: { id: true, email: true, name: true } },
+              user: {
+                select: { id: true, email: true, name: true, kind: true },
+              },
             },
             orderBy: { createdAt: "asc" },
             take: input.limit,
@@ -850,6 +852,7 @@ function registerMemberTools(server: McpServer, context: McpToolContext): void {
             user_id: member.user.id,
             email: member.user.email,
             name: member.user.name,
+            kind: member.user.kind,
             member_role: member.role,
             casbin_roles: rolesByUser.get(member.user.id) ?? [],
             joined_at: member.createdAt.toISOString(),

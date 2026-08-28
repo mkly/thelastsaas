@@ -386,6 +386,7 @@ describe("member commands", () => {
             user_id: "user_1",
             email: "casey@example.test",
             name: "Casey",
+            kind: "human",
             member_role: "member",
             casbin_roles: ["member"],
             joined_at: "2026-08-18T00:00:00.000Z",

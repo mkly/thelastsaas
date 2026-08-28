@@ -15,6 +15,7 @@ model User {
   emailVerified           Boolean                @default(false)
   name                    String
   image                   String?
+  kind                    String                 @default("human")
   notificationPreferences Json?                  @map("notification_preferences")
   createdAt               DateTime               @default(now())
   updatedAt               DateTime               @updatedAt
