@@ -44,10 +44,12 @@ function memberListOutput(
     4,
     ...members.map((member) => member.member_role.length),
   );
+  const kindWidth = Math.max(4, ...members.map((member) => member.kind.length));
   const header = [
     "member_id".padEnd(memberIdWidth),
     "email".padEnd(emailWidth),
     "name".padEnd(nameWidth),
+    "kind".padEnd(kindWidth),
     "role".padEnd(roleWidth),
     "casbin_roles",
   ].join("  ");
@@ -58,6 +60,7 @@ function memberListOutput(
         member.member_id.padEnd(memberIdWidth),
         member.email.padEnd(emailWidth),
         (member.name ?? "-").padEnd(nameWidth),
+        member.kind.padEnd(kindWidth),
         member.member_role.padEnd(roleWidth),
         member.casbin_roles.length > 0 ? member.casbin_roles.join(", ") : "-",
       ].join("  "),

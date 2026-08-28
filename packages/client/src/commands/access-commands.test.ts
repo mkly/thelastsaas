@@ -424,4 +424,42 @@ describe("member commands", () => {
     expect(outputs[0]?.human).toContain("member_1");
     expect(await requestBody(1)).toEqual({ role: "admin" });
   });
+
+  test("badges service accounts distinctly from human members", async () => {
+    await runMember(["members", "list"], {
+      status: "ok",
+      members: [
+        {
+          member_id: "member_1",
+          user_id: "user_1",
+          email: "casey@example.test",
+          name: "Casey",
+          kind: "human",
+          member_role: "admin",
+          casbin_roles: ["admin"],
+          joined_at: "2026-08-18T00:00:00.000Z",
+        },
+        {
+          member_id: "member_2",
+          user_id: "user_2",
+          email: "bot@example.test",
+          name: "Lifecycle Bot",
+          kind: "service",
+          member_role: "member",
+          casbin_roles: ["member"],
+          joined_at: "2026-08-19T00:00:00.000Z",
+        },
+      ],
+      total: 2,
+      limit: 50,
+      offset: 0,
+    });
+
+    const lines = (outputs[0]?.human ?? "").split("\n");
+    expect(lines[0]).toContain("kind");
+    expect(lines.find((line) => line.includes("member_1"))).toContain("human");
+    expect(lines.find((line) => line.includes("member_2"))).toContain(
+      "service",
+    );
+  });
 });

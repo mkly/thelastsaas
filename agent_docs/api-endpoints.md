@@ -93,6 +93,9 @@ POST   /v1/orgs/:orgId/invitations/cancel
 # single-use claim URL; the raw API token is shown once on the claim page to an
 # authenticated admin of the owning organization.
 POST   /v1/orgs/:orgId/service-accounts
+GET    /v1/orgs/:orgId/service-accounts/:serviceAccountId/api-keys
+DELETE /v1/orgs/:orgId/service-accounts/:serviceAccountId/api-keys/:apiKeyId
+POST   /v1/orgs/:orgId/service-accounts/:serviceAccountId/api-keys/:apiKeyId/rotate
 GET    /tokens/claim/:code
 
 # Notifications
