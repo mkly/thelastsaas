@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { createApp } from "../src/app";
 import { loadConfig } from "../src/config";
 import { closeServices, createServices } from "../src/services";
+import { verifyTestUser } from "./auth-helpers";
 
 const migration = readFileSync(
   new URL(
@@ -42,8 +43,8 @@ async function createHarness() {
 
 type Harness = Awaited<ReturnType<typeof createHarness>>;
 
-async function signUp(app: Harness["app"], email: string, name: string) {
-  const response = await app.request(
+async function signUp(harness: Harness, email: string, name: string) {
+  const response = await harness.app.request(
     "http://localhost:3000/api/auth/sign-up/email",
     {
       method: "POST",
@@ -52,8 +53,18 @@ async function signUp(app: Harness["app"], email: string, name: string) {
     },
   );
   expect(response.status).toBe(200);
-  const token = response.headers.get("set-auth-token");
-  if (!token) throw new Error("Sign-up session token was not returned");
+  await verifyTestUser(harness.services, email);
+  const signIn = await harness.app.request(
+    "http://localhost:3000/api/auth/sign-in/email",
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, password: "collection-password" }),
+    },
+  );
+  expect(signIn.status).toBe(200);
+  const token = signIn.headers.get("set-auth-token");
+  if (!token) throw new Error("Sign-in session token was not returned");
   return token;
 }
 
@@ -96,14 +107,15 @@ async function inviteAndAccept(
 
 describe("private collection authorization", () => {
   test("separates membership, delegated creation, and creator-owned access", async () => {
-    const { app, services } = await createHarness();
-    const adminToken = await signUp(app, "mike@example.com", "Mike Admin");
+    const harness = await createHarness();
+    const { app, services } = harness;
+    const adminToken = await signUp(harness, "mike@example.com", "Mike Admin");
     const creatorToken = await signUp(
-      app,
+      harness,
       "creator@example.com",
       "Casey Creator",
     );
-    const memberToken = await signUp(app, "tom@example.com", "Tom Member");
+    const memberToken = await signUp(harness, "tom@example.com", "Tom Member");
 
     const organizationResponse = await app.request(
       "http://localhost:3000/v1/orgs",

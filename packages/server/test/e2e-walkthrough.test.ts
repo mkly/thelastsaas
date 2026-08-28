@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { createApp } from "../src/app";
 import { loadConfig } from "../src/config";
 import { closeServices, createServices } from "../src/services";
+import { verifyTestUser } from "./auth-helpers";
 
 const migration = readFileSync(
   new URL(
@@ -84,14 +85,21 @@ async function signUp(
     body: JSON.stringify({ email, password: "walkthrough-password", name }),
   });
   expect(signUpResponse.status).toBe(200);
-  const token = signUpResponse.headers.get("set-auth-token");
-  if (!token) throw new Error("Sign-up did not return a bearer token");
-  const browserCookie = signUpResponse.headers
+  await verifyTestUser(services, email);
+  const signInResponse = await app.request("/api/auth/sign-in/email", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email, password: "walkthrough-password" }),
+  });
+  expect(signInResponse.status).toBe(200);
+  const token = signInResponse.headers.get("set-auth-token");
+  if (!token) throw new Error("Sign-in did not return a bearer token");
+  const browserCookie = signInResponse.headers
     .getSetCookie()
     .map((cookie) => cookie.split(";", 1)[0])
     .join("; ");
   if (!browserCookie)
-    throw new Error("Sign-up did not return a browser cookie");
+    throw new Error("Sign-in did not return a browser cookie");
 
   const created = await json<{ organization: { id: string } }>(
     await app.request(

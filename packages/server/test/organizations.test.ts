@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { createApp } from "../src/app";
 import { loadConfig } from "../src/config";
 import { closeServices, createServices } from "../src/services";
+import { verifyTestUser } from "./auth-helpers";
 
 const migration = readFileSync(
   new URL(
@@ -44,6 +45,7 @@ async function createHarness() {
       password: "organization-password",
     }),
   });
+  await verifyTestUser(services, "org-user@example.com");
   const login = await app.request("http://localhost/auth/login", {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },

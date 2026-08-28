@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { createApp } from "../src/app";
 import { loadConfig } from "../src/config";
 import { closeServices, createServices } from "../src/services";
+import { verifyTestUser } from "./auth-helpers";
 
 const migration = readFileSync(
   new URL(
@@ -117,11 +118,21 @@ async function createHarness() {
     }),
   });
   expect(signUp.status).toBe(200);
-  const cookie = signUp.headers
+  await verifyTestUser(services, "mcp-admin@example.com");
+  const signIn = await app.request("/api/auth/sign-in/email", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      email: "mcp-admin@example.com",
+      password: "mcp-e2e-password",
+    }),
+  });
+  expect(signIn.status).toBe(200);
+  const cookie = signIn.headers
     .getSetCookie()
     .map((value) => value.split(";", 1)[0])
     .join("; ");
-  if (!cookie) throw new Error("Sign-up did not return a browser session");
+  if (!cookie) throw new Error("Sign-in did not return a browser session");
 
   const organization = await app.request("/v1/orgs", {
     method: "POST",
