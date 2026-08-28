@@ -22,12 +22,14 @@ import {
   unassignRole,
 } from "../../db/casbin";
 import { getCollection } from "../../db/collections";
+import { createServiceAccountSchema } from "../../db/service-accounts";
 import {
   deleteFieldFilter,
   listFieldFilters,
   setFieldFilter,
 } from "../../db/fieldFilters";
 import { whereSchema } from "../../db/query/validation";
+import { issueServiceAccountTokenClaim } from "../../service-account-tokens";
 import {
   deleteRowFilter,
   listRowFilters,
@@ -947,6 +949,48 @@ function registerMemberTools(server: McpServer, context: McpToolContext): void {
   );
 }
 
+function registerServiceAccountTools(
+  server: McpServer,
+  context: McpToolContext,
+): void {
+  server.registerTool(
+    "service_accounts_create",
+    {
+      description:
+        "Create a service account and return a short-lived, one-time token claim URL",
+      inputSchema: createServiceAccountSchema.shape,
+    },
+    (input) =>
+      run(async () => {
+        await requirePermission(context, "/members");
+        const issued = await issueServiceAccountTokenClaim(
+          context.services,
+          context.config,
+          context.orgId,
+          input,
+        );
+        await audit(
+          context,
+          "create_service_account",
+          "service_account",
+          issued.serviceAccount.user.id,
+          {
+            role: issued.serviceAccount.member.role,
+            api_key_id: issued.apiKeyId,
+          },
+        );
+        return {
+          status: "ok",
+          service_account_id: issued.serviceAccount.user.id,
+          member_id: issued.serviceAccount.member.id,
+          role: issued.serviceAccount.member.role,
+          claim_url: issued.claimUrl,
+          claim_expires_at: issued.expiresAt.toISOString(),
+        };
+      })(),
+  );
+}
+
 export function registerAccessTools(
   server: McpServer,
   context: McpToolContext,
@@ -955,4 +999,5 @@ export function registerAccessTools(
   registerFilterTools(server, context);
   registerInvitationTools(server, context);
   registerMemberTools(server, context);
+  registerServiceAccountTools(server, context);
 }

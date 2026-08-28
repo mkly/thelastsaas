@@ -125,6 +125,7 @@ export function createAuth(
       apiKey({
         enableMetadata: true,
         enableSessionForAPIKeys: true,
+        enableMetadata: true,
         rateLimit: { enabled: false },
       }),
       bearer(),

@@ -81,6 +81,36 @@ describe("service accounts", () => {
     ).not.toBeNull();
   });
 
+  test("suffixes placeholder emails when the derived address is taken", async () => {
+    const { config, organization, services } = await createHarness();
+    const other = await services.prisma.organization.create({
+      data: { id: "org_other", name: "Other Org", slug: "other-org" },
+    });
+
+    const first = await createServiceAccount(
+      services.prisma,
+      config.betterAuthUrl,
+      organization.id,
+      { name: "Release Bot" },
+    );
+    const second = await createServiceAccount(
+      services.prisma,
+      config.betterAuthUrl,
+      other.id,
+      { name: "Release Bot" },
+    );
+    const third = await createServiceAccount(
+      services.prisma,
+      config.betterAuthUrl,
+      organization.id,
+      { name: "Release Bot" },
+    );
+
+    expect(first.user.email).toBe("release-bot@service.app.example.com");
+    expect(second.user.email).toBe("release-bot-2@service.app.example.com");
+    expect(third.user.email).toBe("release-bot-3@service.app.example.com");
+  });
+
   test("accepts a real email and defaults email notifications off", async () => {
     const { config, organization, services } = await createHarness();
     const { user } = await createServiceAccount(

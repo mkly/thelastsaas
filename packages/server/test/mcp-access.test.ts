@@ -36,6 +36,7 @@ const toolNames = [
   "members_list",
   "members_change_role",
   "members_remove",
+  "service_accounts_create",
 ] as const;
 
 async function connect(
@@ -167,6 +168,34 @@ describe("MCP access tools", () => {
     expect(result.tools.map(({ name }) => name).sort()).toEqual(
       [...toolNames].sort(),
     );
+  });
+
+  test("creates service accounts without exposing their token", async () => {
+    const admin = await clientFor("user_admin");
+    const reader = await clientFor("user_reader");
+
+    const created = await admin.callTool({
+      name: "service_accounts_create",
+      arguments: { name: "MCP Bot", role: "member" },
+    });
+    expect(created.isError).not.toBe(true);
+    expect(created.structuredContent).toMatchObject({
+      status: "ok",
+      role: "member",
+    });
+    expect(created.structuredContent).not.toHaveProperty("token");
+    expect(created.structuredContent).not.toHaveProperty("key");
+    expect(created.structuredContent).toHaveProperty("claim_url");
+
+    const rejected = await reader.callTool({
+      name: "service_accounts_create",
+      arguments: { name: "Forbidden MCP Bot" },
+    });
+    expect(rejected.isError).toBe(true);
+    expect(rejected.structuredContent).toMatchObject({
+      status: "error",
+      error: "PermissionDenied",
+    });
   });
 
   test("permissions tools return success and structured permission errors", async () => {

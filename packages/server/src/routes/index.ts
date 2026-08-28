@@ -13,6 +13,7 @@ import { notificationRouter } from "./notifications";
 import { organizationRouter } from "./organizations";
 import { permissionRouter } from "./permissions";
 import { recordsRouter } from "./records";
+import { serviceAccountRouter } from "./service-accounts";
 import { systemRouter } from "./system";
 
 export interface DomainRouter {
@@ -34,6 +35,10 @@ export const domainRouters: readonly DomainRouter[] = [
   { basePath: "/v1/orgs/:orgId/invitations", router: invitationRouter },
   { basePath: "/v1/mcp", router: mcpRouter },
   { basePath: "/v1/orgs/:orgId/members", router: memberRouter },
+  {
+    basePath: "/v1/orgs/:orgId/service-accounts",
+    router: serviceAccountRouter,
+  },
   {
     basePath: "/v1/orgs/:orgId/notifications/schedules",
     router: notificationScheduleRouter,

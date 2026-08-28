@@ -89,6 +89,11 @@ POST   /v1/orgs/:orgId/invitations
 GET    /v1/orgs/:orgId/invitations
 POST   /v1/orgs/:orgId/invitations/accept
 POST   /v1/orgs/:orgId/invitations/cancel
+# Service accounts (manage permission on /members). Creation returns only a
+# single-use claim URL; the raw API token is shown once on the claim page to an
+# authenticated admin of the owning organization.
+POST   /v1/orgs/:orgId/service-accounts
+GET    /tokens/claim/:code
 
 # Notifications
 GET    /v1/orgs/:orgId/notifications?unread=true
