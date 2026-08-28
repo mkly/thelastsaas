@@ -33,15 +33,18 @@ interface CurrentUser {
 }
 
 export async function whoami(
-  options: OutputOptions & { org?: string } = {},
+  options: OutputOptions & { org?: string; token?: string } = {},
   dependencies: WhoAmIDependencies = {},
 ): Promise<WhoAmIResult> {
-  const { config } = getClient(loadConfig(dependencies.configPath));
+  const { authToken, config } = getClient(
+    loadConfig(dependencies.configPath),
+    options,
+  );
   const orgId = options.org?.trim() || config.org?.trim();
   const server = resolveServerUrl(config);
   const fetchImpl = dependencies.fetchImpl ?? fetch;
   const request = {
-    headers: { Authorization: `Bearer ${config.session_token}` },
+    headers: { Authorization: `Bearer ${authToken}` },
   };
   const identity = await handleResponse<{ user: CurrentUser }>(
     await fetchImpl(`${server}/v1/me`, request),

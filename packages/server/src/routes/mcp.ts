@@ -10,7 +10,40 @@ import {
   mcpResourceUrl,
 } from "../auth";
 import type { AppEnvironment } from "../env";
+import { resolveMcpApiKeyPrincipal } from "../mcp/context";
 import { registerTools } from "../mcp/registry";
+
+function mcpAuthError(
+  context: Context<AppEnvironment>,
+  message: string,
+  code = -32001,
+) {
+  return context.json(
+    {
+      jsonrpc: "2.0",
+      error: { code, message },
+      id: null,
+    },
+    403,
+  );
+}
+
+async function handleAuthenticatedMcpRequest(
+  context: Context<AppEnvironment>,
+  orgId: string,
+  userId: string,
+): Promise<Response> {
+  const membership = await context.get("services").prisma.member.findUnique({
+    where: {
+      organizationId_userId: { organizationId: orgId, userId },
+    },
+    select: { id: true },
+  });
+  if (!membership) {
+    return mcpAuthError(context, "Organization membership is required", -32003);
+  }
+  return handleMcpRequest(context, orgId, userId);
+}
 
 async function handleMcpRequest(
   context: Context<AppEnvironment>,
@@ -41,46 +74,31 @@ async function handleMcpRequest(
 export const mcpRouter = new Hono<AppEnvironment>().post(
   "/",
   async (context) => {
-    const { auth, prisma } = context.get("services");
+    const services = context.get("services");
+    const apiKeyPrincipal = await resolveMcpApiKeyPrincipal(
+      services,
+      context.req.raw,
+    );
+    if (apiKeyPrincipal) {
+      return handleAuthenticatedMcpRequest(
+        context,
+        apiKeyPrincipal.orgId,
+        apiKeyPrincipal.userId,
+      );
+    }
+
     const protectedHandler = requireMcpAuth(
-      auth,
+      services.auth,
       async (_request, claims) => {
         const userId = claims.sub;
         const orgId = claims[MCP_ORGANIZATION_CLAIM];
         if (typeof userId !== "string" || typeof orgId !== "string") {
-          return context.json(
-            {
-              jsonrpc: "2.0",
-              error: {
-                code: -32001,
-                message: "The access token is missing its organization grant",
-              },
-              id: null,
-            },
-            403,
+          return mcpAuthError(
+            context,
+            "The access token is missing its organization grant",
           );
         }
-
-        const membership = await prisma.member.findUnique({
-          where: {
-            organizationId_userId: { organizationId: orgId, userId },
-          },
-          select: { id: true },
-        });
-        if (!membership) {
-          return context.json(
-            {
-              jsonrpc: "2.0",
-              error: {
-                code: -32003,
-                message: "Organization membership is required",
-              },
-              id: null,
-            },
-            403,
-          );
-        }
-        return handleMcpRequest(context, orgId, userId);
+        return handleAuthenticatedMcpRequest(context, orgId, userId);
       },
       {
         resource: mcpResourceUrl(context.get("config")),

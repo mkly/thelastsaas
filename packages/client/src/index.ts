@@ -10,6 +10,7 @@ export const CLI_VERSION = "0.1.0";
 export interface GlobalOptions {
   json?: boolean;
   org?: string;
+  token?: string;
 }
 
 export function createProgram(
@@ -20,6 +21,10 @@ export function createProgram(
     .description("CLI client for The Last SaaS")
     .version(CLI_VERSION)
     .option("--org <org-id>", "organization ID (defaults to the stored config)")
+    .option(
+      "--token <api-token>",
+      "API token (defaults to SAAS_API_TOKEN, then the stored session)",
+    )
     .option("--json", "write machine-readable JSON output")
     .showHelpAfterError()
     .showSuggestionAfterError();

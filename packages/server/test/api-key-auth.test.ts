@@ -53,14 +53,36 @@ async function createHarness() {
 async function createKey(
   services: Awaited<ReturnType<typeof createHarness>>["services"],
   userId: string,
+  organizationId?: string,
 ) {
   return services.auth.api.createApiKey({
-    body: { name: "automation", userId },
+    body: {
+      name: "automation",
+      userId,
+      ...(organizationId ? { metadata: { organizationId } } : {}),
+    },
   });
 }
 
 function protectedUrl(organizationId: string): string {
   return `http://localhost/v1/orgs/${organizationId}/permissions`;
+}
+
+function mcpRequest(token: string): RequestInit {
+  return {
+    method: "POST",
+    headers: {
+      accept: "application/json",
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "server_info", arguments: {} },
+    }),
+  };
 }
 
 describe("API key authentication", () => {
@@ -111,5 +133,40 @@ describe("API key authentication", () => {
       headers: { "x-api-key": expiredKey.key },
     });
     expect(expired.status).toBe(401);
+  });
+
+  test("accepts a bearer API key on MCP and scopes it to its bound organization", async () => {
+    const { app, organization, services, user } = await createHarness();
+    const created = await createKey(services, user.id, organization.id);
+
+    const response = await app.request("/v1/mcp", mcpRequest(created.key));
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      result?: { structuredContent?: Record<string, unknown> };
+    };
+    expect(body.result?.structuredContent).toMatchObject({
+      orgId: organization.id,
+      userId: user.id,
+    });
+    expect(created.metadata).toEqual({ organizationId: organization.id });
+  });
+
+  test("rejects invalid and revoked bearer API keys on MCP", async () => {
+    const { app, organization, services, user } = await createHarness();
+
+    const invalid = await app.request(
+      "/v1/mcp",
+      mcpRequest("not-a-valid-api-key"),
+    );
+    expect(invalid.status).toBe(401);
+
+    const revokedKey = await createKey(services, user.id, organization.id);
+    await services.prisma.apikey.update({
+      where: { id: revokedKey.id },
+      data: { enabled: false },
+    });
+    const revoked = await app.request("/v1/mcp", mcpRequest(revokedKey.key));
+    expect(revoked.status).toBe(401);
   });
 });

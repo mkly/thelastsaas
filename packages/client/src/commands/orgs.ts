@@ -32,14 +32,14 @@ interface OrganizationsApiClient {
 }
 
 export interface OrganizationCommandDependencies {
-  getClient(): AuthenticatedClient;
+  getClient(options?: Pick<GlobalOptions, "token">): AuthenticatedClient;
   handleResponse: typeof handleResponse;
   saveConfig(config: ClientConfig): void;
   writeOutput: typeof writeOutput;
 }
 
 const defaultDependencies: OrganizationCommandDependencies = {
-  getClient,
+  getClient: (options) => getClient(undefined, options),
   handleResponse,
   saveConfig,
   writeOutput,
@@ -51,11 +51,12 @@ function organizationsApi(client: ApiClient): OrganizationsApiClient {
 
 async function listOrganizations(
   dependencies: OrganizationCommandDependencies,
+  options: Pick<GlobalOptions, "token"> = {},
 ): Promise<{
   authenticated: AuthenticatedClient;
   organizations: OrganizationSummary[];
 }> {
-  const authenticated = dependencies.getClient();
+  const authenticated = dependencies.getClient(options);
   const response = await organizationsApi(authenticated.client).v1.orgs.$get();
   const result = await dependencies.handleResponse<{
     organizations: OrganizationSummary[];
@@ -78,8 +79,10 @@ export function registerOrganizationCommands(
     .action(
       withErrorHandling(async (_options, command: Command) => {
         const options = command.optsWithGlobals<GlobalOptions>();
-        const { authenticated, organizations } =
-          await listOrganizations(dependencies);
+        const { authenticated, organizations } = await listOrganizations(
+          dependencies,
+          options,
+        );
         const human = organizations.length
           ? organizations
               .map((organization) => {
@@ -100,7 +103,9 @@ export function registerOrganizationCommands(
       withErrorHandling(
         async (name: string, createOptions, command: Command) => {
           const options = command.optsWithGlobals<GlobalOptions>();
-          const authenticated = dependencies.getClient();
+          const authenticated = dependencies.getClient(
+            command.optsWithGlobals<GlobalOptions>(),
+          );
           const response = await organizationsApi(
             authenticated.client,
           ).v1.orgs.$post({

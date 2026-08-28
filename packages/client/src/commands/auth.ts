@@ -8,6 +8,7 @@ import { whoami } from "./whoami";
 interface AuthGlobalOptions {
   json?: boolean;
   org?: string;
+  token?: string;
 }
 
 export function registerAuthCommands(program: Command): void {

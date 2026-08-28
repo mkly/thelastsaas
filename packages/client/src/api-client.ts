@@ -16,6 +16,7 @@ export type ApiClient = ReturnType<typeof createApiClient>;
 export interface AuthenticatedClient {
   client: ApiClient;
   config: ClientConfig;
+  authToken?: string;
 }
 
 export interface OrganizationClient extends AuthenticatedClient {
@@ -31,22 +32,45 @@ export function createApiClient(
   });
 }
 
-export function getClient(config = loadConfig()): AuthenticatedClient {
-  if (!config?.session_token) {
-    throw new CliError("Not logged in. Run `saas login` first.");
+export function resolveAuthToken(
+  config: ClientConfig | null,
+  options: Pick<GlobalOptions, "token"> = {},
+  env: Record<string, string | undefined> = process.env,
+): string | undefined {
+  return (
+    options.token?.trim() ||
+    env.SAAS_API_TOKEN?.trim() ||
+    config?.session_token?.trim() ||
+    undefined
+  );
+}
+
+export function getClient(
+  config = loadConfig(),
+  options: Pick<GlobalOptions, "token"> = {},
+  env: Record<string, string | undefined> = process.env,
+): AuthenticatedClient {
+  const token = resolveAuthToken(config, options, env);
+  if (!token) {
+    throw new CliError(
+      "Not authenticated. Pass `--token`, set SAAS_API_TOKEN, or run `saas login`.",
+    );
   }
 
+  const resolvedConfig = config ?? { server: resolveServerUrl(config) };
+
   return {
-    client: createApiClient(resolveServerUrl(config), config.session_token),
-    config,
+    client: createApiClient(resolveServerUrl(resolvedConfig), token),
+    config: resolvedConfig,
+    authToken: token,
   };
 }
 
 export function getOrgClient(
-  options: Pick<GlobalOptions, "org"> = {},
+  options: Pick<GlobalOptions, "org" | "token"> = {},
   config = loadConfig(),
 ): OrganizationClient {
-  const authenticated = getClient(config);
+  const authenticated = getClient(config, options);
   return {
     ...authenticated,
     orgId: resolveOrgId(config, options.org),

@@ -95,6 +95,7 @@ export function createAuth(
         : {},
     plugins: [
       apiKey({
+        enableMetadata: true,
         enableSessionForAPIKeys: true,
         rateLimit: { enabled: false },
       }),
