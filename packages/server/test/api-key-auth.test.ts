@@ -135,6 +135,25 @@ describe("API key authentication", () => {
     expect(expired.status).toBe(401);
   });
 
+  test("accepts API keys on REST routes only through the CLI's x-api-key header", async () => {
+    const { app, organization, services, user } = await createHarness();
+    const created = await createKey(services, user.id, organization.id);
+    const url = protectedUrl(organization.id);
+
+    // The header the CLI attaches for `--token` / SAAS_API_TOKEN.
+    const viaApiKeyHeader = await app.request(url, {
+      headers: { "x-api-key": created.key },
+    });
+    expect(viaApiKeyHeader.status).toBe(200);
+
+    // Authorization: Bearer is reserved for better-auth session tokens on REST
+    // routes; only /v1/mcp resolves API keys from it.
+    const viaBearer = await app.request(url, {
+      headers: { authorization: `Bearer ${created.key}` },
+    });
+    expect(viaBearer.status).toBe(401);
+  });
+
   test("accepts a bearer API key on MCP and scopes it to its bound organization", async () => {
     const { app, organization, services, user } = await createHarness();
     const created = await createKey(services, user.id, organization.id);

@@ -16,19 +16,39 @@ export type ApiClient = ReturnType<typeof createApiClient>;
 export interface AuthenticatedClient {
   client: ApiClient;
   config: ClientConfig;
-  authToken?: string;
+  auth?: ResolvedAuthToken;
 }
 
 export interface OrganizationClient extends AuthenticatedClient {
   orgId: string;
 }
 
+export type AuthTokenKind = "api-token" | "session";
+
+export interface ResolvedAuthToken {
+  kind: AuthTokenKind;
+  token: string;
+}
+
+// The server reserves `Authorization: Bearer` for better-auth session tokens
+// (the bearer plugin); API keys are only accepted on the `x-api-key` header,
+// so the header depends on where the token came from.
+export function authHeaders(
+  token: string,
+  kind: AuthTokenKind = "session",
+): Record<string, string> {
+  return kind === "api-token"
+    ? { "x-api-key": token }
+    : { Authorization: `Bearer ${token}` };
+}
+
 export function createApiClient(
   serverUrl: string,
   token: string,
+  kind: AuthTokenKind = "session",
 ): ReturnType<typeof hc<ApiType>> {
   return hc<ApiType>(normalizeServerUrl(serverUrl), {
-    headers: { Authorization: `Bearer ${token}` },
+    headers: authHeaders(token, kind),
   });
 }
 
@@ -36,13 +56,12 @@ export function resolveAuthToken(
   config: ClientConfig | null,
   options: Pick<GlobalOptions, "token"> = {},
   env: Record<string, string | undefined> = process.env,
-): string | undefined {
-  return (
-    options.token?.trim() ||
-    env.SAAS_API_TOKEN?.trim() ||
-    config?.session_token?.trim() ||
-    undefined
-  );
+): ResolvedAuthToken | undefined {
+  const apiToken = options.token?.trim() || env.SAAS_API_TOKEN?.trim();
+  if (apiToken) return { kind: "api-token", token: apiToken };
+
+  const sessionToken = config?.session_token?.trim();
+  return sessionToken ? { kind: "session", token: sessionToken } : undefined;
 }
 
 export function getClient(
@@ -50,8 +69,8 @@ export function getClient(
   options: Pick<GlobalOptions, "token"> = {},
   env: Record<string, string | undefined> = process.env,
 ): AuthenticatedClient {
-  const token = resolveAuthToken(config, options, env);
-  if (!token) {
+  const auth = resolveAuthToken(config, options, env);
+  if (!auth) {
     throw new CliError(
       "Not authenticated. Pass `--token`, set SAAS_API_TOKEN, or run `saas login`.",
     );
@@ -60,9 +79,13 @@ export function getClient(
   const resolvedConfig = config ?? { server: resolveServerUrl(config) };
 
   return {
-    client: createApiClient(resolveServerUrl(resolvedConfig), token),
+    client: createApiClient(
+      resolveServerUrl(resolvedConfig),
+      auth.token,
+      auth.kind,
+    ),
     config: resolvedConfig,
-    authToken: token,
+    auth,
   };
 }
 

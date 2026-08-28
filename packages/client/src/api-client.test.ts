@@ -36,10 +36,24 @@ describe("API client conventions", () => {
         param: { orgId: "org_123" },
       });
 
-      expect(request?.headers.get("authorization")).toBe("Bearer lsk_explicit");
+      expect(request?.headers.get("x-api-key")).toBe("lsk_explicit");
+      expect(request?.headers.get("authorization")).toBeNull();
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  test("sends a stored session token as bearer auth", () => {
+    const authenticated = getClient(
+      { server: "https://api.example.test", session_token: "stored-session" },
+      {},
+      {},
+    );
+
+    expect(authenticated.auth).toEqual({
+      kind: "session",
+      token: "stored-session",
+    });
   });
 
   test("uses SAAS_API_TOKEN before a stored session", () => {
@@ -52,7 +66,10 @@ describe("API client conventions", () => {
       { SAAS_API_TOKEN: "lsk_environment" },
     );
 
-    expect(authenticated.authToken).toBe("lsk_environment");
+    expect(authenticated.auth).toEqual({
+      kind: "api-token",
+      token: "lsk_environment",
+    });
   });
 
   test("returns successful response envelopes", async () => {

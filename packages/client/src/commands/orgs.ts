@@ -103,9 +103,7 @@ export function registerOrganizationCommands(
       withErrorHandling(
         async (name: string, createOptions, command: Command) => {
           const options = command.optsWithGlobals<GlobalOptions>();
-          const authenticated = dependencies.getClient(
-            command.optsWithGlobals<GlobalOptions>(),
-          );
+          const authenticated = dependencies.getClient(options);
           const response = await organizationsApi(
             authenticated.client,
           ).v1.orgs.$post({
