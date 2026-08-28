@@ -8,6 +8,7 @@ import type { AuthEmail } from "../src/auth";
 import { loadConfig } from "../src/config";
 import { roleSubject } from "../src/db/casbin";
 import { closeServices, createServices } from "../src/services";
+import { verifyTestUser } from "./auth-helpers";
 
 const migration = readFileSync(
   new URL(
@@ -48,11 +49,11 @@ async function createHarness() {
 type Harness = Awaited<ReturnType<typeof createHarness>>;
 
 async function signUp(
-  app: Harness["app"],
+  harness: Harness,
   email: string,
   name: string,
 ): Promise<{ cookie: string; token: string }> {
-  const response = await app.request(
+  const response = await harness.app.request(
     "http://localhost:3000/api/auth/sign-up/email",
     {
       method: "POST",
@@ -61,12 +62,22 @@ async function signUp(
     },
   );
   expect(response.status).toBe(200);
-  const token = response.headers.get("set-auth-token");
-  const cookie = response.headers
+  await verifyTestUser(harness.services, email);
+  const signIn = await harness.app.request(
+    "http://localhost:3000/api/auth/sign-in/email",
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, password: "invitation-password" }),
+    },
+  );
+  expect(signIn.status).toBe(200);
+  const token = signIn.headers.get("set-auth-token");
+  const cookie = signIn.headers
     .getSetCookie()
     .map((value) => value.split(";", 1)[0])
     .join("; ");
-  if (!token || !cookie) throw new Error("Sign-up session was not returned");
+  if (!token || !cookie) throw new Error("Sign-in session was not returned");
   return { cookie, token };
 }
 
@@ -83,10 +94,11 @@ function jsonRequest(token: string, body: unknown): RequestInit {
 
 describe("browser organization invitations", () => {
   test("returns the recipient through login and accepts with app invariants", async () => {
-    const { app, emails, services } = await createHarness();
-    const admin = await signUp(app, "admin@example.com", "Ada Admin");
-    await signUp(app, "invitee@example.com", "Ivy Invitee");
-    const wrongUser = await signUp(app, "wrong@example.com", "Wrong User");
+    const harness = await createHarness();
+    const { app, emails, services } = harness;
+    const admin = await signUp(harness, "admin@example.com", "Ada Admin");
+    await signUp(harness, "invitee@example.com", "Ivy Invitee");
+    const wrongUser = await signUp(harness, "wrong@example.com", "Wrong User");
 
     const createOrg = await app.request(
       "http://localhost:3000/v1/orgs",
