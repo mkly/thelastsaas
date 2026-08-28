@@ -65,6 +65,7 @@ const expectedTools = [
   "row_filter_list",
   "row_filter_set",
   "server_info",
+  "service_accounts_create",
   "stats",
 ] as const;
 
