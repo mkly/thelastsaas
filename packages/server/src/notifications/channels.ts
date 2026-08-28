@@ -2,6 +2,8 @@ import nodemailer, { type Transporter } from "nodemailer";
 
 import { log } from "../logger";
 
+export const NOTIFICATION_SUBJECT_MAX_LENGTH = 80;
+
 export interface NotificationMessage {
   to: string;
   subject: string;
@@ -12,6 +14,17 @@ export interface NotificationMessage {
 export interface NotificationChannel {
   readonly name: string;
   send(message: NotificationMessage): Promise<boolean>;
+}
+
+export function deriveNotificationSubject(message: string): string {
+  const firstLine = message
+    .trim()
+    .split(/\r?\n/, 1)[0]!
+    .replace(/[ \t]+/g, " ")
+    .trim();
+
+  if (firstLine.length <= NOTIFICATION_SUBJECT_MAX_LENGTH) return firstLine;
+  return `${firstLine.slice(0, NOTIFICATION_SUBJECT_MAX_LENGTH - 1).trimEnd()}…`;
 }
 
 function escapeHtml(value: string): string {
