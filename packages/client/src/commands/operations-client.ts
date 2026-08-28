@@ -102,7 +102,9 @@ export interface OperationsApiClient {
 }
 
 export interface OperationsCommandDependencies {
-  getOrgClient(options?: Pick<GlobalOptions, "org">): OrganizationClient;
+  getOrgClient(
+    options?: Pick<GlobalOptions, "org" | "token">,
+  ): OrganizationClient;
   handleResponse: typeof handleResponse;
   writeOutput: typeof writeOutput;
 }

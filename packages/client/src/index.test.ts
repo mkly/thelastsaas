@@ -17,7 +17,7 @@ describe("CLI program", () => {
     );
   });
 
-  test("exposes global organization and JSON options to subcommands", async () => {
+  test("exposes global authentication, organization, and JSON options to subcommands", async () => {
     let options: ReturnType<typeof getGlobalOptions> | undefined;
     const program = createProgram([
       (root) => {
@@ -30,12 +30,18 @@ describe("CLI program", () => {
     await program.parseAsync([
       "bun",
       "saas",
+      "--token",
+      "lsk_test",
       "--org",
       "org_123",
       "--json",
       "example",
     ]);
 
-    expect(options).toEqual({ json: true, org: "org_123" });
+    expect(options).toEqual({
+      json: true,
+      org: "org_123",
+      token: "lsk_test",
+    });
   });
 });

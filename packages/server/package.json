@@ -15,6 +15,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@better-auth/api-key": "1.7.1",
     "@better-auth/mcp": "1.7.1",
     "@better-auth/oauth-provider": "1.7.1",
     "@hono/mcp": "^0.3.2",

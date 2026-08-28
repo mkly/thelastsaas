@@ -1,3 +1,4 @@
+import { apiKey } from "@better-auth/api-key";
 import { mcp } from "@better-auth/mcp";
 import type { PrismaClient } from "@prisma/client";
 import { genId } from "@lastsaas/shared";
@@ -121,6 +122,11 @@ export function createAuth(
           }
         : {},
     plugins: [
+      apiKey({
+        enableMetadata: true,
+        enableSessionForAPIKeys: true,
+        rateLimit: { enabled: false },
+      }),
       bearer(),
       jwt(),
       mcp({

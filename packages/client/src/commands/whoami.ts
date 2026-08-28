@@ -1,4 +1,4 @@
-import { getClient, handleResponse } from "../api-client";
+import { authHeaders, getClient, handleResponse } from "../api-client";
 import type { FetchImplementation } from "../auth";
 import { loadConfig, resolveServerUrl } from "../config";
 import { CliError } from "../errors";
@@ -33,15 +33,18 @@ interface CurrentUser {
 }
 
 export async function whoami(
-  options: OutputOptions & { org?: string } = {},
+  options: OutputOptions & { org?: string; token?: string } = {},
   dependencies: WhoAmIDependencies = {},
 ): Promise<WhoAmIResult> {
-  const { config } = getClient(loadConfig(dependencies.configPath));
+  const { auth, config } = getClient(
+    loadConfig(dependencies.configPath),
+    options,
+  );
   const orgId = options.org?.trim() || config.org?.trim();
   const server = resolveServerUrl(config);
   const fetchImpl = dependencies.fetchImpl ?? fetch;
   const request = {
-    headers: { Authorization: `Bearer ${config.session_token}` },
+    headers: auth ? authHeaders(auth.token, auth.kind) : {},
   };
   const identity = await handleResponse<{ user: CurrentUser }>(
     await fetchImpl(`${server}/v1/me`, request),
