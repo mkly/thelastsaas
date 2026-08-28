@@ -84,6 +84,36 @@ model Verification {
   @@map("verification")
 }
 
+model Apikey {
+  id                  String    @id
+  configId            String    @default("default")
+  name                String?
+  start               String?
+  prefix              String?
+  key                 String
+  referenceId         String
+  refillInterval      Int?
+  refillAmount        Int?
+  lastRefillAt        DateTime?
+  enabled             Boolean?  @default(true)
+  rateLimitEnabled    Boolean?  @default(true)
+  rateLimitTimeWindow Int?      @default(86400000)
+  rateLimitMax        Int?      @default(10)
+  requestCount        Int?      @default(0)
+  remaining           Int?
+  lastRequest         DateTime?
+  expiresAt           DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  permissions         String?
+  metadata            String?
+
+  @@index([configId])
+  @@index([key])
+  @@index([referenceId])
+  @@map("apikey")
+}
+
 // --- BetterAuth OAuth 2.1 / MCP provider models ---
 
 model Jwks {
