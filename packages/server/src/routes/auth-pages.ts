@@ -204,7 +204,6 @@ authPagesRouter.get("/signup", async (context) => {
         <label>Email<br><input type="email" name="email" required autocomplete="email"${emailAttributes}></label><br><br>
         <label>Password<br><input type="password" name="password" required minlength="8" autocomplete="new-password"></label><br><br>
         <button type="submit">Create Account</button>
-        <p class="small muted" style="margin-block-start:0.75rem">Free while in beta. No card, no sales call.</p>
       </form>
     </div>
     ${googleLogin}
