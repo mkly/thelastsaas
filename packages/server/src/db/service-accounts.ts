@@ -63,9 +63,20 @@ export async function createServiceAccount(
 ) {
   const parsed = createServiceAccountSchema.parse(input);
   const slug = parsed.slug ?? slugifyServiceAccountName(parsed.name);
-  const email = parsed.email ?? serviceAccountPlaceholderEmail(slug, appUrl);
 
   const result = await prisma.$transaction(async (transaction) => {
+    // Placeholder addresses are derived from the name, so two accounts named
+    // alike (in this org or any other) would collide on the unique email.
+    let email = parsed.email ?? serviceAccountPlaceholderEmail(slug, appUrl);
+    if (!parsed.email) {
+      for (
+        let suffix = 2;
+        await transaction.user.findUnique({ where: { email } });
+        suffix += 1
+      ) {
+        email = serviceAccountPlaceholderEmail(`${slug}-${suffix}`, appUrl);
+      }
+    }
     const user = await transaction.user.create({
       data: {
         id: genId(),
