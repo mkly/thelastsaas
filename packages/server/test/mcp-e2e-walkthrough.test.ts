@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createHash, randomBytes } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -8,14 +8,7 @@ import { createApp } from "../src/app";
 import { loadConfig } from "../src/config";
 import { closeServices, createServices } from "../src/services";
 import { verifyTestUser } from "./auth-helpers";
-
-const migration = readFileSync(
-  new URL(
-    "../prisma/migrations/20260819015000_init/migration.sql",
-    import.meta.url,
-  ),
-  "utf8",
-);
+import { testMigrationSql } from "./test-migrations";
 const protocolVersion = "2025-11-25";
 const cleanups: Array<() => Promise<void>> = [];
 
@@ -100,7 +93,7 @@ async function createHarness() {
   });
   const services = await createServices(config);
   if (!services.database) throw new Error("Expected SQLite database handle");
-  services.database.exec(migration);
+  services.database.exec(testMigrationSql);
   app = createApp({ config, services });
   cleanups.push(async () => {
     server.stop(true);

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { ExportData } from "@lastsaas/shared";
 import { Hono } from "hono";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -10,14 +10,7 @@ import type { AppEnvironment } from "../src/env";
 import { systemRouter } from "../src/routes/system";
 import { loadConfig } from "../src/config";
 import { closeServices, createServices } from "../src/services";
-
-const migration = readFileSync(
-  new URL(
-    "../prisma/migrations/20260819015000_init/migration.sql",
-    import.meta.url,
-  ),
-  "utf8",
-);
+import { testMigrationSql } from "./test-migrations";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -33,7 +26,7 @@ async function createExportServices() {
   });
   const services = await createServices(config);
   if (!services.database) throw new Error("Expected SQLite database handle");
-  services.database.exec(migration);
+  services.database.exec(testMigrationSql);
   cleanups.push(async () => {
     await closeServices(services);
     rmSync(directory, { recursive: true, force: true });

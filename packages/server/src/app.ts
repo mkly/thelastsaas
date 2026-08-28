@@ -16,6 +16,7 @@ import { assetsRouter } from "./routes/assets";
 import { authPagesRouter } from "./routes/auth-pages";
 import { downloadsRouter } from "./routes/downloads";
 import { homeRouter } from "./routes/home";
+import { tokenClaimRouter } from "./routes/token-claims";
 import { log } from "./logger";
 import type { AppServices } from "./services";
 
@@ -80,6 +81,7 @@ export function createApp({
   app.route("/", downloadsRouter);
   app.route("/", assetsRouter);
   app.route("/", homeRouter);
+  app.route("/", tokenClaimRouter);
 
   const authMiddleware = createAuthMiddleware({
     auth: services.auth,

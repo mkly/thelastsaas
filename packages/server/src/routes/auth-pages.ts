@@ -62,6 +62,7 @@ function authNext(context: Context<AppEnvironment>): string | undefined {
   return next &&
     !next.startsWith("//") &&
     (next.startsWith("/auth/") ||
+      next.startsWith("/tokens/claim/") ||
       next.startsWith("/api/auth/oauth2/authorize?"))
     ? next
     : undefined;
