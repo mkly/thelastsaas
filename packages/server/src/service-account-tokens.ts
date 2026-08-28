@@ -20,6 +20,11 @@ type ClaimPayload = {
   token: string;
 };
 
+type ServiceAccountIdentity = {
+  id: string;
+  name: string;
+};
+
 export class TokenClaimNotFoundError extends Error {}
 export class TokenClaimExpiredError extends Error {}
 export class TokenClaimForbiddenError extends Error {}
@@ -42,6 +47,73 @@ function parseClaimPayload(value: string): ClaimPayload | null {
   }
 }
 
+async function issueTokenClaim(
+  services: AppServices,
+  config: AppConfig,
+  organizationId: string,
+  serviceAccount: ServiceAccountIdentity,
+  name: string,
+  now: Date,
+) {
+  const apiKey = await services.auth.api.createApiKey({
+    body: {
+      name,
+      userId: serviceAccount.id,
+      metadata: { organizationId },
+    },
+  });
+  const code = randomBytes(32).toString("base64url");
+  const expiresAt = new Date(now.getTime() + SERVICE_ACCOUNT_CLAIM_TTL_MS);
+
+  try {
+    await services.prisma.verification.create({
+      data: {
+        id: genId(),
+        identifier: claimIdentifier(code),
+        value: JSON.stringify({
+          apiKeyId: apiKey.id,
+          organizationId,
+          serviceAccountId: serviceAccount.id,
+          token: apiKey.key,
+        } satisfies ClaimPayload),
+        expiresAt,
+      },
+    });
+  } catch (error) {
+    await services.prisma.apikey
+      .updateMany({ where: { id: apiKey.id }, data: { enabled: false } })
+      .catch(() => undefined);
+    throw error;
+  }
+
+  return {
+    apiKeyId: apiKey.id,
+    claimUrl: new URL(
+      `/tokens/claim/${encodeURIComponent(code)}`,
+      config.betterAuthUrl,
+    ).toString(),
+    expiresAt,
+  };
+}
+
+export async function issueExistingServiceAccountTokenClaim(
+  services: AppServices,
+  config: AppConfig,
+  organizationId: string,
+  serviceAccount: ServiceAccountIdentity,
+  name = "service-account",
+  now = new Date(),
+) {
+  return issueTokenClaim(
+    services,
+    config,
+    organizationId,
+    serviceAccount,
+    name,
+    now,
+  );
+}
+
 export async function issueServiceAccountTokenClaim(
   services: AppServices,
   config: AppConfig,
@@ -57,37 +129,18 @@ export async function issueServiceAccountTokenClaim(
   );
 
   try {
-    const apiKey = await services.auth.api.createApiKey({
-      body: {
-        name: "service-account",
-        userId: account.user.id,
-        metadata: { organizationId },
-      },
-    });
-    const code = randomBytes(32).toString("base64url");
-    const expiresAt = new Date(now.getTime() + SERVICE_ACCOUNT_CLAIM_TTL_MS);
-    await services.prisma.verification.create({
-      data: {
-        id: genId(),
-        identifier: claimIdentifier(code),
-        value: JSON.stringify({
-          apiKeyId: apiKey.id,
-          organizationId,
-          serviceAccountId: account.user.id,
-          token: apiKey.key,
-        } satisfies ClaimPayload),
-        expiresAt,
-      },
-    });
+    const issued = await issueTokenClaim(
+      services,
+      config,
+      organizationId,
+      account.user,
+      "service-account",
+      now,
+    );
 
     return {
       serviceAccount: account,
-      apiKeyId: apiKey.id,
-      claimUrl: new URL(
-        `/tokens/claim/${encodeURIComponent(code)}`,
-        config.betterAuthUrl,
-      ).toString(),
-      expiresAt,
+      ...issued,
     };
   } catch (error) {
     await removeMemberAccess(

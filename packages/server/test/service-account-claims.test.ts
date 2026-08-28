@@ -122,6 +122,27 @@ function tokenFromHtml(html: string): string {
   return token;
 }
 
+function mcpRequest(
+  token: string,
+  name: string,
+  args: Record<string, unknown> = {},
+): RequestInit {
+  return {
+    method: "POST",
+    headers: {
+      accept: "application/json",
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name, arguments: args },
+    }),
+  };
+}
+
 describe("service-account token claims", () => {
   test("sends unauthenticated claimants through login with a return path", async () => {
     const { app } = await createHarness();
@@ -181,6 +202,128 @@ describe("service-account token claims", () => {
       headers: bearer("claim-admin-token"),
     });
     expect(claimedAgain.status).toBe(404);
+  });
+
+  test("lists, rotates, and revokes service-account keys across REST and MCP", async () => {
+    const { app } = await createHarness();
+    const created = await app.request(
+      "http://localhost/v1/orgs/org_claim/service-accounts",
+      {
+        method: "POST",
+        headers: {
+          ...bearer("claim-admin-token"),
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ name: "Lifecycle Bot", role: "member" }),
+      },
+    );
+    expect(created.status).toBe(201);
+    const account = (await created.json()) as {
+      service_account_id: string;
+      api_key_id?: string;
+      claim_url: string;
+    };
+    const initialClaim = await app.request(account.claim_url, {
+      headers: bearer("claim-admin-token"),
+    });
+    const initialToken = tokenFromHtml(await initialClaim.text());
+
+    const members = await app.request(
+      "http://localhost/v1/orgs/org_claim/members",
+      { headers: { "x-api-key": initialToken } },
+    );
+    expect(members.status).toBe(200);
+    expect(await members.json()).toMatchObject({
+      members: expect.arrayContaining([
+        expect.objectContaining({
+          user_id: account.service_account_id,
+          kind: "service",
+          member_role: "member",
+        }),
+      ]),
+    });
+
+    const listUrl = `http://localhost/v1/orgs/org_claim/service-accounts/${account.service_account_id}/api-keys`;
+    const listed = await app.request(listUrl, {
+      headers: bearer("claim-admin-token"),
+    });
+    expect(listed.status).toBe(200);
+    const listBody = (await listed.json()) as {
+      api_keys: Array<Record<string, unknown>>;
+    };
+    expect(listBody.api_keys).toHaveLength(1);
+    expect(listBody.api_keys[0]).toMatchObject({ enabled: true });
+    expect(listBody.api_keys[0]).not.toHaveProperty("key");
+    expect(listBody.api_keys[0]).not.toHaveProperty("token");
+    const initialKeyId = String(listBody.api_keys[0]!.id);
+
+    const initialMcp = await app.request(
+      "/v1/mcp",
+      mcpRequest(initialToken, "members_list"),
+    );
+    expect(initialMcp.status).toBe(200);
+    const forbiddenMcp = await app.request(
+      "/v1/mcp",
+      mcpRequest(initialToken, "members_remove", {
+        member_id: "claim_regular_member",
+      }),
+    );
+    expect(forbiddenMcp.status).toBe(200);
+    expect(await forbiddenMcp.json()).toMatchObject({
+      result: { isError: true },
+    });
+
+    const rotated = await app.request(`${listUrl}/${initialKeyId}/rotate`, {
+      method: "POST",
+      headers: bearer("claim-admin-token"),
+    });
+    expect(rotated.status).toBe(200);
+    const rotation = (await rotated.json()) as {
+      api_key_id: string;
+      claim_url: string;
+    };
+    expect(rotation.api_key_id).not.toBe(initialKeyId);
+    expect(
+      await app.request("http://localhost/v1/orgs/org_claim/members", {
+        headers: { "x-api-key": initialToken },
+      }),
+    ).toHaveProperty("status", 401);
+    expect(
+      await app.request("/v1/mcp", mcpRequest(initialToken, "members_list")),
+    ).toHaveProperty("status", 401);
+
+    const replacementClaim = await app.request(rotation.claim_url, {
+      headers: bearer("claim-admin-token"),
+    });
+    const replacementToken = tokenFromHtml(await replacementClaim.text());
+    expect(
+      await app.request("http://localhost/v1/orgs/org_claim/members", {
+        headers: { "x-api-key": replacementToken },
+      }),
+    ).toHaveProperty("status", 200);
+    expect(
+      await app.request(
+        "/v1/mcp",
+        mcpRequest(replacementToken, "members_list"),
+      ),
+    ).toHaveProperty("status", 200);
+
+    const revoked = await app.request(`${listUrl}/${rotation.api_key_id}`, {
+      method: "DELETE",
+      headers: bearer("claim-admin-token"),
+    });
+    expect(revoked.status).toBe(200);
+    expect(
+      await app.request("http://localhost/v1/orgs/org_claim/members", {
+        headers: { "x-api-key": replacementToken },
+      }),
+    ).toHaveProperty("status", 401);
+    expect(
+      await app.request(
+        "/v1/mcp",
+        mcpRequest(replacementToken, "members_list"),
+      ),
+    ).toHaveProperty("status", 401);
   });
 
   test("rejects non-admin create and claim attempts without consuming the claim", async () => {
