@@ -1,6 +1,8 @@
 import { describe, expect, mock, test } from "bun:test";
 
 import {
+  deriveNotificationSubject,
+  NOTIFICATION_SUBJECT_MAX_LENGTH,
   NotificationDispatcher,
   type NotificationChannel,
 } from "../src/notifications/channels";
@@ -25,6 +27,27 @@ function dueRow(attempts = 0) {
     errorLogs: attempts ? ["Earlier failure"] : null,
   };
 }
+
+describe("notification email subjects", () => {
+  test("uses a single-line message as the subject", () => {
+    expect(deriveNotificationSubject("Build finished")).toBe("Build finished");
+  });
+
+  test("uses only the first line of a multi-line message", () => {
+    expect(
+      deriveNotificationSubject(
+        "Build finished\nThe deployment is ready for review.",
+      ),
+    ).toBe("Build finished");
+  });
+
+  test("truncates an over-length first line to the subject limit", () => {
+    const subject = deriveNotificationSubject("A".repeat(100));
+
+    expect(subject).toBe(`${"A".repeat(79)}…`);
+    expect(subject.length).toBe(NOTIFICATION_SUBJECT_MAX_LENGTH);
+  });
+});
 
 describe("notification preferences", () => {
   test("normalizes defaults and retains only meaningful per-kind overrides", () => {

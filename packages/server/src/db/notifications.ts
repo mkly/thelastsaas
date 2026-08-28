@@ -6,6 +6,7 @@ import {
 import { Prisma, type PrismaClient } from "@prisma/client";
 
 import {
+  deriveNotificationSubject,
   normalizeNotificationMessage,
   type NotificationMessage,
 } from "../notifications/channels";
@@ -239,7 +240,7 @@ export async function emitNotification<Kind extends NotificationKind>(
     dedupeKey: options.dedupeKey,
     delivery: normalizeNotificationMessage({
       to: recipient.email,
-      subject: message,
+      subject: deriveNotificationSubject(message),
       text: message,
     }),
   });

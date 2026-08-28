@@ -5,6 +5,7 @@ import type { AppConfig } from "../config";
 import { databaseProvider } from "../config";
 import { parseRecurrence } from "../lib/recurrence";
 import { log } from "../logger";
+import { deriveNotificationSubject } from "../notifications/channels";
 import type { NotificationQueue } from "../notifications/queue";
 
 const SQLITE_POLL_PATTERN = "*/10 * * * * *";
@@ -253,7 +254,7 @@ export class NotificationScheduleProcessor {
       dedupeKey: `notification-schedule:${row.id}:${occurrenceAt.toISOString()}`,
       delivery: {
         to: row.user.email,
-        subject: row.message,
+        subject: deriveNotificationSubject(row.message),
         text: row.message,
         ...(deliveryChannels ? { channels: deliveryChannels } : {}),
       },
