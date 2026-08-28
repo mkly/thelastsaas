@@ -13,6 +13,7 @@ import { createApp } from "../src/app";
 import type { AuthEmail } from "../src/auth";
 import { loadConfig } from "../src/config";
 import { closeServices, createServices } from "../src/services";
+import { verifyTestUser } from "./auth-helpers";
 
 const migration = readFileSync(
   new URL(
@@ -103,15 +104,6 @@ async function login(
   });
 }
 
-async function verifyAuthUser(
-  services: Awaited<ReturnType<typeof createAuthPageApp>>["services"],
-) {
-  await services.prisma.user.update({
-    where: { email: "auth-user@example.com" },
-    data: { emailVerified: true },
-  });
-}
-
 describe("browser auth pages", () => {
   test("redirects the root and renders auth forms before protected routes", async () => {
     const { app } = await createAuthPageApp();
@@ -157,7 +149,7 @@ describe("browser auth pages", () => {
       "/auth/login?error=Email+not+verified.+Check+your+email+for+a+new+verification+link.",
     );
 
-    await verifyAuthUser(services);
+    await verifyTestUser(services, "auth-user@example.com");
     const loginResponse = await login(app, "initial-password");
     expect(loginResponse.status).toBe(302);
     expect(loginResponse.headers.get("location")).toBe("/auth/dashboard");
@@ -252,7 +244,7 @@ describe("browser auth pages", () => {
   test("renders browser-based MCP setup instructions", async () => {
     const { app, services } = await createAuthPageApp();
     await signUp(app);
-    await verifyAuthUser(services);
+    await verifyTestUser(services, "auth-user@example.com");
     const loginResponse = await login(app, "initial-password");
     const cookie = loginResponse.headers.get("set-cookie")?.split(";")[0];
     expect(cookie).toBeTruthy();
@@ -292,7 +284,7 @@ describe("browser auth pages", () => {
   test("completes MCP OAuth discovery, consent, token, and refresh", async () => {
     const { app, services } = await createAuthPageApp();
     await signUp(app);
-    await verifyAuthUser(services);
+    await verifyTestUser(services, "auth-user@example.com");
     const loginResponse = await login(app, "initial-password");
     const cookie = loginResponse.headers.get("set-cookie")?.split(";")[0];
     expect(cookie).toBeTruthy();
@@ -509,7 +501,7 @@ describe("browser auth pages", () => {
   test("completes password reset and accepts only the new password", async () => {
     const { app, emails, services } = await createAuthPageApp();
     await signUp(app);
-    await verifyAuthUser(services);
+    await verifyTestUser(services, "auth-user@example.com");
 
     const requested = await app.request(
       "http://localhost:3000/auth/forgot-password",
