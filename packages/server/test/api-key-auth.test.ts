@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -7,11 +7,7 @@ import { createApp } from "../src/app";
 import { loadConfig } from "../src/config";
 import { createOrganizationForUser } from "../src/organizations";
 import { closeServices, createServices } from "../src/services";
-
-const migrations = [
-  "../prisma/migrations/20260819015000_init/migration.sql",
-  "../prisma/migrations/20260828190000_add_api_keys/migration.sql",
-].map((path) => readFileSync(new URL(path, import.meta.url), "utf8"));
+import { testMigrationSql } from "./test-migrations";
 
 const cleanups: Array<() => Promise<void>> = [];
 
@@ -27,7 +23,7 @@ async function createHarness() {
     DATABASE_URL: `file:${join(directory, "test.sqlite")}`,
   });
   const services = await createServices(config);
-  for (const migration of migrations) services.database?.exec(migration);
+  services.database?.exec(testMigrationSql);
   const app = createApp({ config, services });
   cleanups.push(async () => {
     await closeServices(services);
