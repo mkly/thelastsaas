@@ -28,6 +28,7 @@ model User {
   oauthRefreshTokens      OauthRefreshToken[]
   oauthAccessTokens       OauthAccessToken[]
   oauthConsents           OauthConsent[]
+  apiKeys                 Apikey[]
 
   @@map("user")
 }
@@ -107,6 +108,7 @@ model Apikey {
   updatedAt           DateTime  @updatedAt
   permissions         String?
   metadata            String?
+  user                User      @relation(fields: [referenceId], references: [id], onDelete: Cascade)
 
   @@index([configId])
   @@index([key])
