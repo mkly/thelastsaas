@@ -108,32 +108,36 @@ server enforces window and occurrence caps.
 
 ## Compose restricted data entry
 
-Treat restricted data entry as three independent controls over one collection:
-
-1. A Casbin gate grants the role `write` on the collection resource.
-2. A row filter restricts which records that role may write, commonly to rows
-   whose `created_by` is `$user.id`.
-3. A field filter lists exactly which fields the role may read and write.
-
-Validation remains in the collection schema, so every write path has the same
-rules.
+A permission grant can specify both which records and which fields an account
+or role may use. For example, respondents can create submissions and edit only
+the answers on submissions they created. Validation stays in the collection
+schema.
 
 ```bash
 saas --org <org-id> permissions assign \
   --user respondent@example.com --role respondent
 saas --org <org-id> permissions grant \
-  --subject role:respondent --resource /collections/responses --action write
-saas --org <org-id> permissions row-filter set \
-  --collection responses --role respondent --action write \
-  --condition '{"created_by":"$user.id"}'
-saas --org <org-id> permissions field-filter set \
-  --collection responses --role respondent --action write \
-  --readable-fields '["question","answer","created_by"]' \
-  --writable-fields '["question","answer"]'
+  --subject role:respondent --resource /collections/responses --action create \
+  --where '{"created_by":"$user.id"}' --fields '["question","answer"]'
+saas --org <org-id> permissions grant \
+  --subject role:respondent --resource /collections/responses --action update \
+  --where '{"created_by":"$user.id"}' --fields '["answer"]'
 ```
 
-Add separate read rules if the role must retrieve its submissions. Hidden
-fields cannot be selected, filtered, grouped, aggregated, or written.
+Add separate read grants if the role must retrieve its submissions. Grants can
+also target `user:<id|email>` directly; no custom role is needed for one agent.
+Optional `--where` and `--fields` stay paired within each grant. Matching grants
+add access; an unrestricted grant still allows all rows and fields. `write`
+allows both create and update. Use `delete` with a row condition and no fields.
+Conditions support `$user.id`, `$user.email`, and `$org.id`. Ownership can use
+`created_by` or an ordinary field such as `owner_id`. Updates must satisfy the
+same grant before and after the change. Queries using a field only include rows
+where that field is readable. Revoke a conditional grant with the same `--where`
+and `--fields`; omitting them revokes only the unrestricted grant.
+
+The older role row-filter/field-filter commands remain for compatibility.
+Prefer conditional grants for new configurations. Do not add a broad grant as
+an extra step: a conditional grant already supplies the permission.
 
 ## Compose a calendar collection
 

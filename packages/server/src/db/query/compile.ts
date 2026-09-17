@@ -324,8 +324,8 @@ function compileNode(
         options,
         false,
       );
-      // An always-true inner expression cannot narrow the SQL candidates.
-      if (!inner.sql) return { sql: "", params: [], postFilters: [] };
+      // Negating an always-true expression must match no rows.
+      if (!inner.sql) return { sql: "1=0", params: [], postFilters: [] };
       return {
         sql: `NOT (${inner.sql})`,
         params: inner.params,

@@ -4,12 +4,15 @@ import type { AuditWriter } from "./db/audit";
 import type { ResolvedFieldFilter } from "./db/fieldFilters";
 import type { AppServices } from "./services";
 
+import type { RecordGrants } from "./db/record-grants";
+
 export interface AppVariables {
   config: AppConfig;
   services: AppServices;
   orgId: string;
   userId: string;
   audit: AuditWriter;
+  recordGrants: RecordGrants;
   rowFilter: Where | null;
   fieldFilter: ResolvedFieldFilter | null;
 }

@@ -1,6 +1,7 @@
 import {
   InvalidQueryError,
   RecordNotFoundError,
+  PermissionDeniedError,
   SchemaValidationError,
   extractFieldType,
   genId,
@@ -28,6 +29,17 @@ import {
   dialectSql,
   type QueryPostFilter,
 } from "./query/compile";
+
+import {
+  assertGrantedWrite,
+  evaluateGrants,
+  grantFieldFilter,
+  grantProjection,
+  grantWhere,
+  matchingGrants,
+  queryGrantWhere,
+  type RecordGrants,
+} from "./record-grants";
 
 // Raw record queries must speak the dialect of the database actually behind
 // Prisma: on PostgreSQL, `?` placeholders are never converted and get parsed
@@ -166,14 +178,28 @@ export async function insertRecord(
   data: Record<string, unknown>,
   createdBy = "system",
   fieldFilter?: ResolvedFieldFilter | null,
+  grants?: RecordGrants,
 ) {
   const collection = await getCollection(prisma, orgId, collectionName);
   assertWritableFields(data, fieldFilter);
   const normalized = validatedData(data, schemaFromCollection(collection));
   const now = new Date();
+  const id = genId();
+  if (grants) {
+    const matches = await evaluateGrants(
+      prisma,
+      grants,
+      { id, data: normalized, createdBy, createdAt: now, updatedAt: now },
+      schemaFromCollection(collection),
+      PROVIDER,
+    );
+    fieldFilter = grantFieldFilter(
+      assertGrantedWrite(grants, matches, matches, Object.keys(data)),
+    );
+  }
   const row = await prisma.record.create({
     data: {
-      id: genId(),
+      id,
       orgId,
       collectionId: collection.id,
       data: jsonObject(normalized),
@@ -192,6 +218,7 @@ export async function insertRecords(
   records: Record<string, unknown>[],
   createdBy = "system",
   fieldFilter?: ResolvedFieldFilter | null,
+  grants?: RecordGrants,
 ) {
   const collection = await getCollection(prisma, orgId, collectionName);
   const schema = schemaFromCollection(collection);
@@ -206,6 +233,16 @@ export async function insertRecords(
       const normalized = validatedData(data, schema);
       const id = genId();
       const now = new Date();
+      if (grants) {
+        const matches = await evaluateGrants(
+          prisma,
+          grants,
+          { id, data: normalized, createdBy, createdAt: now, updatedAt: now },
+          schema,
+          PROVIDER,
+        );
+        assertGrantedWrite(grants, matches, matches, Object.keys(data));
+      }
       ids.push(id);
       creates.push(
         prisma.record.create({
@@ -242,8 +279,13 @@ export async function getRecord(
   recordId: string,
   rowFilter?: Where | null,
   fieldFilter?: ResolvedFieldFilter | null,
+  grants?: RecordGrants,
 ) {
   const collection = await getCollection(prisma, orgId, collectionName);
+  if (grants) rowFilter = grantWhere(grants);
+  const projection = grants
+    ? grantProjection(grants, schemaFromCollection(collection), PROVIDER)
+    : undefined;
   if (rowFilter) {
     const compiled = compileWhere(
       undefined,
@@ -268,9 +310,10 @@ export async function getRecord(
       }>
     >(
       dialectSql(
-        `SELECT id, data, created_by, created_at, updated_at FROM records WHERE id = ? AND ${scoped.sql}`,
+        `SELECT id, data, created_by, created_at, updated_at${projection?.sql ? ", " + projection.sql : ""} FROM records WHERE id = ? AND ${scoped.sql}`,
         PROVIDER,
       ),
+      ...(projection?.params ?? []),
       recordId,
       ...scoped.params,
     );
@@ -288,7 +331,7 @@ export async function getRecord(
         updatedAt: new Date(filtered.updated_at),
       },
       collectionName,
-      fieldFilter,
+      grants ? grantFieldFilter(matchingGrants(grants, filtered)) : fieldFilter,
     );
   }
   const row = await prisma.record.findFirst({
@@ -306,10 +349,66 @@ export async function updateRecord(
   data: Record<string, unknown>,
   rowFilter?: Where | null,
   fieldFilter?: ResolvedFieldFilter | null,
+  grants?: RecordGrants,
 ) {
   const collection = await getCollection(prisma, orgId, collectionName);
   assertWritableFields(data, fieldFilter);
   const schema = schemaFromCollection(collection);
+  if (grants) {
+    return prisma.$transaction(async (tx) => {
+      const existing = await tx.record.findFirst({
+        where: { id: recordId, orgId, collectionId: collection.id },
+      });
+      if (!existing) throw new RecordNotFoundError(recordId);
+      const before = await evaluateGrants(
+        tx,
+        grants,
+        existing,
+        schema,
+        PROVIDER,
+      );
+      if (!before.some(Boolean)) throw new RecordNotFoundError(recordId);
+      const normalized = validatedData(
+        { ...dataObject(existing.data), ...data },
+        schema,
+      );
+      const updatedAt = new Date();
+      const after = await evaluateGrants(
+        tx,
+        grants,
+        { ...existing, data: normalized, updatedAt },
+        schema,
+        PROVIDER,
+      );
+      const applicable = assertGrantedWrite(
+        grants,
+        before,
+        after,
+        Object.keys(data),
+      );
+      const updated = await tx.record.updateMany({
+        where: {
+          id: recordId,
+          orgId,
+          collectionId: collection.id,
+          data: { equals: existing.data as Prisma.InputJsonValue },
+          createdBy: existing.createdBy,
+          createdAt: existing.createdAt,
+          updatedAt: existing.updatedAt,
+        },
+        data: { data: jsonObject(normalized), updatedAt },
+      });
+      if (updated.count !== 1)
+        throw new PermissionDeniedError(
+          "Record changed during update; retry the request",
+        );
+      return serializedRecord(
+        { ...existing, data: normalized as Prisma.JsonObject, updatedAt },
+        collectionName,
+        grantFieldFilter(applicable),
+      );
+    });
+  }
   let existing: { data: Prisma.JsonValue } | null;
   if (rowFilter) {
     const compiled = compileWhere(undefined, schema, PROVIDER, {
@@ -366,8 +465,33 @@ export async function deleteRecord(
   collectionName: string,
   recordId: string,
   rowFilter?: Where | null,
+  grants?: RecordGrants,
 ): Promise<void> {
   const collection = await getCollection(prisma, orgId, collectionName);
+  if (grants) {
+    const compiled = compileWhere(
+      grantWhere(grants),
+      schemaFromCollection(collection),
+      PROVIDER,
+    );
+    rejectDeferredFilters(compiled.postFilters);
+    const scoped = applyOrgScope(
+      orgId,
+      collection.id,
+      compiled.sql,
+      compiled.params,
+    );
+    const deleted = await prisma.$executeRawUnsafe(
+      dialectSql(
+        `DELETE FROM records WHERE id = ? AND ${scoped.sql}`,
+        PROVIDER,
+      ),
+      recordId,
+      ...scoped.params,
+    );
+    if (!deleted) throw new RecordNotFoundError(recordId);
+    return;
+  }
   if (rowFilter) {
     const compiled = compileWhere(
       undefined,
@@ -408,12 +532,27 @@ export async function queryRecords(
   offset = 0,
   rowFilter?: Where | null,
   fieldFilter?: ResolvedFieldFilter | null,
+  grants?: RecordGrants,
 ) {
   const collection = await getCollection(prisma, orgId, collectionName);
   const schema = schemaFromCollection(collection);
+  const referenced = new Set<string>();
+  const isAllowed = (field: string) => {
+    referenced.add(field);
+    return grants ? true : isFieldReadable(field, fieldFilter);
+  };
+  // Collect query/sort references before deriving the permitted input rows.
+  compileWhere(where, schema, PROVIDER, { isFieldAllowed: isAllowed });
+  const order = compileOrderBy(orderBy, schema, PROVIDER, {
+    isFieldAllowed: isAllowed,
+  });
+  if (grants) rowFilter = queryGrantWhere(grants, referenced);
+  const projection = grants
+    ? grantProjection(grants, schema, PROVIDER)
+    : undefined;
   const compiled = compileWhere(where, schema, PROVIDER, {
     extraWhere: rowFilter,
-    isFieldAllowed: (field) => isFieldReadable(field, fieldFilter),
+    isFieldAllowed: isAllowed,
   });
   const recurrenceFilters = compiled.postFilters.filter(
     (filter) => filter.kind === "occurs_between",
@@ -429,9 +568,6 @@ export async function queryRecords(
     compiled.sql,
     compiled.params,
   );
-  const order = compileOrderBy(orderBy, schema, PROVIDER, {
-    isFieldAllowed: (field) => isFieldReadable(field, fieldFilter),
-  });
   const safeLimit = Math.max(1, Math.min(Math.trunc(limit), 1000));
   const safeOffset = Math.max(0, Math.trunc(offset));
   const recurrenceFilter = recurrenceFilters[0];
@@ -441,11 +577,12 @@ export async function queryRecords(
     // candidate set once so a large offset never turns into repeated database
     // page crawling and records with no occurrence cannot consume a page.
     const recordsSql = dialectSql(
-      `SELECT id, data, created_by, created_at, updated_at FROM records WHERE ${scoped.sql} ${order}`,
+      `SELECT id, data, created_by, created_at, updated_at${projection?.sql ? ", " + projection.sql : ""} FROM records WHERE ${scoped.sql} ${order}`,
       PROVIDER,
     );
     const rows = await prisma.$queryRawUnsafe<QueryRow[]>(
       recordsSql,
+      ...(projection?.params ?? []),
       ...scoped.params,
     );
     const candidates = rows.map((row) => ({ row, data: queryRecordData(row) }));
@@ -467,7 +604,9 @@ export async function queryRecords(
               candidate.row,
               candidate.data,
               occurrences,
-              fieldFilter,
+              grants
+                ? grantFieldFilter(matchingGrants(grants, candidate.row))
+                : fieldFilter,
             ),
           ];
     });
@@ -485,7 +624,7 @@ export async function queryRecords(
     PROVIDER,
   );
   const recordsSql = dialectSql(
-    `SELECT id, data, created_by, created_at, updated_at FROM records WHERE ${scoped.sql} ${order} LIMIT ? OFFSET ?`,
+    `SELECT id, data, created_by, created_at, updated_at${projection?.sql ? ", " + projection.sql : ""} FROM records WHERE ${scoped.sql} ${order} LIMIT ? OFFSET ?`,
     PROVIDER,
   );
   const [counts, rows] = await Promise.all([
@@ -495,6 +634,7 @@ export async function queryRecords(
     ),
     prisma.$queryRawUnsafe<QueryRow[]>(
       recordsSql,
+      ...(projection?.params ?? []),
       ...scoped.params,
       safeLimit,
       safeOffset,
@@ -503,7 +643,12 @@ export async function queryRecords(
 
   return {
     records: rows.map((row) =>
-      serializedQueryRecord(row, queryRecordData(row), undefined, fieldFilter),
+      serializedQueryRecord(
+        row,
+        queryRecordData(row),
+        undefined,
+        grants ? grantFieldFilter(matchingGrants(grants, row)) : fieldFilter,
+      ),
     ),
     total: Number(counts[0]?.count ?? 0),
     limit: safeLimit,
@@ -518,6 +663,7 @@ export async function countRecords(
   where?: Where,
   rowFilter?: Where | null,
   fieldFilter?: ResolvedFieldFilter | null,
+  grants?: RecordGrants,
 ): Promise<number> {
   const result = await queryRecords(
     prisma,
@@ -529,6 +675,7 @@ export async function countRecords(
     0,
     rowFilter,
     fieldFilter,
+    grants,
   );
   return result.total;
 }
@@ -540,8 +687,26 @@ export async function aggregateRecords(
   request: AggregateRequest,
   rowFilter?: Where | null,
   fieldFilter?: ResolvedFieldFilter | null,
+  grants?: RecordGrants,
 ) {
   const collection = await getCollection(prisma, orgId, collectionName);
+  const referenced = new Set<string>();
+  if (grants) {
+    compileAggregate(
+      request,
+      schemaFromCollection(collection),
+      PROVIDER,
+      orgId,
+      collection.id,
+      {
+        isFieldAllowed: (field) => {
+          referenced.add(field);
+          return true;
+        },
+      },
+    );
+    rowFilter = queryGrantWhere(grants, referenced);
+  }
   const compiled = compileAggregate(
     request,
     schemaFromCollection(collection),
@@ -550,7 +715,8 @@ export async function aggregateRecords(
     collection.id,
     {
       extraWhere: rowFilter,
-      isFieldAllowed: (field) => isFieldReadable(field, fieldFilter),
+      isFieldAllowed: (field) =>
+        grants ? true : isFieldReadable(field, fieldFilter),
     },
   );
   rejectDeferredFilters(compiled.postFilters);

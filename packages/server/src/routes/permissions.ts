@@ -1,5 +1,6 @@
 import {
   CollectionNotFoundError,
+  InvalidQueryError,
   errorResponse,
   isPlainObject,
 } from "@lastsaas/shared";
@@ -10,7 +11,7 @@ import { z } from "zod";
 import {
   addPolicy,
   assignRole,
-  hasPermission,
+  checkPermission,
   removePolicy,
   roleSubject,
   unassignRole,
@@ -30,12 +31,23 @@ import { whereSchema } from "../db/query/validation";
 import type { AppEnvironment } from "../env";
 import { requirePermission } from "../middleware/permission";
 
-const permissionActions = ["read", "write", "delete", "manage", "*"] as const;
+import { decodeGrantOptions, grantOptionSchema } from "../db/grant-options";
+
+const permissionActions = [
+  "read",
+  "create",
+  "update",
+  "write",
+  "delete",
+  "manage",
+  "*",
+] as const;
 const policySchema = z
   .object({
     subject: z.string().min(1),
     resource: z.string().min(1).max(512).startsWith("/"),
     action: z.enum(permissionActions),
+    ...grantOptionSchema,
   })
   .strict();
 const roleSchema = z
@@ -146,7 +158,7 @@ export const permissionRouter = new Hono<AppEnvironment>()
       prisma.casbinRule.findMany({
         where: { orgId, ptype: { in: ["p", "g"] } },
         orderBy: { id: "asc" },
-        select: { ptype: true, v0: true, v1: true, v2: true },
+        select: { ptype: true, v0: true, v1: true, v2: true, v3: true },
       }),
       prisma.member.findMany({
         where: { organizationId: orgId },
@@ -169,6 +181,7 @@ export const permissionRouter = new Hono<AppEnvironment>()
         subject: contractSubject(rule.v0!, orgId),
         resource: rule.v1!,
         action: rule.v2!,
+        ...decodeGrantOptions(rule.v3),
       }));
     const role_assignments = rules
       .filter(
@@ -193,7 +206,7 @@ export const permissionRouter = new Hono<AppEnvironment>()
       return context.json(invalidRequest(validationMessage(parsed.error)), 400);
     }
 
-    const { subject, resource, action } = parsed.data;
+    const { subject, resource, action, ...options } = parsed.data;
     const orgId = context.get("orgId");
     const prisma = context.get("services").prisma;
     const expanded = await expandSubject(subject, orgId, prisma);
@@ -210,7 +223,24 @@ export const permissionRouter = new Hono<AppEnvironment>()
       );
     }
 
-    if (!(await addPolicy(prisma, orgId, expanded.id, resource, action))) {
+    let added: boolean;
+    try {
+      added = await addPolicy(
+        prisma,
+        orgId,
+        expanded.id,
+        resource,
+        action,
+        options,
+      );
+    } catch (error) {
+      if (error instanceof InvalidQueryError)
+        return context.json(error.toResponse(), 400);
+      if (error instanceof CollectionNotFoundError)
+        return context.json(error.toResponse(), 404);
+      throw error;
+    }
+    if (!added) {
       return context.json(
         errorResponse("Conflict", "Policy already exists"),
         409,
@@ -220,9 +250,10 @@ export const permissionRouter = new Hono<AppEnvironment>()
       subject,
       resource,
       action,
+      ...JSON.parse(JSON.stringify(options)),
     });
     return context.json(
-      { status: "ok" as const, subject, resource, action },
+      { status: "ok" as const, subject, resource, action, ...options },
       201,
     );
   })
@@ -234,7 +265,7 @@ export const permissionRouter = new Hono<AppEnvironment>()
       return context.json(invalidRequest(validationMessage(parsed.error)), 400);
     }
 
-    const { subject, resource, action } = parsed.data;
+    const { subject, resource, action, ...options } = parsed.data;
     const orgId = context.get("orgId");
     const prisma = context.get("services").prisma;
     const expanded = await expandSubject(subject, orgId, prisma);
@@ -251,13 +282,23 @@ export const permissionRouter = new Hono<AppEnvironment>()
       );
     }
 
-    if (!(await removePolicy(prisma, orgId, expanded.id, resource, action))) {
+    if (
+      !(await removePolicy(
+        prisma,
+        orgId,
+        expanded.id,
+        resource,
+        action,
+        options,
+      ))
+    ) {
       return context.json(errorResponse("NotFound", "Policy not found"), 404);
     }
     await context.get("audit")("remove_policy", "permission", null, {
       subject,
       resource,
       action,
+      ...JSON.parse(JSON.stringify(options)),
     });
     return context.json({ status: "ok" as const });
   })
@@ -354,7 +395,7 @@ export const permissionRouter = new Hono<AppEnvironment>()
       );
     }
 
-    const allowed = await hasPermission(
+    const access = await checkPermission(
       prisma,
       orgId,
       userId,
@@ -363,7 +404,7 @@ export const permissionRouter = new Hono<AppEnvironment>()
     );
     return context.json({
       status: "ok" as const,
-      allowed,
+      ...access,
       user_id: userId,
       resource: parsed.data.resource,
       action: parsed.data.action,

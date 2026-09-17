@@ -1,0 +1,16 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "com.thelastsaas/server",
+  "description": "Collections, records, permissions, files, and notifications — a backend your agent manages over MCP.",
+  "version": "0.1.0",
+  "repository": {
+    "url": "https://github.com/mkly/thelastsaas",
+    "source": "github"
+  },
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://app.thelastsaas.com/v1/mcp"
+    }
+  ]
+}

@@ -16,9 +16,12 @@ import {
   listCollections,
   updateCollectionSchema,
 } from "../db/collections";
-import { createOrgEnforcer } from "../db/casbin";
+import { resolveRecordGrants } from "../db/record-grants";
 import type { AppEnvironment } from "../env";
-import { requirePermission } from "../middleware/permission";
+import {
+  requirePermission,
+  requireCollectionPermission,
+} from "../middleware/permission";
 
 const fieldDefinitionSchema = z.union([
   z.string(),
@@ -87,10 +90,7 @@ function collectionError(
 }
 
 const createCollections = requirePermission("write", () => "/collections");
-const readCollection = requirePermission(
-  "read",
-  (context) => `/collections/${context.req.param("name")}`,
-);
+const readCollection = requireCollectionPermission("read");
 const manageCollection = requirePermission(
   "manage",
   (context) => `/collections/${context.req.param("name")}`,
@@ -126,21 +126,25 @@ export const collectionsRouter = new Hono<AppEnvironment>()
       context.get("services").prisma,
       context.get("orgId"),
     );
-    const enforcer = await createOrgEnforcer(
-      context.get("services").prisma,
-      context.get("orgId"),
-    );
+    const prisma = context.get("services").prisma;
+    const orgId = context.get("orgId");
+    const userId = context.get("userId");
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { email: true },
+    });
     const visibleCollections = (
       await Promise.all(
-        collections.map(async (collection) =>
-          (await enforcer.enforce(
-            context.get("userId"),
+        collections.map(async (collection) => {
+          const grants = await resolveRecordGrants(
+            prisma,
+            { orgId, userId, userEmail: user?.email ?? "" },
+            collection.id,
             `/collections/${collection.name}`,
             "read",
-          ))
-            ? collection
-            : null,
-        ),
+          );
+          return grants.length ? collection : null;
+        }),
       )
     ).filter((collection) => collection !== null);
     return context.json({

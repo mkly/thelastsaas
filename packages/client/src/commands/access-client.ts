@@ -11,7 +11,8 @@ type OrgParam = { orgId: string };
 type IdParam = OrgParam & { id: string };
 type MemberParam = OrgParam & { memberId: string };
 
-type PolicyAction = "read" | "write" | "delete" | "manage" | "*";
+type PolicyAction =
+  "read" | "create" | "update" | "write" | "delete" | "manage" | "*";
 type FilterAction = "read" | "write" | "delete";
 
 interface PermissionsRoutes {
@@ -19,11 +20,23 @@ interface PermissionsRoutes {
   policies: {
     $post(input: {
       param: OrgParam;
-      json: { subject: string; resource: string; action: PolicyAction };
+      json: {
+        subject: string;
+        resource: string;
+        action: PolicyAction;
+        where?: Record<string, unknown>;
+        fields?: string[];
+      };
     }): Promise<Response>;
     $delete(input: {
       param: OrgParam;
-      json: { subject: string; resource: string; action: PolicyAction };
+      json: {
+        subject: string;
+        resource: string;
+        action: PolicyAction;
+        where?: Record<string, unknown>;
+        fields?: string[];
+      };
     }): Promise<Response>;
   };
   roles: {

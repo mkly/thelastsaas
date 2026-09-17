@@ -739,6 +739,11 @@ pre {
 }
 pre > code { padding: 0; border: 0; background: none; font-size: var(--text-sm); }
 
+.token-claim { display: flex; align-items: center; gap: 0.75rem; }
+.token-claim > button { flex-shrink: 0; }
+.token-claim > pre { min-inline-size: 0; flex: 1; margin: 0; }
+#copy-status { margin-block: 0.75rem 0; }
+
 .code-verify {
   display: inline-block;
   padding: 0.5rem 1.125rem;

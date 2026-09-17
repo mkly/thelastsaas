@@ -36,6 +36,18 @@ File content is transferred as RFC 4648 base64 through `files_upload` and
 `MAX_UPLOAD_SIZE` setting. Destructive tools such as `collections_delete`,
 `files_delete`, and `org_import` require `confirm: true`.
 
+## Getting started
+
+The `getting_started` tool returns a friendly introduction, explains collections,
+records, and fields, and offers a small reading-list tutorial using MCP tools.
+It takes no arguments and does not read or change organization data.
+
+Try asking your assistant "What can I do with Last SaaS?" or "Help me get
+started." The assistant can call `getting_started` and walk through the guide
+with you. The guide is available on request; it is not automatically displayed
+when you connect. Creating the example list and adding books are separate
+actions that save real data when you choose to try them.
+
 ## CLI command parity
 
 The tables below cover every command family registered in
@@ -113,3 +125,70 @@ The following commands deliberately do not have MCP tools:
 - Accepting an invitation as a not-yet-member user cannot go through the
   organization-scoped MCP endpoint because that endpoint requires membership.
   Use the CLI, browser flow, or REST endpoint for that initial acceptance.
+
+## Conditional row and field grants
+
+`permissions_grant` accepts optional `where` and `fields` on a specific
+`/collections/<name>` resource, for either `user:<id|email>` or `role:<name>`.
+For example, let an agent edit the title and status of tasks it created:
+
+```json
+{
+  "subject": "user:<agent-id>",
+  "resource": "/collections/tasks",
+  "action": "update",
+  "where": { "created_by": "$user.id" },
+  "fields": ["title", "status"]
+}
+```
+
+Use `permissions_grant` again with `action: "delete"`, the same `where`, and no
+`fields` to allow deleting its own tasks. Grant `create` separately to allow
+new tasks. `write` remains shorthand for both create and update.
+
+Permissions are additive: no matching grant means no access; any matching grant
+adds access. Omitting `where` allows every row, and omitting `fields` allows
+every collection data field. An empty field list allows no data fields. Standard
+record metadata (`id`, `created_by`, `created_at`, `updated_at`) remains visible
+on readable records. An existing unrestricted admin grant continues to work.
+An unrestricted member grant also continues to work, so replace broad member
+grants when the intention is own-record access. Conditional grants do not need
+an additional unrestricted grant.
+
+Conditions use the existing Where language, including `$user.id`, `$user.email`,
+and `$org.id`. They may compare `created_by` or ordinary collection fields such
+as `owner_id` or `assigned_to`. They require a specific existing collection;
+resource wildcards, `manage`, `*`, and deferred `occurs_between` conditions are
+not supported with grant options. Delete applies to the whole row and rejects
+`fields`.
+
+Each grant keeps its condition and fields together. An update must have a grant
+for every submitted field, matching both the existing and proposed row. It
+cannot gain access by changing an ownership field or moving between two grants.
+Create checks the proposed row, including server-set creator metadata; batch
+requests with an unauthorized record save no records. Read results include only
+fields from grants matching that row. Filtering, sorting, counting, and
+aggregating on a field include only rows where that field is readable; a field
+with no applicable read grant is rejected.
+
+`permissions_list` includes the options. `permissions_revoke` removes the exact
+grant: supply the same `where` and `fields`; omit both to remove only an
+unrestricted grant. Field order does not matter. `permissions_check` reports
+`conditional: true` when access depends on a conditional grant; its resource-level
+answer does not authorize a particular row or field. Export/import preserves
+the options.
+
+The CLI accepts the same options as JSON:
+
+```sh
+saas permissions grant --subject 'user:<agent-id>' \
+  --resource /collections/tasks --action update \
+  --where '{"created_by":"$user.id"}' --fields '["title","status"]'
+```
+
+Existing role row/field filter tools remain for compatibility and are resolved
+as paired grants. They retain their existing behavior for creation and updates;
+new configurations should use conditional grants. No database migration is
+needed: optional grant metadata uses the existing `casbin_rule.v3` column. All
+server instances must run this version before creating conditional grants;
+older versions do not interpret that metadata.

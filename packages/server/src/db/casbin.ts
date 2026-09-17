@@ -1,5 +1,11 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
-import { newEnforcer, newModel, type Enforcer } from "casbin";
+import { newEnforcer, newModel, Util, type Enforcer } from "casbin";
+
+import {
+  encodeGrantOptions,
+  validateGrantOptions,
+  type GrantOptions,
+} from "./grant-options";
 
 const CASBIN_MODEL = `
 [request_definition]
@@ -23,6 +29,7 @@ interface StoredRule {
   v0: string;
   v1: string;
   v2: string | null;
+  v3?: string | null;
 }
 
 async function addRule(
@@ -32,7 +39,11 @@ async function addRule(
 ): Promise<boolean> {
   return prisma.$transaction(async (transaction) => {
     const existing = await transaction.casbinRule.findFirst({
-      where: { orgId, ...rule },
+      where: {
+        orgId,
+        ...rule,
+        ...(rule.ptype === "p" ? { v3: rule.v3 ?? null } : {}),
+      },
       select: { id: true },
     });
     if (existing) return false;
@@ -48,7 +59,11 @@ async function removeRule(
   rule: StoredRule,
 ): Promise<boolean> {
   const result = await prisma.casbinRule.deleteMany({
-    where: { orgId, ...rule },
+    where: {
+      orgId,
+      ...rule,
+      ...(rule.ptype === "p" ? { v3: rule.v3 ?? null } : {}),
+    },
   });
   return result.count > 0;
 }
@@ -67,13 +82,17 @@ export async function createOrgEnforcer(
   const rules = await prisma.casbinRule.findMany({
     where: { orgId, ptype: { in: ["p", "g"] } },
     orderBy: { id: "asc" },
-    select: { ptype: true, v0: true, v1: true, v2: true },
+    select: { ptype: true, v0: true, v1: true, v2: true, v3: true },
   });
 
   for (const rule of rules) {
     if (!rule.v0 || !rule.v1) continue;
-    if (rule.ptype === "p" && rule.v2) {
+    if (rule.ptype === "p" && rule.v2 && !rule.v3) {
       await enforcer.addPolicy(rule.v0, rule.v1, rule.v2);
+      if (rule.v2 === "write") {
+        await enforcer.addPolicy(rule.v0, rule.v1, "create");
+        await enforcer.addPolicy(rule.v0, rule.v1, "update");
+      }
     } else if (rule.ptype === "g") {
       await enforcer.addGroupingPolicy(rule.v0, rule.v1);
     }
@@ -93,18 +112,55 @@ export async function hasPermission(
   return enforcer.enforce(subject, resource, action);
 }
 
+/** A resource-level check cannot authorize a particular record or field. */
+export async function checkPermission(
+  prisma: PrismaClient,
+  orgId: string,
+  subject: string,
+  resource: string,
+  action: string,
+): Promise<{ allowed: boolean; conditional?: boolean }> {
+  const enforcer = await createOrgEnforcer(prisma, orgId);
+  if (await enforcer.enforce(subject, resource, action))
+    return { allowed: true };
+  const subjects = [
+    subject,
+    ...(await enforcer.getImplicitRolesForUser(subject)),
+  ];
+  const rules = await prisma.casbinRule.findMany({
+    where: { orgId, ptype: "p", v0: { in: subjects }, v3: { not: null } },
+  });
+  const conditional = rules.some(
+    (rule) =>
+      rule.ptype === "p" &&
+      rule.v3 &&
+      rule.v0 &&
+      subjects.includes(rule.v0) &&
+      rule.v1 &&
+      Util.keyMatchFunc(resource, rule.v1) &&
+      (rule.v2 === action ||
+        (rule.v2 === "write" && ["create", "update"].includes(action))),
+  );
+  return conditional
+    ? { allowed: true, conditional: true }
+    : { allowed: false };
+}
+
 export async function addPolicy(
   prisma: PrismaClient,
   orgId: string,
   subject: string,
   resource: string,
   action: string,
+  options: GrantOptions = {},
 ): Promise<boolean> {
+  await validateGrantOptions(prisma, orgId, resource, action, options);
   return addRule(prisma, orgId, {
     ptype: "p",
     v0: subject,
     v1: resource,
     v2: action,
+    v3: encodeGrantOptions(options),
   });
 }
 
@@ -114,12 +170,14 @@ export async function removePolicy(
   subject: string,
   resource: string,
   action: string,
+  options: GrantOptions = {},
 ): Promise<boolean> {
   return removeRule(prisma, orgId, {
     ptype: "p",
     v0: subject,
     v1: resource,
     v2: action,
+    v3: encodeGrantOptions(options),
   });
 }
 

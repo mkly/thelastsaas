@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { McpToolContext } from "./context";
 import { registerAccessTools } from "./tools/access";
 import { registerDataTools } from "./tools/data";
+import { registerGettingStarted } from "./tools/getting-started";
 import { registerOperationsTools } from "./tools/operations";
 
 type ToolRegistrar = (server: McpServer, context: McpToolContext) => void;
@@ -36,6 +37,7 @@ const registerServerInfo: ToolRegistrar = (server, context) => {
 };
 
 const toolRegistrars: readonly ToolRegistrar[] = [
+  registerGettingStarted,
   registerServerInfo,
   registerDataTools,
   registerAccessTools,

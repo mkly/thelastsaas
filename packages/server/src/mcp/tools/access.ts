@@ -15,6 +15,7 @@ import {
   addPolicy,
   assignRole,
   hasPermission,
+  checkPermission,
   removeMemberAccess,
   removePolicy,
   roleSubject,
@@ -37,7 +38,17 @@ import {
 } from "../../db/rowFilters";
 import type { McpToolContext } from "../context";
 
-const policyActions = ["read", "write", "delete", "manage", "*"] as const;
+import { decodeGrantOptions, grantOptionSchema } from "../../db/grant-options";
+
+const policyActions = [
+  "read",
+  "create",
+  "update",
+  "write",
+  "delete",
+  "manage",
+  "*",
+] as const;
 const filterActions = ["read", "write", "delete"] as const;
 const memberRoles = ["admin", "member"] as const;
 const roleName = z
@@ -249,7 +260,7 @@ function registerPermissionTools(
         prisma.casbinRule.findMany({
           where: { orgId: context.orgId, ptype: { in: ["p", "g"] } },
           orderBy: { id: "asc" },
-          select: { ptype: true, v0: true, v1: true, v2: true },
+          select: { ptype: true, v0: true, v1: true, v2: true, v3: true },
         }),
         prisma.member.findMany({
           where: { organizationId: context.orgId },
@@ -273,6 +284,7 @@ function registerPermissionTools(
             subject: contractSubject(rule.v0!, context.orgId),
             resource: rule.v1!,
             action: rule.v2!,
+            ...decodeGrantOptions(rule.v3),
           })),
         role_assignments: rules
           .filter(
@@ -294,10 +306,15 @@ function registerPermissionTools(
     subject: z.string().min(1),
     resource: z.string().min(1).max(512).startsWith("/"),
     action: z.enum(policyActions),
+    ...grantOptionSchema,
   };
   server.registerTool(
     "permissions_grant",
-    { description: "Add a policy rule", inputSchema: policySchema },
+    {
+      description:
+        'Add an additive permission grant for role:<name> or user:<id|email>. Optional where and fields apply to a specific /collections/<name> resource. Example: where: {"created_by":"$user.id"}, fields: ["title","status"]. Also supports $user.email and $org.id. create and update are separate; write allows both. Matching grants add access; an unrestricted grant still permits all rows/fields. Delete does not accept fields.',
+      inputSchema: policySchema,
+    },
     (input) =>
       run(async () => {
         await requirePermission(context, "/permissions");
@@ -309,17 +326,28 @@ function registerPermissionTools(
             subject,
             input.resource,
             input.action,
+            { where: input.where as Where | undefined, fields: input.fields },
           ))
         ) {
           throw new ToolError("Conflict", "Policy already exists");
         }
-        await audit(context, "add_policy", "permission", null, input);
+        await audit(
+          context,
+          "add_policy",
+          "permission",
+          null,
+          JSON.parse(JSON.stringify(input)),
+        );
         return { status: "ok", ...input };
       })(),
   );
   server.registerTool(
     "permissions_revoke",
-    { description: "Remove a policy rule", inputSchema: policySchema },
+    {
+      description:
+        "Remove the exact grant, including its where and fields if present. Omitting them removes only the unrestricted grant.",
+      inputSchema: policySchema,
+    },
     (input) =>
       run(async () => {
         await requirePermission(context, "/permissions");
@@ -331,11 +359,18 @@ function registerPermissionTools(
             subject,
             input.resource,
             input.action,
+            { where: input.where as Where | undefined, fields: input.fields },
           ))
         ) {
           throw new ToolError("NotFound", "Policy not found");
         }
-        await audit(context, "remove_policy", "permission", null, input);
+        await audit(
+          context,
+          "remove_policy",
+          "permission",
+          null,
+          JSON.parse(JSON.stringify(input)),
+        );
         return { status: "ok" };
       })(),
   );
@@ -398,7 +433,8 @@ function registerPermissionTools(
   server.registerTool(
     "permissions_check",
     {
-      description: "Check whether a user has a permission",
+      description:
+        "Check resource-level permission. conditional: true means row/field conditions still apply; this is not authorization for a particular record.",
       inputSchema: {
         user_id: z.string().min(1),
         resource: policySchema.resource,
@@ -411,13 +447,13 @@ function registerPermissionTools(
         const userId = await requireOrgMember(input.user_id, context);
         return {
           status: "ok",
-          allowed: await hasPermission(
+          ...(await checkPermission(
             context.services.prisma,
             context.orgId,
             userId,
             input.resource,
             input.action,
-          ),
+          )),
           user_id: userId,
           resource: input.resource,
           action: input.action,
@@ -431,7 +467,7 @@ function registerFilterTools(server: McpServer, context: McpToolContext): void {
     "row_filter_set",
     {
       description:
-        "Create or replace a row-level permission filter. condition is a filter object, " +
+        "Legacy role row filter; prefer permissions_grant with where and optional fields for new rules. condition is a filter object, " +
         'e.g. {"and": [{"status": "active"}, {"age": {"gt": 18}}]}; leaf operators: ' +
         "eq, not, gt, lt, gte, lte, contains, in, is_null, between, occurs_between; " +
         "boolean nodes: and, or, not (max 8 levels deep)",
@@ -537,7 +573,8 @@ function registerFilterTools(server: McpServer, context: McpToolContext): void {
   server.registerTool(
     "field_filter_set",
     {
-      description: "Create or replace a field-level permission filter",
+      description:
+        "Legacy role field filter; prefer permissions_grant with fields and optional where for new rules",
       inputSchema: {
         collection: z.string().min(1),
         role: roleName,

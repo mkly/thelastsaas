@@ -160,6 +160,8 @@ export interface ExportData {
     subject: string;
     resource: string;
     action: string;
+    where?: Where;
+    fields?: string[];
   }>;
   role_assignments: Array<{
     user_id: string;

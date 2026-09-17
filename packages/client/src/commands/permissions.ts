@@ -9,7 +9,8 @@ import {
   type AccessCommandDependencies,
 } from "./access-client";
 
-type PolicyAction = "read" | "write" | "delete" | "manage" | "*";
+type PolicyAction =
+  "read" | "create" | "update" | "write" | "delete" | "manage" | "*";
 type FilterAction = "read" | "write" | "delete";
 type InvitationRole = "admin" | "member";
 
@@ -17,6 +18,8 @@ interface Policy {
   subject: string;
   resource: string;
   action: string;
+  where?: unknown;
+  fields?: string[];
 }
 
 interface RoleAssignment {
@@ -55,11 +58,15 @@ function globalOptions(command: Command): GlobalOptions {
 }
 
 function policyAction(value: string): PolicyAction {
-  if (["read", "write", "delete", "manage", "*"].includes(value)) {
+  if (
+    ["read", "create", "update", "write", "delete", "manage", "*"].includes(
+      value,
+    )
+  ) {
     return value as PolicyAction;
   }
   throw new CliError(
-    "--action must be one of read, write, delete, manage, or *.",
+    "--action must be one of read, create, update, write, delete, manage, or *.",
   );
 }
 
@@ -96,7 +103,7 @@ function permissionListOutput(
   } else {
     for (const policy of policies) {
       lines.push(
-        `  ${policy.subject.padEnd(24)} ${policy.action.padEnd(8)} ${policy.resource}`,
+        `  ${policy.subject.padEnd(24)} ${policy.action.padEnd(8)} ${policy.resource}${policy.where === undefined ? "" : " where=" + JSON.stringify(policy.where)}${policy.fields === undefined ? "" : " fields=" + JSON.stringify(policy.fields)}`,
       );
     }
   }
@@ -154,6 +161,8 @@ export function registerPermissions(
     )
     .requiredOption("-r, --resource <path>", "resource path")
     .requiredOption("-a, --action <action>", "permission action")
+    .option("--where <json>", "row condition (JSON; supports $user.id)")
+    .option("--fields <json>", "allowed fields (JSON array)")
     .action(
       withErrorHandling(
         async (
@@ -161,6 +170,8 @@ export function registerPermissions(
             subject: string;
             resource: string;
             action: string;
+            where?: string;
+            fields?: string;
           },
           command: Command,
         ) => {
@@ -175,6 +186,17 @@ export function registerPermissions(
               subject: commandOptions.subject,
               resource: commandOptions.resource,
               action,
+              ...(commandOptions.where === undefined
+                ? {}
+                : {
+                    where: parseJson<Record<string, unknown>>(
+                      commandOptions.where,
+                      "--where",
+                    ),
+                  }),
+              ...(commandOptions.fields === undefined
+                ? {}
+                : { fields: fieldNames(commandOptions.fields, "--fields") }),
             },
           });
           const result = await dependencies.handleResponse(response);
@@ -196,6 +218,8 @@ export function registerPermissions(
     )
     .requiredOption("-r, --resource <path>", "resource path")
     .requiredOption("-a, --action <action>", "permission action")
+    .option("--where <json>", "row condition (JSON; supports $user.id)")
+    .option("--fields <json>", "allowed fields (JSON array)")
     .action(
       withErrorHandling(
         async (
@@ -203,6 +227,8 @@ export function registerPermissions(
             subject: string;
             resource: string;
             action: string;
+            where?: string;
+            fields?: string;
           },
           command: Command,
         ) => {
@@ -217,6 +243,17 @@ export function registerPermissions(
               subject: commandOptions.subject,
               resource: commandOptions.resource,
               action,
+              ...(commandOptions.where === undefined
+                ? {}
+                : {
+                    where: parseJson<Record<string, unknown>>(
+                      commandOptions.where,
+                      "--where",
+                    ),
+                  }),
+              ...(commandOptions.fields === undefined
+                ? {}
+                : { fields: fieldNames(commandOptions.fields, "--fields") }),
             },
           });
           const result = await dependencies.handleResponse(response);
@@ -318,11 +355,16 @@ export function registerPermissions(
           const result = await dependencies.handleResponse<{
             status: "ok";
             allowed: boolean;
+            conditional?: boolean;
           }>(response);
           dependencies.writeOutput(
             result,
             options,
-            result.allowed ? "ALLOWED" : "DENIED",
+            result.allowed
+              ? result.conditional
+                ? "ALLOWED subject to row/field conditions"
+                : "ALLOWED"
+              : "DENIED",
           );
         },
       ),

@@ -64,6 +64,7 @@ const expectedTools = [
   "row_filter_delete",
   "row_filter_list",
   "row_filter_set",
+  "getting_started",
   "server_info",
   "service_accounts_create",
   "stats",

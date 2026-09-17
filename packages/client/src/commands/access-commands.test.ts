@@ -463,3 +463,50 @@ describe("member commands", () => {
     );
   });
 });
+
+describe("conditional permission grants", () => {
+  test("passes row and field options for grant and exact revoke", async () => {
+    for (const command of ["grant", "revoke"]) {
+      await runPermission([
+        "permissions",
+        command,
+        "--subject",
+        "user:agent",
+        "--resource",
+        "/collections/tasks",
+        "--action",
+        "update",
+        "--where",
+        '{"created_by":"$user.id"}',
+        "--fields",
+        '["title","status"]',
+      ]);
+    }
+    for (const index of [0, 1])
+      expect(await requestBody(index)).toEqual({
+        subject: "user:agent",
+        resource: "/collections/tasks",
+        action: "update",
+        where: { created_by: "$user.id" },
+        fields: ["title", "status"],
+      });
+    expect(requests[0]?.method).toBe("POST");
+    expect(requests[1]?.method).toBe("DELETE");
+  });
+  test("shows conditional status instead of implying unrestricted access", async () => {
+    await runPermission(
+      [
+        "permissions",
+        "check",
+        "--user",
+        "agent",
+        "--resource",
+        "/collections/tasks",
+        "--action",
+        "update",
+      ],
+      { status: "ok", allowed: true, conditional: true },
+    );
+    expect(outputs[0]?.human).toBe("ALLOWED subject to row/field conditions");
+  });
+});

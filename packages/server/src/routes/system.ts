@@ -1,3 +1,4 @@
+import { grantOptionSchema } from "../db/grant-options";
 import {
   LastSaasError,
   errorResponse,
@@ -63,6 +64,7 @@ export const portableDataSchema = z
           subject: z.string().min(1),
           resource: z.string().min(1),
           action: z.string().min(1),
+          ...grantOptionSchema,
         })
         .strict(),
     ),

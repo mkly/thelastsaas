@@ -4,6 +4,7 @@ import {
   InvalidQueryError,
   LastSaasError,
   RecordNotFoundError,
+  PermissionDeniedError,
   SchemaValidationError,
   errorResponse,
   type AggregateRequest,
@@ -123,7 +124,10 @@ function recordsError(
   ) {
     return context.json(error.toResponse(), 400);
   }
-  if (error instanceof FieldPermissionDeniedError) {
+  if (
+    error instanceof FieldPermissionDeniedError ||
+    error instanceof PermissionDeniedError
+  ) {
     return context.json(error.toResponse(), 403);
   }
   if (error instanceof LastSaasError) {
@@ -141,7 +145,7 @@ function recordsError(
 }
 
 export const recordsRouter = new Hono<AppEnvironment>()
-  .post("/batch", requireCollectionPermission("write"), async (context) => {
+  .post("/batch", requireCollectionPermission("create"), async (context) => {
     const body = await parseJson(context, batchSchema);
     if (!body.success) return body.response;
     try {
@@ -152,6 +156,7 @@ export const recordsRouter = new Hono<AppEnvironment>()
         body.data.records,
         context.get("userId"),
         context.get("fieldFilter"),
+        context.get("recordGrants"),
       );
       await context.get("audit")("insert_records", "record", null, {
         collection: context.req.param("name")!,
@@ -176,6 +181,7 @@ export const recordsRouter = new Hono<AppEnvironment>()
         body.data.offset,
         context.get("rowFilter"),
         context.get("fieldFilter"),
+        context.get("recordGrants"),
       );
       return context.json({ status: "ok" as const, ...result });
     } catch (error) {
@@ -193,6 +199,7 @@ export const recordsRouter = new Hono<AppEnvironment>()
         body.data.where,
         context.get("rowFilter"),
         context.get("fieldFilter"),
+        context.get("recordGrants"),
       );
       return context.json({ status: "ok" as const, count });
     } catch (error) {
@@ -210,13 +217,14 @@ export const recordsRouter = new Hono<AppEnvironment>()
         body.data as AggregateRequest,
         context.get("rowFilter"),
         context.get("fieldFilter"),
+        context.get("recordGrants"),
       );
       return context.json({ status: "ok" as const, ...result });
     } catch (error) {
       return recordsError(context, error);
     }
   })
-  .post("/", requireCollectionPermission("write"), async (context) => {
+  .post("/", requireCollectionPermission("create"), async (context) => {
     const body = await parseJson(context, insertSchema);
     if (!body.success) return body.response;
     try {
@@ -227,6 +235,7 @@ export const recordsRouter = new Hono<AppEnvironment>()
         body.data.data,
         context.get("userId"),
         context.get("fieldFilter"),
+        context.get("recordGrants"),
       );
       await context.get("audit")("insert_record", "record", result.id, {
         collection: context.req.param("name")!,
@@ -245,13 +254,14 @@ export const recordsRouter = new Hono<AppEnvironment>()
         context.req.param("id"),
         context.get("rowFilter"),
         context.get("fieldFilter"),
+        context.get("recordGrants"),
       );
       return context.json({ status: "ok" as const, ...result });
     } catch (error) {
       return recordsError(context, error);
     }
   })
-  .patch("/:id", requireCollectionPermission("write"), async (context) => {
+  .patch("/:id", requireCollectionPermission("update"), async (context) => {
     const body = await parseJson(context, insertSchema);
     if (!body.success) return body.response;
     try {
@@ -263,6 +273,7 @@ export const recordsRouter = new Hono<AppEnvironment>()
         body.data.data,
         context.get("rowFilter"),
         context.get("fieldFilter"),
+        context.get("recordGrants"),
       );
       await context.get("audit")("update_record", "record", result.id, {
         collection: context.req.param("name")!,
@@ -281,6 +292,7 @@ export const recordsRouter = new Hono<AppEnvironment>()
         context.req.param("name")!,
         id,
         context.get("rowFilter"),
+        context.get("recordGrants"),
       );
       await context.get("audit")("delete_record", "record", id, {
         collection: context.req.param("name")!,

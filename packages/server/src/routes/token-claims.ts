@@ -34,8 +34,29 @@ export const tokenClaimRouter = new Hono<AppEnvironment>().get(
           `<div class="card">
             <h2>Copy this token now</h2>
             <p>This secret is shown once. Store it securely before leaving this page.</p>
-            <pre><code>${escapeHtml(claimed.token)}</code></pre>
-          </div>`,
+            <div class="token-claim">
+              <button type="button" class="secondary" id="copy-token" aria-label="Copy token">Copy</button>
+              <pre id="claimed-token"><code>${escapeHtml(claimed.token)}</code></pre>
+            </div>
+            <p id="copy-status" class="muted" role="status"></p>
+          </div>
+          <script>
+            const copyButton = document.getElementById('copy-token');
+            const tokenText = document.querySelector('#claimed-token code');
+            const copyStatus = document.getElementById('copy-status');
+            copyButton.addEventListener('click', async () => {
+              copyButton.disabled = true;
+              copyStatus.textContent = '';
+              try {
+                await navigator.clipboard.writeText(tokenText.textContent);
+                copyStatus.textContent = 'Token copied.';
+              } catch {
+                copyStatus.textContent = 'Could not copy automatically. Select the token text and copy it manually.';
+              } finally {
+                copyButton.disabled = false;
+              }
+            });
+          </script>`,
           { authenticated: true },
         ),
       );

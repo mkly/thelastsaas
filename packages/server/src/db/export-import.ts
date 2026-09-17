@@ -1,3 +1,4 @@
+import { decodeGrantOptions } from "./grant-options";
 import {
   CollectionExistsError,
   genId,
@@ -122,6 +123,7 @@ export async function exportData(
         subject: contractSubject(rule.v0, orgId),
         resource: rule.v1,
         action: rule.v2,
+        ...decodeGrantOptions(rule.v3),
       });
     } else if (
       rule.ptype === "g" &&
@@ -327,7 +329,10 @@ export async function importData(
       continue;
     }
     if (
-      await addPolicy(prisma, orgId, subject, policy.resource, policy.action)
+      await addPolicy(prisma, orgId, subject, policy.resource, policy.action, {
+        where: policy.where,
+        fields: policy.fields,
+      })
     ) {
       importedPolicies += 1;
     }

@@ -1,13 +1,14 @@
 import { CollectionNotFoundError, errorResponse } from "@lastsaas/shared";
 import type { Context, MiddlewareHandler } from "hono";
 
-import { createOrgEnforcer, hasPermission } from "../db/casbin";
+import { hasPermission } from "../db/casbin";
 import { getCollection } from "../db/collections";
-import { getFieldFilter } from "../db/fieldFilters";
-import { getRowFilter } from "../db/rowFilters";
+import { resolveRecordGrants } from "../db/record-grants";
+
 import type { AppEnvironment } from "../env";
 
-export type PermissionAction = "read" | "write" | "delete" | "manage";
+export type PermissionAction =
+  "read" | "write" | "create" | "update" | "delete" | "manage";
 
 export function requirePermission(
   action: PermissionAction,
@@ -46,53 +47,35 @@ export function requireCollectionPermission(
     const userId = context.get("userId");
     const collectionName = context.req.param("name")!;
     const resource = `/collections/${collectionName}`;
-    const enforcer = await createOrgEnforcer(prisma, orgId);
-
-    if (!(await enforcer.enforce(userId, resource, action))) {
-      return context.json(
-        errorResponse(
-          "PermissionDenied",
-          `User does not have ${action} permission on ${resource}`,
-        ),
-        403,
-      );
-    }
-
-    let rowFilter = null;
-    let fieldFilter = null;
     try {
       const collection = await getCollection(prisma, orgId, collectionName);
-      [rowFilter, fieldFilter] = await Promise.all([
-        getRowFilter(
-          prisma,
-          enforcer,
-          { userId, userEmail: "", orgId },
-          collection.id,
-          resource,
-          action,
-          async () => {
-            const user = await prisma.user.findUnique({
-              where: { id: userId },
-              select: { email: true },
-            });
-            return user?.email ?? "";
-          },
-        ),
-        getFieldFilter(
-          prisma,
-          enforcer,
-          { userId, userEmail: "", orgId },
-          collection.id,
-          resource,
-          action,
-        ),
-      ]);
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { email: true },
+      });
+      const grants = await resolveRecordGrants(
+        prisma,
+        { orgId, userId, userEmail: user?.email ?? "" },
+        collection.id,
+        resource,
+        action,
+      );
+      if (!grants.length)
+        return context.json(
+          errorResponse(
+            "PermissionDenied",
+            `User does not have ${action} permission on ${resource}`,
+          ),
+          403,
+        );
+      context.set("recordGrants", grants);
+      context.set("rowFilter", null);
+      context.set("fieldFilter", null);
     } catch (error) {
       if (!(error instanceof CollectionNotFoundError)) throw error;
+      return context.json(error.toResponse(), 404);
     }
 
-    context.set("rowFilter", rowFilter);
-    context.set("fieldFilter", fieldFilter);
     await next();
   };
 }
