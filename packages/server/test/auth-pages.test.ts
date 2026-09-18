@@ -114,7 +114,23 @@ describe("browser auth pages", () => {
     expect(html).not.toContain("/auth/forgot-password");
     expect(html).toContain("Continue with Google");
     expect(html).toContain("/auth/magic-link?next=%2Fauth%2Fdevice");
-    for (const path of ["signup", "forgot-password", "reset-password"]) {
+    const signupPage = await app.request(
+      "http://localhost:3000/auth/signup?next=%2Fauth%2Fdevice&email=new%40example.com",
+    );
+    expect(signupPage.status).toBe(200);
+    const signupHtml = await signupPage.text();
+    expect(signupHtml).not.toContain('<input type="password"');
+    expect(signupHtml).toContain(
+      'action="/auth/magic-link?next=%2Fauth%2Fdevice"',
+    );
+    expect(signupHtml).toContain('value="new@example.com"');
+    expect(signupHtml.indexOf("Email Me a Sign-Up Link")).toBeLessThan(
+      signupHtml.indexOf("Continue with Google"),
+    );
+    expect(html.indexOf("Log in with a magic link")).toBeLessThan(
+      html.indexOf("Continue with Google"),
+    );
+    for (const path of ["forgot-password", "reset-password"]) {
       const page = await app.request(
         `http://localhost:3000/auth/${path}?next=%2Fauth%2Fdevice`,
       );
@@ -595,7 +611,9 @@ describe("browser auth pages", () => {
       body: formBody({ email: "auth-user@example.com" }),
     });
     expect(sent.status).toBe(200);
-    expect(await sent.text()).toContain("If an account exists");
+    expect(await sent.text()).toContain(
+      "following the link will create your account",
+    );
     const email = emails.find((candidate) => candidate.type === "magic-link");
     expect(email?.to).toBe("auth-user@example.com");
 

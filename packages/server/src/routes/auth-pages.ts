@@ -23,12 +23,9 @@ authPagesRouter.use("*", async (context, next) => {
   if (!context.get("config").passwordAuthEnabled) {
     const path = context.req.path;
     if (
-      [
-        "/auth/signup",
-        "/auth/forgot-password",
-        "/auth/reset-password",
-      ].includes(path) ||
-      (path === "/auth/login" && context.req.method === "POST")
+      ["/auth/forgot-password", "/auth/reset-password"].includes(path) ||
+      (["/auth/login", "/auth/signup"].includes(path) &&
+        context.req.method === "POST")
     ) {
       if (context.req.method !== "GET")
         return context.text("Password authentication is disabled", 403);
@@ -183,7 +180,7 @@ authPagesRouter.get("/login", async (context) => {
       Don't have an account? <a href="${escapeHtml(signupHref)}">Sign up</a> ·
       <a href="/auth/forgot-password">Forgot password?</a>
     </p>`
-        : ""
+        : `<p class="small muted" style="margin-block-start:1.25rem;text-align:center">Don't have an account? <a href="${escapeHtml(signupHref)}">Sign up</a></p>`
     }`,
       { narrow: true, description: "Sign in to The Last SaaS." },
     ),
@@ -225,7 +222,8 @@ authPagesRouter.get("/signup", async (context) => {
   const next = authNext(context);
   const action = authPath("/auth/signup", { next });
   const googleHref = authPath("/auth/google", { next });
-  const { googleClientId, googleClientSecret } = context.get("config");
+  const { googleClientId, googleClientSecret, passwordAuthEnabled } =
+    context.get("config");
   const googleLogin =
     googleClientId && googleClientSecret
       ? `<div class="stack" style="margin-block-start:1rem">
@@ -236,6 +234,29 @@ authPagesRouter.get("/signup", async (context) => {
   const emailAttributes = prefillEmail
     ? ` value="${escapeHtml(prefillEmail)}" readonly`
     : "";
+
+  if (!passwordAuthEnabled) {
+    return context.html(
+      htmlPage(
+        "Sign Up",
+        `${messageBanner(context)}
+      <div class="card">
+        <p>Enter your email to create an account. We'll send you a link to verify your email and sign in.</p>
+        <form method="POST" action="${escapeHtml(authPath("/auth/magic-link", { next }))}">
+          <label>Email<br><input type="email" name="email" required autocomplete="email"${emailAttributes}></label><br><br>
+          <button type="submit">Email Me a Sign-Up Link</button>
+        </form>
+      </div>
+      ${googleLogin}
+      <p class="small muted" style="margin-block-start:1.25rem;text-align:center">Already have an account? <a href="${escapeHtml(authPath("/auth/login", { next }))}">Log in</a></p>`,
+        {
+          narrow: true,
+          description:
+            "Create your account with an email link. No password needed.",
+        },
+      ),
+    );
+  }
 
   return context.html(
     htmlPage(
@@ -327,7 +348,7 @@ authPagesRouter.post("/magic-link", async (context) => {
     htmlPage(
       "Check Your Email",
       `<div class="card">
-        <p>If an account exists for <strong>${escapeHtml(email)}</strong>, a magic link has been sent. The link expires shortly, so use it soon.</p>
+        <p>Check <strong>${escapeHtml(email)}</strong> for a sign-in link. If you are new here, following the link will create your account. The link expires shortly, so use it soon.</p>
       </div>`,
       { narrow: true },
     ),
