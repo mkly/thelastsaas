@@ -1,9 +1,11 @@
 # Database backends
 
 PostgreSQL is the primary backend for larger deployments. SQLite is a supported
-alternative for simple, self-contained open-source deployments. SQLite is not
+secondary alternative for simple, self-contained open-source deployments. SQLite is not
 an automatic failover database. Both expose the same collection, record, filter,
 and permission APIs.
+PostgreSQL native behavior defines query semantics; SQLite supplies shims where
+needed and does not constrain PostgreSQL behavior.
 
 ## Shared model and separate query adapters
 
@@ -50,6 +52,21 @@ Equality values must match the declared scalar type; a number field takes `42`,
 not `"42"`. No conversion of legacy stored values is performed. Metadata fields
 use their native columns. Untyped `json` fields use extraction comparisons rather
 than treating scalar equality as document containment.
+
+Comparison operands are validated against the declared field type for equality,
+ranges, every `in` member, and both `between` bounds. Aggregate `having` filters
+use the output type of the group column or numeric metric. Numeric operands must
+be finite numbers, boolean operands must be booleans, and text operands must be
+strings; values are not coerced. `json` field comparisons currently target
+PostgreSQL's extracted text, so their operands are strings. Null retains SQL's
+unknown-comparison behavior. Unknown fields (including inherited JavaScript
+property names) and empty operator objects are rejected as invalid queries.
+
+`contains` uses PostgreSQL's native `LIKE` with an escaped literal substring.
+SQLite uses `instr` to shim case-sensitive matching instead of its ASCII
+case-insensitive `LIKE`. Both preserve null/missing behavior under negation.
+PostgreSQL remains authoritative; SQLite does not emulate arbitrary PostgreSQL
+collation configurations.
 
 Numeric range comparisons, sorting, and aggregates use typed expressions.
 JSON-field sorting places null/missing values last ascending and first descending

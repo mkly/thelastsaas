@@ -175,9 +175,9 @@ describe("compileWhere — flat leaves", () => {
     const result = compileWhere(
       { name: { contains: "%test_" } } as Where,
       schema,
-      "sqlite",
+      "postgresql",
     );
-    expect(result.params).toEqual(["$.name", "%\\%test\\_%"]);
+    expect(result.params).toEqual(["name", "%\\%test\\_%"]);
     expect(result.sql).toContain("LIKE");
     expect(result.sql).toContain("ESCAPE");
   });
@@ -808,4 +808,136 @@ describe("whereSchema", () => {
     expect(whereSchema.safeParse(nestedNot(8)).success).toBe(true);
     expect(whereSchema.safeParse(nestedNot(9)).success).toBe(false);
   });
+});
+
+describe("schema-aware query operands", () => {
+  for (const provider of ["postgresql", "sqlite"] as const) {
+    test(`${provider}: rejects mismatched operands for all comparisons`, () => {
+      for (const operator of [
+        "eq",
+        "not",
+        "gt",
+        "gte",
+        "lt",
+        "lte",
+        "in",
+        "between",
+      ]) {
+        for (const [field, invalid] of [
+          ["amount", "banana"],
+          ["active", 1],
+          ["name", false],
+          ["created_by", 7],
+          ["due_at", 2],
+        ] as const) {
+          const value =
+            operator === "in"
+              ? [invalid]
+              : operator === "between"
+                ? [invalid, invalid]
+                : invalid;
+          expect(() =>
+            compileWhere(
+              { [field]: { [operator]: value } } as Where,
+              schema,
+              provider,
+            ),
+          ).toThrow(/requires a/);
+        }
+      }
+      for (const bad of [NaN, Infinity, -Infinity, undefined, [], {}]) {
+        expect(() =>
+          compileWhere({ amount: { gt: bad } } as Where, schema, provider),
+        ).toThrow();
+      }
+      expect(() =>
+        compileWhere(
+          { amount: { is_null: "false" } } as unknown as Where,
+          schema,
+          provider,
+        ),
+      ).toThrow(/boolean/);
+      expect(() => compileWhere({ amount: {} }, schema, provider)).toThrow(
+        /empty/,
+      );
+      expect(() =>
+        compileWhere(
+          { amount: { between: [1, 2, 3] } } as unknown as Where,
+          schema,
+          provider,
+        ),
+      ).toThrow(/tuple/);
+      // Range boundaries on integer fields may be fractional; null keeps SQL semantics.
+      expect(() =>
+        compileWhere(
+          {
+            count: { gt: 1.5 },
+            amount: { in: [1, null] },
+            active: { gte: false },
+          },
+          schema,
+          provider,
+        ),
+      ).not.toThrow();
+    });
+
+    test(`${provider}: validates aggregate aliases using their output types`, () => {
+      const request: AggregateRequest = {
+        group_by: ["active", "region"],
+        metrics: [
+          { op: "count", as: "n" },
+          { op: "avg", field: "count", as: "average" },
+        ],
+      };
+      const invalidHaving: NonNullable<AggregateRequest["having"]>[] = [
+        { n: { gt: "banana" } },
+        { average: { in: [1, "2"] } },
+        { active: { between: [false, 1] } },
+        { region: 3 },
+      ];
+      for (const having of invalidHaving) {
+        expect(() =>
+          compileAggregate(
+            { ...request, having },
+            schema,
+            provider,
+            "org",
+            "col",
+          ),
+        ).toThrow(/requires a/);
+      }
+      expect(() =>
+        compileAggregate(
+          {
+            ...request,
+            having: { average: { gt: 1.5 }, active: true, region: "us" },
+          },
+          schema,
+          provider,
+          "org",
+          "col",
+        ),
+      ).not.toThrow();
+    });
+
+    test(`${provider}: inherited names are not fields but explicitly declared ones work`, () => {
+      for (const field of ["constructor", "toString", "hasOwnProperty"]) {
+        expect(() => compileWhere({ [field]: "x" }, schema, provider)).toThrow(
+          /Unknown field/,
+        );
+        expect(() => compileOrderBy(field, schema, provider)).toThrow(
+          /Unknown field/,
+        );
+      }
+      const declared: Schema = { constructor: "string" };
+      expect(() =>
+        compileWhere({ constructor: "value" }, declared, provider),
+      ).not.toThrow();
+      expect(() =>
+        compileWhere({}, schema, provider, {
+          extraWhere: { amount: { gt: "bad" } },
+        }),
+      ).toThrow(/requires a/);
+    });
+  }
 });

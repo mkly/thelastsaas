@@ -77,7 +77,10 @@ export function validateField(fieldName: string, schema: Schema): void {
   if (!isValidFieldName(fieldName)) {
     throw new InvalidQueryError(`Invalid field name: '${fieldName}'`);
   }
-  if (!(fieldName in schema) && !(fieldName in RECORD_METADATA_TYPES)) {
+  if (
+    !Object.hasOwn(schema, fieldName) &&
+    !Object.hasOwn(RECORD_METADATA_TYPES, fieldName)
+  ) {
     throw new InvalidQueryError(`Unknown field '${fieldName}' (not in schema)`);
   }
 }
@@ -100,7 +103,7 @@ function validateFieldReference(
 const NUMERIC_TYPES = new Set(["number", "integer", "float"]);
 
 function fieldType(fieldName: string, schema: Schema): string | undefined {
-  if (fieldName in RECORD_METADATA_TYPES) {
+  if (Object.hasOwn(RECORD_METADATA_TYPES, fieldName)) {
     return RECORD_METADATA_TYPES[fieldName];
   }
   const definition = schema[fieldName];
@@ -118,7 +121,7 @@ function isNumericField(fieldName: string, schema: Schema): boolean {
 
 /** Extract a JSON field or return a validated native metadata column. */
 export function extractField(field: string, provider: DbProvider): SqlFragment {
-  return field in RECORD_METADATA_TYPES
+  return Object.hasOwn(RECORD_METADATA_TYPES, field)
     ? sql.ref(field)
     : queryAdapter(provider).extract(field);
 }
@@ -147,6 +150,61 @@ function comparisonParam(value: unknown, provider: DbProvider): unknown {
   return queryAdapter(provider).parameter(value);
 }
 
+/** Match PostgreSQL's typed comparison operands; null retains SQL UNKNOWN. */
+function validateOperand(
+  field: string,
+  type: string | undefined,
+  value: unknown,
+  operator: string,
+): void {
+  if (value === null) return;
+  const expected =
+    type && NUMERIC_TYPES.has(type)
+      ? "number"
+      : type === "boolean"
+        ? "boolean"
+        : "string";
+  if (
+    typeof value !== expected ||
+    (typeof value === "number" && !Number.isFinite(value))
+  ) {
+    throw new InvalidQueryError(
+      `Field '${field}': ${operator} requires a ${expected} value or null`,
+    );
+  }
+}
+
+function validateOperatorValue(
+  field: string,
+  type: string | undefined,
+  operator: string,
+  value: unknown,
+): void {
+  if (operator === "is_null") {
+    if (typeof value !== "boolean")
+      throw new InvalidQueryError("'is_null' requires a boolean value");
+  } else if (operator === "in" || operator === "between") {
+    if (
+      !Array.isArray(value) ||
+      (operator === "between" && value.length !== 2)
+    ) {
+      throw new InvalidQueryError(
+        operator === "in"
+          ? "'in' operator requires a list"
+          : "'between' requires a [low, high] tuple",
+      );
+    }
+    for (const item of value) validateOperand(field, type, item, operator);
+  } else if (["eq", "not", "gt", "gte", "lt", "lte"].includes(operator)) {
+    validateOperand(
+      field,
+      type,
+      value,
+      operator === "eq" || operator === "not" ? "equality" : operator,
+    );
+  }
+}
+
 function compileEquality(
   field: string,
   value: unknown,
@@ -155,21 +213,12 @@ function compileEquality(
   preserveUnknown = false,
 ): SqlFragment {
   const type = fieldType(field, schema);
-  if (!(field in RECORD_METADATA_TYPES) && type !== "json" && value !== null) {
-    const expected =
-      type && NUMERIC_TYPES.has(type)
-        ? "number"
-        : type === "boolean"
-          ? "boolean"
-          : "string";
-    if (
-      typeof value !== expected ||
-      (typeof value === "number" && !Number.isFinite(value))
-    ) {
-      throw new InvalidQueryError(
-        `Field '${field}': equality requires a ${expected} value`,
-      );
-    }
+  validateOperand(field, type, value, "equality");
+  if (
+    !Object.hasOwn(RECORD_METADATA_TYPES, field) &&
+    type !== "json" &&
+    value !== null
+  ) {
     return queryAdapter(provider).equality(
       field,
       value as string | number | boolean,
@@ -385,6 +434,8 @@ function compileLeaf(
     validateFieldReference(fieldName, schema, "where", options);
 
     if (isPlainObject(condition)) {
+      if (Object.keys(condition).length === 0)
+        throw new InvalidQueryError("Filter operator object cannot be empty");
       for (const [operator, value] of Object.entries(condition)) {
         if (operator === "occurs_between") {
           if (!conjunctive) {
@@ -467,6 +518,7 @@ function compileFilterOp(
   provider: DbProvider,
   preserveUnknown = false,
 ): SqlFragment {
+  validateOperatorValue(field, fieldType(field, schema), operator, value);
   const extract = extractField(field, provider);
   const comparison = comparisonExpr(field, schema, provider);
 
@@ -478,24 +530,24 @@ function compileFilterOp(
       return sql`NOT (${equal})`;
     }
     case "gt":
-      return sql`${comparison} > ${value}`;
+      return sql`${comparison} > ${comparisonParam(value, provider)}`;
     case "lt":
-      return sql`${comparison} < ${value}`;
+      return sql`${comparison} < ${comparisonParam(value, provider)}`;
     case "gte":
-      return sql`${comparison} >= ${value}`;
+      return sql`${comparison} >= ${comparisonParam(value, provider)}`;
     case "lte":
-      return sql`${comparison} <= ${value}`;
+      return sql`${comparison} <= ${comparisonParam(value, provider)}`;
     case "contains": {
       if (typeof value !== "string") {
         throw new InvalidQueryError(
           "'contains' operator requires a string value",
         );
       }
-      const escaped = value
-        .replaceAll("\\", "\\\\")
-        .replaceAll("%", "\\%")
-        .replaceAll("_", "\\_");
-      return sql`${extract} LIKE ${`%${escaped}%`} ESCAPE '\\'`;
+      return queryAdapter(provider).contains(
+        extract,
+        value,
+        fieldType(field, schema),
+      );
     }
     case "in": {
       if (!Array.isArray(value)) {
@@ -514,7 +566,7 @@ function compileFilterOp(
           "'between' operator requires a [low, high] tuple",
         );
       }
-      return sql`${comparison} BETWEEN ${value[0]} AND ${value[1]}`;
+      return sql`${comparison} BETWEEN ${comparisonParam(value[0], provider)} AND ${comparisonParam(value[1], provider)}`;
     }
     default:
       throw new InvalidQueryError(`Unknown operator: '${operator}'`);
@@ -582,6 +634,7 @@ export function compileAggregate(
   const selectParts: SqlFragment[] = [];
   const groupExpressions: SqlFragment[] = [];
   const aliasSources = new Map<string, string | undefined>();
+  const aliasTypes = new Map<string, string | undefined>();
   const columns: string[] = [];
 
   for (const field of groupBy) {
@@ -598,6 +651,7 @@ export function compileAggregate(
     // become different PostgreSQL expressions ($1 versus $5).
     groupExpressions.push(sql.lit(groupExpressions.length + 1));
     aliasSources.set(field, field);
+    aliasTypes.set(field, fieldType(field, schema));
     columns.push(field);
   }
 
@@ -642,6 +696,7 @@ export function compileAggregate(
       selectParts.push(sql`${fn}(${numeric}) AS ${sql.id(alias)}`);
       aliasSources.set(alias, metric.field);
     }
+    aliasTypes.set(alias, "number");
     columns.push(alias);
   }
 
@@ -656,6 +711,7 @@ export function compileAggregate(
     const having = compileLeafAgainstAliases(
       request.having,
       aliasSources,
+      aliasTypes,
       provider,
       options,
     );
@@ -686,6 +742,7 @@ function clampOffset(value: number): number {
 function compileLeafAgainstAliases(
   leaf: WhereLeaf,
   aliasSources: Map<string, string | undefined>,
+  aliasTypes: Map<string, string | undefined>,
   provider: DbProvider,
   options: CompileOptions,
 ): SqlFragment {
@@ -715,11 +772,15 @@ function compileLeafAgainstAliases(
 
     const reference = sql.ref(name);
     if (isPlainObject(condition)) {
+      if (Object.keys(condition).length === 0)
+        throw new InvalidQueryError("Filter operator object cannot be empty");
       for (const [operator, value] of Object.entries(condition)) {
+        validateOperatorValue(name, aliasTypes.get(name), operator, value);
         const compiled = compileAliasOp(reference, operator, value, provider);
         clauses.push(compiled);
       }
     } else {
+      validateOperand(name, aliasTypes.get(name), condition, "equality");
       clauses.push(sql`${reference} = ${comparisonParam(condition, provider)}`);
     }
   }
@@ -739,13 +800,13 @@ function compileAliasOp(
     case "not":
       return sql`${reference} != ${comparisonParam(value, provider)}`;
     case "gt":
-      return sql`${reference} > ${value}`;
+      return sql`${reference} > ${comparisonParam(value, provider)}`;
     case "lt":
-      return sql`${reference} < ${value}`;
+      return sql`${reference} < ${comparisonParam(value, provider)}`;
     case "gte":
-      return sql`${reference} >= ${value}`;
+      return sql`${reference} >= ${comparisonParam(value, provider)}`;
     case "lte":
-      return sql`${reference} <= ${value}`;
+      return sql`${reference} <= ${comparisonParam(value, provider)}`;
     case "in": {
       if (!Array.isArray(value)) {
         throw new InvalidQueryError("'in' operator requires a list");
@@ -759,7 +820,7 @@ function compileAliasOp(
       if (!Array.isArray(value) || value.length !== 2) {
         throw new InvalidQueryError("'between' requires a [low, high] tuple");
       }
-      return sql`${reference} BETWEEN ${value[0]} AND ${value[1]}`;
+      return sql`${reference} BETWEEN ${comparisonParam(value[0], provider)} AND ${comparisonParam(value[1], provider)}`;
     }
     default:
       throw new InvalidQueryError(`Unknown HAVING operator: '${operator}'`);

@@ -244,6 +244,85 @@ describe(`query backend contract (${provider})`, () => {
     expect((await query({ status: "temporary" })).total).toBe(0);
   });
 
+  test("contains follows PostgreSQL case-sensitive literal matching, including grants", async () => {
+    const { prisma, orgId, insert, query } = await fixture();
+    const literal = "Alice Éclair %_\\[*]?";
+    await insert({ title: "E", status: literal });
+    await insert({ title: "F", status: "alice éclair" });
+    for (const needle of ["Alice", "Éclair", "%_", "\\[*]?"]) {
+      expect(titles(await query({ status: { contains: needle } }))).toEqual([
+        "E",
+      ]);
+    }
+    expect(titles(await query({ status: { contains: "alice" } }))).toEqual([
+      "F",
+    ]);
+    expect(titles(await query({ status: { contains: "éclair" } }))).toEqual([
+      "F",
+    ]);
+    expect(titles(await query({ status: { contains: "ALICE" } }))).toEqual([]);
+    expect(titles(await query({ status: { contains: "" } }))).toEqual([
+      "A",
+      "B",
+      "E",
+      "F",
+    ]);
+    expect(
+      titles(await query({ not: { status: { contains: "Alice" } } })),
+    ).toEqual(["A", "B", "F"]);
+    expect(titles(await query({ active: { contains: "true" } }))).toEqual([
+      "A",
+    ]);
+    const grants = [
+      { where: { status: { contains: "Alice" } }, checkAfter: true },
+    ];
+    const visible = await queryRecords(
+      prisma,
+      orgId,
+      "tasks",
+      undefined,
+      "title",
+      50,
+      0,
+      null,
+      null,
+      grants,
+    );
+    expect(titles(visible)).toEqual(["E"]);
+    await expect(
+      insertRecord(
+        prisma,
+        orgId,
+        "tasks",
+        { title: "Denied", status: "alice" },
+        "reader",
+        null,
+        grants,
+      ),
+    ).rejects.toThrow("No grant");
+  });
+
+  test("invalid comparisons fail before executing database-specific queries", async () => {
+    const { prisma, orgId, query } = await fixture();
+    await expect(query({ amount: { gt: "banana" } })).rejects.toThrow(
+      "requires a number",
+    );
+    await expect(query({ amount: { in: [2, "10"] } })).rejects.toThrow(
+      "requires a number",
+    );
+    await expect(
+      query({ active: { between: [false, "true"] } }),
+    ).rejects.toThrow("requires a boolean");
+    await expect(query({ constructor: "x" })).rejects.toThrow("Unknown field");
+    await expect(
+      aggregateRecords(prisma, orgId, "tasks", {
+        metrics: [{ op: "count", as: "n" }],
+        having: { n: { gt: "bad" } },
+      }),
+    ).rejects.toThrow("requires a number");
+    expect(titles(await query({ active: { gt: false } }))).toEqual(["A"]);
+  });
+
   test("conditional grants constrain reads, query inputs, writes and deletes", async () => {
     const { prisma, orgId, collection, query } = await fixture();
     const condition = { status: "open" };

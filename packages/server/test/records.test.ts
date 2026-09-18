@@ -80,6 +80,38 @@ const jsonRequest = (body: unknown): RequestInit => ({
 });
 
 describe("records routes", () => {
+  test("invalid query operands and undeclared inherited fields return 400", async () => {
+    const { app } = await createRecordsApp({
+      name: "string",
+      amount: "number",
+      active: "boolean",
+    });
+    const base = "/v1/orgs/org_test/collections/contacts/records";
+    for (const where of [
+      { amount: { gt: "banana" } },
+      { amount: { in: [1, "2"] } },
+      { active: { between: [false, 1] } },
+      { constructor: "x" },
+      { name: {} },
+    ]) {
+      for (const path of ["query", "count"]) {
+        const response = await app.request(
+          `${base}/${path}`,
+          jsonRequest({ where }),
+        );
+        expect(response.status).toBe(400);
+      }
+    }
+    const response = await app.request(
+      `${base}/aggregate`,
+      jsonRequest({
+        metrics: [{ op: "count", as: "n" }],
+        having: { n: { gt: "bad" } },
+      }),
+    );
+    expect(response.status).toBe(400);
+  });
+
   test("inserts, batches, gets, updates, deletes, and normalizes dates", async () => {
     const { app } = await createRecordsApp({
       name: "string",

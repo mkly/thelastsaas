@@ -14,6 +14,13 @@ export const postgresAdapter: QueryAdapter = {
       ? sql`CASE WHEN ${this.extract(field)} IS NULL THEN NULL ELSE ${contains} END`
       : contains;
   },
+  contains(expression, value) {
+    const escaped = value
+      .replaceAll("\\", "\\\\")
+      .replaceAll("%", "\\%")
+      .replaceAll("_", "\\_");
+    return sql`${expression} LIKE ${`%${escaped}%`} ESCAPE '\\'`;
+  },
   fieldExists: (field) => sql`data->${field} IS NOT NULL`,
   candidateJson: (value) => sql`CAST(${JSON.stringify(value)} AS jsonb)`,
   candidateTimestamp: (value) => sql`CAST(${value.toISOString()} AS timestamp)`,

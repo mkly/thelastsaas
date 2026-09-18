@@ -13,6 +13,11 @@ export interface QueryAdapter {
     value: string | number | boolean,
     preserveUnknown: boolean,
   ): SqlFragment;
+  contains(
+    expression: SqlFragment,
+    value: string,
+    fieldType?: string,
+  ): SqlFragment;
   fieldExists(field: string): SqlFragment;
   candidateJson(value: unknown): SqlFragment;
   candidateTimestamp(value: Date): SqlFragment;
