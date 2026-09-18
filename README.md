@@ -1,11 +1,10 @@
 # The Last SaaS
 
-The Last SaaS is a server that holds records and files, 
+The Last SaaS is a server that holds records and files,
 tracks who is on the team and what each person can
 see, sends notifications, and logs the changes. It does not provide a
 user interface on its own; an assistant — Claude, ChatGPT, or any MCP
 client — connects over MCP and operates it.
-
 
 Most SaaS is built from the same parts: data, files, users, permissions,
 and notifications, with a user interface on top. That interface is a
@@ -105,6 +104,12 @@ Everything is configured through environment variables; see
 notifications, Google OAuth, S3-compatible file storage, and rate limiting.
 
 ### PostgreSQL
+
+PostgreSQL is the primary backend for larger deployments; SQLite remains a
+supported alternative for simple self-hosting. They share the same APIs and
+permissions, with separate query adapters. PostgreSQL uses native JSONB equality
+queries and a GIN index. See [database backends](docs/database-backends.md) for
+query behavior, indexing, supported schema edits, and backend contract tests.
 
 Point `DATABASE_URL` at a `postgres://` URL, apply the schema with
 `bun run --cwd packages/server prisma:push:postgres`, and build with

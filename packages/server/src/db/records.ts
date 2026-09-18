@@ -12,7 +12,7 @@ import {
 } from "@lastsaas/shared";
 import { Prisma, type PrismaClient } from "@prisma/client";
 
-import { databaseProvider } from "../config";
+import { queryProvider } from "./provider";
 import { getCollection, validateCollectionRecordData } from "./collections";
 import {
   assertWritableFields,
@@ -40,11 +40,6 @@ import {
   queryGrantWhere,
   type RecordGrants,
 } from "./record-grants";
-
-// Raw record queries must speak the dialect of the database actually behind
-// Prisma: on PostgreSQL, `?` placeholders are never converted and get parsed
-// as the jsonb `?` operator, producing 42601 syntax errors.
-const PROVIDER = databaseProvider(process.env.DATABASE_URL ?? "file:");
 
 function jsonObject(value: Record<string, unknown>): Prisma.InputJsonObject {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonObject;
@@ -180,6 +175,7 @@ export async function insertRecord(
   fieldFilter?: ResolvedFieldFilter | null,
   grants?: RecordGrants,
 ) {
+  const provider = queryProvider(prisma);
   const collection = await getCollection(prisma, orgId, collectionName);
   assertWritableFields(data, fieldFilter);
   const normalized = validatedData(data, schemaFromCollection(collection));
@@ -191,7 +187,7 @@ export async function insertRecord(
       grants,
       { id, data: normalized, createdBy, createdAt: now, updatedAt: now },
       schemaFromCollection(collection),
-      PROVIDER,
+      provider,
     );
     fieldFilter = grantFieldFilter(
       assertGrantedWrite(grants, matches, matches, Object.keys(data)),
@@ -220,6 +216,7 @@ export async function insertRecords(
   fieldFilter?: ResolvedFieldFilter | null,
   grants?: RecordGrants,
 ) {
+  const provider = queryProvider(prisma);
   const collection = await getCollection(prisma, orgId, collectionName);
   const schema = schemaFromCollection(collection);
   const ids: string[] = [];
@@ -239,7 +236,7 @@ export async function insertRecords(
           grants,
           { id, data: normalized, createdBy, createdAt: now, updatedAt: now },
           schema,
-          PROVIDER,
+          provider,
         );
         assertGrantedWrite(grants, matches, matches, Object.keys(data));
       }
@@ -281,16 +278,17 @@ export async function getRecord(
   fieldFilter?: ResolvedFieldFilter | null,
   grants?: RecordGrants,
 ) {
+  const provider = queryProvider(prisma);
   const collection = await getCollection(prisma, orgId, collectionName);
   if (grants) rowFilter = grantWhere(grants);
   const projection = grants
-    ? grantProjection(grants, schemaFromCollection(collection), PROVIDER)
+    ? grantProjection(grants, schemaFromCollection(collection), provider)
     : undefined;
   if (rowFilter) {
     const compiled = compileWhere(
       undefined,
       schemaFromCollection(collection),
-      PROVIDER,
+      provider,
       { extraWhere: rowFilter },
     );
     rejectDeferredFilters(compiled.postFilters);
@@ -311,7 +309,7 @@ export async function getRecord(
     >(
       dialectSql(
         `SELECT id, data, created_by, created_at, updated_at${projection?.sql ? ", " + projection.sql : ""} FROM records WHERE id = ? AND ${scoped.sql}`,
-        PROVIDER,
+        provider,
       ),
       ...(projection?.params ?? []),
       recordId,
@@ -351,6 +349,7 @@ export async function updateRecord(
   fieldFilter?: ResolvedFieldFilter | null,
   grants?: RecordGrants,
 ) {
+  const provider = queryProvider(prisma);
   const collection = await getCollection(prisma, orgId, collectionName);
   assertWritableFields(data, fieldFilter);
   const schema = schemaFromCollection(collection);
@@ -365,7 +364,7 @@ export async function updateRecord(
         grants,
         existing,
         schema,
-        PROVIDER,
+        provider,
       );
       if (!before.some(Boolean)) throw new RecordNotFoundError(recordId);
       const normalized = validatedData(
@@ -378,7 +377,7 @@ export async function updateRecord(
         grants,
         { ...existing, data: normalized, updatedAt },
         schema,
-        PROVIDER,
+        provider,
       );
       const applicable = assertGrantedWrite(
         grants,
@@ -411,7 +410,7 @@ export async function updateRecord(
   }
   let existing: { data: Prisma.JsonValue } | null;
   if (rowFilter) {
-    const compiled = compileWhere(undefined, schema, PROVIDER, {
+    const compiled = compileWhere(undefined, schema, provider, {
       extraWhere: rowFilter,
     });
     rejectDeferredFilters(compiled.postFilters);
@@ -426,7 +425,7 @@ export async function updateRecord(
     >(
       dialectSql(
         `SELECT data FROM records WHERE id = ? AND ${scoped.sql}`,
-        PROVIDER,
+        provider,
       ),
       recordId,
       ...scoped.params,
@@ -467,12 +466,13 @@ export async function deleteRecord(
   rowFilter?: Where | null,
   grants?: RecordGrants,
 ): Promise<void> {
+  const provider = queryProvider(prisma);
   const collection = await getCollection(prisma, orgId, collectionName);
   if (grants) {
     const compiled = compileWhere(
       grantWhere(grants),
       schemaFromCollection(collection),
-      PROVIDER,
+      provider,
     );
     rejectDeferredFilters(compiled.postFilters);
     const scoped = applyOrgScope(
@@ -484,7 +484,7 @@ export async function deleteRecord(
     const deleted = await prisma.$executeRawUnsafe(
       dialectSql(
         `DELETE FROM records WHERE id = ? AND ${scoped.sql}`,
-        PROVIDER,
+        provider,
       ),
       recordId,
       ...scoped.params,
@@ -496,7 +496,7 @@ export async function deleteRecord(
     const compiled = compileWhere(
       undefined,
       schemaFromCollection(collection),
-      PROVIDER,
+      provider,
       { extraWhere: rowFilter },
     );
     rejectDeferredFilters(compiled.postFilters);
@@ -509,7 +509,7 @@ export async function deleteRecord(
     const rows = await prisma.$queryRawUnsafe<Array<{ id: string }>>(
       dialectSql(
         `SELECT id FROM records WHERE id = ? AND ${scoped.sql}`,
-        PROVIDER,
+        provider,
       ),
       recordId,
       ...scoped.params,
@@ -534,6 +534,7 @@ export async function queryRecords(
   fieldFilter?: ResolvedFieldFilter | null,
   grants?: RecordGrants,
 ) {
+  const provider = queryProvider(prisma);
   const collection = await getCollection(prisma, orgId, collectionName);
   const schema = schemaFromCollection(collection);
   const referenced = new Set<string>();
@@ -542,15 +543,15 @@ export async function queryRecords(
     return grants ? true : isFieldReadable(field, fieldFilter);
   };
   // Collect query/sort references before deriving the permitted input rows.
-  compileWhere(where, schema, PROVIDER, { isFieldAllowed: isAllowed });
-  const order = compileOrderBy(orderBy, schema, PROVIDER, {
+  compileWhere(where, schema, provider, { isFieldAllowed: isAllowed });
+  const order = compileOrderBy(orderBy, schema, provider, {
     isFieldAllowed: isAllowed,
   });
   if (grants) rowFilter = queryGrantWhere(grants, referenced);
   const projection = grants
-    ? grantProjection(grants, schema, PROVIDER)
+    ? grantProjection(grants, schema, provider)
     : undefined;
-  const compiled = compileWhere(where, schema, PROVIDER, {
+  const compiled = compileWhere(where, schema, provider, {
     extraWhere: rowFilter,
     isFieldAllowed: isAllowed,
   });
@@ -578,7 +579,7 @@ export async function queryRecords(
     // page crawling and records with no occurrence cannot consume a page.
     const recordsSql = dialectSql(
       `SELECT id, data, created_by, created_at, updated_at${projection?.sql ? ", " + projection.sql : ""} FROM records WHERE ${scoped.sql} ${order}`,
-      PROVIDER,
+      provider,
     );
     const rows = await prisma.$queryRawUnsafe<QueryRow[]>(
       recordsSql,
@@ -621,11 +622,11 @@ export async function queryRecords(
 
   const countSql = dialectSql(
     `SELECT COUNT(*) AS count FROM records WHERE ${scoped.sql}`,
-    PROVIDER,
+    provider,
   );
   const recordsSql = dialectSql(
     `SELECT id, data, created_by, created_at, updated_at${projection?.sql ? ", " + projection.sql : ""} FROM records WHERE ${scoped.sql} ${order} LIMIT ? OFFSET ?`,
-    PROVIDER,
+    provider,
   );
   const [counts, rows] = await Promise.all([
     prisma.$queryRawUnsafe<Array<{ count: bigint | number }>>(
@@ -689,13 +690,14 @@ export async function aggregateRecords(
   fieldFilter?: ResolvedFieldFilter | null,
   grants?: RecordGrants,
 ) {
+  const provider = queryProvider(prisma);
   const collection = await getCollection(prisma, orgId, collectionName);
   const referenced = new Set<string>();
   if (grants) {
     compileAggregate(
       request,
       schemaFromCollection(collection),
-      PROVIDER,
+      provider,
       orgId,
       collection.id,
       {
@@ -710,7 +712,7 @@ export async function aggregateRecords(
   const compiled = compileAggregate(
     request,
     schemaFromCollection(collection),
-    PROVIDER,
+    provider,
     orgId,
     collection.id,
     {
@@ -721,7 +723,7 @@ export async function aggregateRecords(
   );
   rejectDeferredFilters(compiled.postFilters);
   const rows = await prisma.$queryRawUnsafe<Array<Record<string, unknown>>>(
-    dialectSql(compiled.sql, PROVIDER),
+    dialectSql(compiled.sql, provider),
     ...compiled.params,
   );
   return {

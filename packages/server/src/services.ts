@@ -1,3 +1,4 @@
+import { registerDatabaseProvider } from "./db/provider";
 import { PrismaClient } from "@prisma/client";
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
@@ -57,6 +58,7 @@ export async function createServices(
     datasourceUrl = path === ":memory:" ? "file::memory:" : `file:${path}`;
   }
   const prisma = new PrismaClient({ datasourceUrl });
+  registerDatabaseProvider(prisma, datasourceUrl);
   const notificationServices = createNotificationServices(prisma, config);
   const auth = createAuth(
     prisma,

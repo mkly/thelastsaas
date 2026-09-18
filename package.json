@@ -25,7 +25,8 @@
     "typecheck": "bun run --filter '*' typecheck",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "test:postgres": "bun run scripts/test-postgres-queries.ts"
   },
   "devDependencies": {
     "@types/bun": "latest",

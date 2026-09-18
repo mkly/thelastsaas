@@ -1,3 +1,4 @@
+import { queryAdapter } from "./query/adapters";
 import {
   FieldPermissionDeniedError,
   InvalidQueryError,
@@ -179,8 +180,9 @@ export async function evaluateGrants(
 ): Promise<boolean[]> {
   if (!grants.length) return [];
   const projection = grantProjection(grants, schema, provider);
-  const json = provider === "postgresql" ? "CAST(? AS jsonb)" : "?";
-  const timestamp = provider === "postgresql" ? "CAST(? AS timestamp)" : "?";
+  const adapter = queryAdapter(provider);
+  const json = adapter.candidateJson;
+  const timestamp = adapter.candidateTimestamp;
   const result = await prisma.$queryRawUnsafe<Array<Record<string, unknown>>>(
     dialectSql(
       `SELECT ${projection.sql} FROM (SELECT ? AS id, ${json} AS data, ? AS created_by, ${timestamp} AS created_at, ${timestamp} AS updated_at) AS candidate`,
@@ -190,12 +192,8 @@ export async function evaluateGrants(
     row.id,
     JSON.stringify(row.data),
     row.createdBy,
-    provider === "sqlite"
-      ? row.createdAt.getTime()
-      : row.createdAt.toISOString(),
-    provider === "sqlite"
-      ? row.updatedAt.getTime()
-      : row.updatedAt.toISOString(),
+    adapter.timestampParameter(row.createdAt),
+    adapter.timestampParameter(row.updatedAt),
   );
   return grants.map((_, i) => Boolean(result[0]?.[`grant_${i}`]));
 }

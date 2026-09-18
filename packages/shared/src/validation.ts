@@ -139,6 +139,13 @@ export function validateFieldUpdates(
       !validateFieldType(parsed.data.type)
     ) {
       errors.push(`Field '${fieldName}': unknown type '${parsed.data.type}'`);
+    } else if (
+      parsed.data.type !== undefined &&
+      parsed.data.type !== extractFieldType(schema[fieldName]!)
+    ) {
+      errors.push(
+        `Field '${fieldName}': changing an existing field type is unsupported`,
+      );
     }
   }
   return errors;

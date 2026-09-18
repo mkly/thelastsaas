@@ -1,3 +1,5 @@
+import { queryProvider } from "./provider";
+import { queryAdapter } from "./query/adapters";
 import {
   CollectionExistsError,
   CollectionNotFoundError,
@@ -123,6 +125,30 @@ export async function updateCollectionSchema(
   if (addFields && Object.keys(addFields).length > 0) {
     const errors = validateSchema(addFields);
     if (errors.length > 0) throw new SchemaValidationError(errors);
+    const adapter = queryAdapter(queryProvider(prisma));
+    for (const [field, definition] of Object.entries(addFields)) {
+      if (Object.hasOwn(schema, field)) {
+        if (extractFieldType(definition) !== extractFieldType(schema[field]!)) {
+          throw new SchemaValidationError([
+            `Field '${field}': changing an existing field type is unsupported`,
+          ]);
+        }
+      } else {
+        // Removing a field leaves its JSON data intact. Do not let re-adding
+        // that name silently reinterpret those values as a different schema.
+        const rows = await prisma.$queryRawUnsafe<Array<{ id: string }>>(
+          adapter.sql(
+            `SELECT id FROM records WHERE org_id = ? AND collection_id = ? AND ${adapter.fieldExists(field)} LIMIT 1`,
+          ),
+          orgId,
+          collection.id,
+        );
+        if (rows.length)
+          throw new SchemaValidationError([
+            `Field '${field}': reusing a removed field with stored data is unsupported`,
+          ]);
+      }
+    }
     Object.assign(schema, addFields);
   }
 

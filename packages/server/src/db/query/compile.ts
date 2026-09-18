@@ -19,7 +19,8 @@ import {
   type WhereLeaf,
 } from "@lastsaas/shared";
 
-export type DbProvider = "sqlite" | "postgresql";
+import { queryAdapter, postgresParameters, type DbProvider } from "./adapters";
+export type { DbProvider } from "./adapters";
 
 export type FieldReferenceKind =
   "where" | "order_by" | "group_by" | "metric" | "having";
@@ -41,6 +42,8 @@ export interface CompileOptions {
   extraWhere?: Where | null;
   /** Field-filter hook. The compiler throws when this returns false. */
   isFieldAllowed?: FieldAllowlist;
+  /** Internal recursion state: retain SQL UNKNOWN inside negated predicates. */
+  preserveUnknown?: boolean;
 }
 
 export interface OccursBetweenPostFilter {
@@ -113,60 +116,72 @@ function isNumericField(fieldName: string, schema: Schema): boolean {
 // Dialect helpers
 // ---------------------------------------------------------------------------
 
-/** Extract a JSON field as text, or return a safe native record column. */
+/** Extract a JSON field or return a validated native metadata column. */
 export function extractField(field: string, provider: DbProvider): string {
-  if (field in RECORD_METADATA_TYPES) return field;
-  if (provider === "postgresql") return `data->>'${field}'`;
-  return `json_extract(data, '$.${field}')`;
+  return field in RECORD_METADATA_TYPES
+    ? field
+    : queryAdapter(provider).extract(field);
 }
 
-function numericExpr(extract: string, provider: DbProvider): string {
-  if (provider === "postgresql") return `(${extract})::numeric`;
-  return `CAST(${extract} AS REAL)`;
+function numericExpr(expression: string, provider: DbProvider): string {
+  return queryAdapter(provider).numeric(expression);
 }
 
-/**
- * Comparison expression typed by the schema. Postgres `->>` yields text, so
- * boolean and numeric fields must be cast before comparing against a typed
- * parameter; SQLite's `json_extract` already yields numbers for both.
- * Datetime and string fields compare as text — ISO-8601 order is
- * chronological — and metadata columns keep their native types.
- */
 function comparisonExpr(
   field: string,
   schema: Schema,
   provider: DbProvider,
 ): string {
-  const extract = extractField(field, provider);
+  const expression = extractField(field, provider);
   const type = fieldType(field, schema);
-  if (type === "boolean" && provider === "postgresql") {
-    return `(${extract})::boolean`;
-  }
-  if (type !== undefined && NUMERIC_TYPES.has(type)) {
-    return numericExpr(extract, provider);
-  }
-  return extract;
+  const adapter = queryAdapter(provider);
+  if (type === "boolean") return adapter.boolean(expression);
+  if (type && NUMERIC_TYPES.has(type)) return adapter.numeric(expression);
+  return expression;
 }
 
-/**
- * SQLite has no boolean type: `json_extract` returns JSON true/false as
- * 1/0, so boolean parameters must be bound as integers to match.
- */
 function comparisonParam(value: unknown, provider: DbProvider): unknown {
-  if (provider === "sqlite" && typeof value === "boolean") {
-    return value ? 1 : 0;
-  }
-  return value;
+  return queryAdapter(provider).parameter(value);
 }
 
-/** Convert `?` placeholders to `$1, $2, ...` for PostgreSQL. */
-export function toPgParams(sql: string): string {
-  let index = 0;
-  return sql.replaceAll("?", () => `$${++index}`);
-}
-
+export const toPgParams = postgresParameters;
 export function dialectSql(sql: string, provider: DbProvider): string {
-  return provider === "postgresql" ? toPgParams(sql) : sql;
+  return queryAdapter(provider).sql(sql);
+}
+
+function compileEquality(
+  field: string,
+  value: unknown,
+  schema: Schema,
+  provider: DbProvider,
+  preserveUnknown = false,
+): Omit<CompiledFragment, "postFilters"> {
+  const type = fieldType(field, schema);
+  if (!(field in RECORD_METADATA_TYPES) && type !== "json" && value !== null) {
+    const expected =
+      type && NUMERIC_TYPES.has(type)
+        ? "number"
+        : type === "boolean"
+          ? "boolean"
+          : "string";
+    if (
+      typeof value !== expected ||
+      (typeof value === "number" && !Number.isFinite(value))
+    ) {
+      throw new InvalidQueryError(
+        `Field '${field}': equality requires a ${expected} value`,
+      );
+    }
+    return queryAdapter(provider).equality(
+      field,
+      value as string | number | boolean,
+      preserveUnknown,
+    );
+  }
+  return {
+    sql: `${comparisonExpr(field, schema, provider)} = ?`,
+    params: [comparisonParam(value, provider)],
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -321,7 +336,7 @@ function compileNode(
         value as Where,
         schema,
         provider,
-        options,
+        { ...options, preserveUnknown: true },
         false,
       );
       // Negating an always-true expression must match no rows.
@@ -413,13 +428,21 @@ function compileLeaf(
           value,
           schema,
           provider,
+          options.preserveUnknown,
         );
         clauses.push(compiled.sql);
         params.push(...compiled.params);
       }
     } else {
-      clauses.push(`${comparisonExpr(fieldName, schema, provider)} = ?`);
-      params.push(comparisonParam(condition, provider));
+      const compiled = compileEquality(
+        fieldName,
+        condition,
+        schema,
+        provider,
+        options.preserveUnknown,
+      );
+      clauses.push(compiled.sql);
+      params.push(...compiled.params);
     }
   }
 
@@ -460,21 +483,18 @@ function compileFilterOp(
   value: unknown,
   schema: Schema,
   provider: DbProvider,
+  preserveUnknown = false,
 ): Omit<CompiledFragment, "postFilters"> {
   const extract = extractField(field, provider);
   const comparison = comparisonExpr(field, schema, provider);
 
   switch (operator) {
     case "eq":
-      return {
-        sql: `${comparison} = ?`,
-        params: [comparisonParam(value, provider)],
-      };
-    case "not":
-      return {
-        sql: `${comparison} != ?`,
-        params: [comparisonParam(value, provider)],
-      };
+      return compileEquality(field, value, schema, provider, preserveUnknown);
+    case "not": {
+      const equal = compileEquality(field, value, schema, provider, true);
+      return { sql: `NOT (${equal.sql})`, params: equal.params };
+    }
     case "gt":
       return { sql: `${comparison} > ?`, params: [value] };
     case "lt":
@@ -553,7 +573,7 @@ export function compileOrderBy(
   validateFieldReference(field, schema, "order_by", options);
   // Typed expression so numeric fields sort numerically on Postgres, where
   // `->>` would otherwise sort them as text ("10" before "9").
-  return `ORDER BY ${comparisonExpr(field, schema, provider)} ${direction}`;
+  return `ORDER BY ${comparisonExpr(field, schema, provider)} ${direction} NULLS ${descending ? "FIRST" : "LAST"}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -825,5 +845,5 @@ function compileAliasOrderBy(
       `Field '${sourceField}' is not allowed in order by`,
     );
   }
-  return `ORDER BY "${alias}" ${direction}`;
+  return `ORDER BY "${alias}" ${direction} NULLS ${descending ? "FIRST" : "LAST"}`;
 }

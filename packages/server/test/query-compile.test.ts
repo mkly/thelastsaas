@@ -42,8 +42,8 @@ describe("compileWhere — flat leaves", () => {
       postFilters: [],
     });
     expect(compileWhere({ name: "Alice" }, schema, "postgresql")).toEqual({
-      sql: "data->>'name' = ?",
-      params: ["Alice"],
+      sql: "data @> CAST(? AS jsonb)",
+      params: ['{"name":"Alice"}'],
       postFilters: [],
     });
   });
@@ -69,8 +69,8 @@ describe("compileWhere — flat leaves", () => {
     // live). SQLite has no boolean type, so the parameter binds as 1/0 to
     // match json_extract's output.
     expect(compileWhere({ active: true }, schema, "postgresql")).toEqual({
-      sql: "(data->>'active')::boolean = ?",
-      params: [true],
+      sql: "data @> CAST(? AS jsonb)",
+      params: ['{"active":true}'],
       postFilters: [],
     });
     expect(compileWhere({ active: true }, schema, "sqlite")).toEqual({
@@ -81,26 +81,26 @@ describe("compileWhere — flat leaves", () => {
     expect(
       compileWhere({ active: { not: false } } as Where, schema, "postgresql"),
     ).toMatchObject({
-      sql: "(data->>'active')::boolean != ?",
-      params: [false],
+      sql: "NOT (CASE WHEN data->>'active' IS NULL THEN NULL ELSE data @> CAST(? AS jsonb) END)",
+      params: ['{"active":false}'],
     });
     expect(
       compileWhere({ active: { not: false } } as Where, schema, "sqlite"),
     ).toMatchObject({
-      sql: "json_extract(data, '$.active') != ?",
+      sql: "NOT (json_extract(data, '$.active') = ?)",
       params: [0],
     });
   });
 
-  test("casts numeric fields for equality on both dialects", () => {
+  test("uses JSONB containment on PostgreSQL and JSON extraction on SQLite", () => {
     expect(
       compileWhere({ amount: { eq: 5 } } as Where, schema, "postgresql"),
     ).toMatchObject({
-      sql: "(data->>'amount')::numeric = ?",
-      params: [5],
+      sql: "data @> CAST(? AS jsonb)",
+      params: ['{"amount":5}'],
     });
     expect(compileWhere({ amount: 5 }, schema, "sqlite")).toMatchObject({
-      sql: "CAST(json_extract(data, '$.amount') AS REAL) = ?",
+      sql: "json_extract(data, '$.amount') = ?",
       params: [5],
     });
     expect(
@@ -116,13 +116,21 @@ describe("compileWhere — flat leaves", () => {
     // ISO-8601 strings fail on Postgres (uncastable text) and silently
     // truncate on SQLite (CAST('2026-01-01' AS REAL) = 2026).
     expect(
-      compileWhere({ due_at: { gte: "2026-01-01" } } as Where, schema, "postgresql"),
+      compileWhere(
+        { due_at: { gte: "2026-01-01" } } as Where,
+        schema,
+        "postgresql",
+      ),
     ).toMatchObject({
       sql: "data->>'due_at' >= ?",
       params: ["2026-01-01"],
     });
     expect(
-      compileWhere({ due_at: { gte: "2026-01-01" } } as Where, schema, "sqlite"),
+      compileWhere(
+        { due_at: { gte: "2026-01-01" } } as Where,
+        schema,
+        "sqlite",
+      ),
     ).toMatchObject({
       sql: "json_extract(data, '$.due_at') >= ?",
       params: ["2026-01-01"],
@@ -136,7 +144,11 @@ describe("compileWhere — flat leaves", () => {
     ).toBe("data->>'due_at' BETWEEN ? AND ?");
     // Metadata datetime columns are native, so they compare uncast.
     expect(
-      compileWhere({ created_at: { lt: "2026-01-01" } } as Where, schema, "postgresql").sql,
+      compileWhere(
+        { created_at: { lt: "2026-01-01" } } as Where,
+        schema,
+        "postgresql",
+      ).sql,
     ).toBe("created_at < ?");
   });
 
@@ -424,10 +436,10 @@ describe("compileOrderBy", () => {
     expect(compileOrderBy("name", schema, "sqlite")).toContain("json_extract");
     // Numeric fields sort numerically on Postgres, not as `->>` text.
     expect(compileOrderBy("-amount", schema, "postgresql")).toBe(
-      "ORDER BY (data->>'amount')::numeric DESC",
+      "ORDER BY (data->>'amount')::numeric DESC NULLS FIRST",
     );
     expect(compileOrderBy("active", schema, "postgresql")).toBe(
-      "ORDER BY (data->>'active')::boolean ASC",
+      "ORDER BY (data->>'active')::boolean ASC NULLS LAST",
     );
     expect(compileOrderBy("name", schema, "postgresql")).toContain(
       "data->>'name'",
