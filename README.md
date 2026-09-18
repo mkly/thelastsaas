@@ -29,6 +29,14 @@ SQLite, local file storage, and console output for email. See the
 The migration command uses a path relative to the Prisma schema directory;
 the runtime SQLite path is relative to `packages/server`.
 
+## Disable password authentication
+
+Set `PASSWORD_AUTH_ENABLED=false` in the server environment and restart to disable
+password signup, login, reset, and password changes. Password forms are hidden;
+Google (when configured) and magic-link authentication remain available. Existing
+accounts, passwords, sessions, and API keys are retained. The default is `true`;
+set it back to `true` and restart to re-enable password authentication.
+
 ## Repository layout
 
 - `packages/server/` — HTTP API, MCP, authentication, storage, and background jobs.

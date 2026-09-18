@@ -10,6 +10,7 @@ const environmentSchema = z.object({
   DATABASE_URL: z.string().default("file:./data/lastsaas.db"),
   BETTER_AUTH_SECRET: z.string().min(32).optional(),
   BETTER_AUTH_URL: z.string().url().optional(),
+  PASSWORD_AUTH_ENABLED: z.stringbool().default(true),
   GOOGLE_CLIENT_ID: z.string().default(""),
   GOOGLE_CLIENT_SECRET: z.string().default(""),
   SMTP_HOST: z.string().default(""),
@@ -41,6 +42,7 @@ export interface AppConfig {
   databaseUrl: string;
   betterAuthSecret: string;
   betterAuthUrl: string;
+  passwordAuthEnabled: boolean;
   googleClientId: string;
   googleClientSecret: string;
   smtpHost: string;
@@ -101,6 +103,7 @@ export function loadConfig(
     betterAuthSecret:
       parsed.BETTER_AUTH_SECRET ?? "development-only-change-before-production",
     betterAuthUrl: parsed.BETTER_AUTH_URL ?? `http://localhost:${parsed.PORT}`,
+    passwordAuthEnabled: parsed.PASSWORD_AUTH_ENABLED,
     googleClientId: parsed.GOOGLE_CLIENT_ID,
     googleClientSecret: parsed.GOOGLE_CLIENT_SECRET,
     smtpHost: parsed.SMTP_HOST,

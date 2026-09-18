@@ -10,11 +10,22 @@ describe("auth configuration", () => {
 
     expect(config.betterAuthUrl).toBe("http://localhost:9000");
     expect(config.betterAuthSecret).not.toBe("");
+    expect(config.passwordAuthEnabled).toBe(true);
     expect(config.googleClientId).toBe("");
     expect(config.maxUploadSize).toBe(50 * 1024 * 1024);
     expect(config.rateLimitEnabled).toBe(true);
     expect(config.rateLimitRequests).toBe(6_000);
     expect(config.rateLimitWindowSeconds).toBe(60);
+  });
+
+  test("parses the password authentication switch", () => {
+    expect(
+      loadConfig({ PASSWORD_AUTH_ENABLED: "false" }).passwordAuthEnabled,
+    ).toBe(false);
+    expect(
+      loadConfig({ PASSWORD_AUTH_ENABLED: "true" }).passwordAuthEnabled,
+    ).toBe(true);
+    expect(() => loadConfig({ PASSWORD_AUTH_ENABLED: "maybe" })).toThrow();
   });
 
   test("requires a BetterAuth secret in production", () => {

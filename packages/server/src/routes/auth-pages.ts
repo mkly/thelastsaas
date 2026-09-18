@@ -18,6 +18,28 @@ import {
 
 export const authPagesRouter = new Hono<AppEnvironment>();
 
+// Keep password-only pages and form submissions unavailable when disabled.
+authPagesRouter.use("*", async (context, next) => {
+  if (!context.get("config").passwordAuthEnabled) {
+    const path = context.req.path;
+    if (
+      [
+        "/auth/signup",
+        "/auth/forgot-password",
+        "/auth/reset-password",
+      ].includes(path) ||
+      (path === "/auth/login" && context.req.method === "POST")
+    ) {
+      if (context.req.method !== "GET")
+        return context.text("Password authentication is disabled", 403);
+      return context.redirect(
+        authPath("/auth/login", { next: authNext(context) }),
+      );
+    }
+  }
+  await next();
+});
+
 /**
  * Records the reader's light/dark choice and returns them to the page they were
  * on. Anything other than "light" or "dark" — including the "system" option —
@@ -126,7 +148,8 @@ authPagesRouter.get("/login", async (context) => {
   const action = authPath("/auth/login", { next });
   const signupHref = authPath("/auth/signup", { next });
   const googleHref = authPath("/auth/google", { next });
-  const { googleClientId, googleClientSecret } = context.get("config");
+  const { googleClientId, googleClientSecret, passwordAuthEnabled } =
+    context.get("config");
   const googleLogin =
     googleClientId && googleClientSecret
       ? `<a class="button secondary" href="${escapeHtml(googleHref)}">Continue with Google</a>`
@@ -136,21 +159,29 @@ authPagesRouter.get("/login", async (context) => {
     htmlPage(
       "Log In",
       `${messageBanner(context)}
-    <div class="card">
+    ${
+      passwordAuthEnabled
+        ? `<div class="card">
       <form method="POST" action="${escapeHtml(action)}">
         <label>Email<br><input type="email" name="email" required autocomplete="email"></label><br><br>
         <label>Password<br><input type="password" name="password" required autocomplete="current-password"></label><br><br>
         <button type="submit">Log In</button>
       </form>
-    </div>
+    </div>`
+        : ""
+    }
     <div class="stack" style="margin-block-start:1rem">
       ${googleLogin}
-      <a class="button ghost" href="/auth/magic-link">Log in with a magic link</a>
+      <a class="button ghost" href="${escapeHtml(authPath("/auth/magic-link", { next }))}">Log in with a magic link</a>
     </div>
-    <p class="small muted" style="margin-block-start:1.25rem;text-align:center">
+    ${
+      passwordAuthEnabled
+        ? `<p class="small muted" style="margin-block-start:1.25rem;text-align:center">
       Don't have an account? <a href="${escapeHtml(signupHref)}">Sign up</a> ·
       <a href="/auth/forgot-password">Forgot password?</a>
-    </p>`,
+    </p>`
+        : ""
+    }`,
       { narrow: true, description: "Sign in to The Last SaaS." },
     ),
   );
@@ -263,7 +294,7 @@ authPagesRouter.get("/magic-link", (context) =>
       "Magic Link",
       `${messageBanner(context)}
     <div class="card">
-      <form method="POST" action="/auth/magic-link">
+      <form method="POST" action="${escapeHtml(authPath("/auth/magic-link", { next: authNext(context) }))}">
         <label>Email<br><input type="email" name="email" required autocomplete="email"></label><br><br>
         <button type="submit">Send Magic Link</button>
       </form>
@@ -282,7 +313,7 @@ authPagesRouter.post("/magic-link", async (context) => {
 
   try {
     await context.get("services").auth.api.signInMagicLink({
-      body: { email, callbackURL: "/auth/dashboard" },
+      body: { email, callbackURL: authNext(context) ?? "/auth/dashboard" },
       headers: context.req.raw.headers,
     });
   } catch {

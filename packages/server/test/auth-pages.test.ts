@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createApp } from "../src/app";
-import type { AuthEmail } from "../src/auth";
+import { createAuth, type AuthEmail } from "../src/auth";
 import { loadConfig } from "../src/config";
 import { closeServices, createServices } from "../src/services";
 import { verifyTestUser } from "./auth-helpers";
@@ -21,10 +21,13 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0)) await cleanup();
 });
 
-async function createAuthPageApp(options: { google?: boolean } = {}) {
+async function createAuthPageApp(
+  options: { google?: boolean; passwordAuth?: boolean } = {},
+) {
   const directory = mkdtempSync(join(tmpdir(), "lastsaas-auth-pages-"));
   const emails: AuthEmail[] = [];
   const config = loadConfig({
+    PASSWORD_AUTH_ENABLED: String(options.passwordAuth ?? true),
     NODE_ENV: "test",
     PORT: "3000",
     DATABASE_URL: `file:${join(directory, "test.db")}`,
@@ -43,7 +46,7 @@ async function createAuthPageApp(options: { google?: boolean } = {}) {
     await closeServices(services);
     rmSync(directory, { recursive: true, force: true });
   });
-  return { app, emails, services };
+  return { app, emails, services, config };
 }
 
 function googleIdToken(claims: Record<string, unknown>) {
@@ -98,6 +101,144 @@ async function login(
 }
 
 describe("browser auth pages", () => {
+  test("disabled password auth hides forms and rejects direct password endpoints", async () => {
+    const { app, services, emails } = await createAuthPageApp({
+      passwordAuth: false,
+      google: true,
+    });
+    const loginPage = await app.request(
+      "http://localhost:3000/auth/login?next=%2Fauth%2Fdevice",
+    );
+    const html = await loginPage.text();
+    expect(html).not.toContain('<input type="password"');
+    expect(html).not.toContain("/auth/forgot-password");
+    expect(html).toContain("Continue with Google");
+    expect(html).toContain("/auth/magic-link?next=%2Fauth%2Fdevice");
+    for (const path of ["signup", "forgot-password", "reset-password"]) {
+      const page = await app.request(
+        `http://localhost:3000/auth/${path}?next=%2Fauth%2Fdevice`,
+      );
+      expect(page.status).toBe(302);
+      expect(page.headers.get("location")).toBe(
+        "/auth/login?next=%2Fauth%2Fdevice",
+      );
+    }
+    for (const path of [
+      "login",
+      "signup",
+      "forgot-password",
+      "reset-password",
+    ]) {
+      const response = await app.request(`http://localhost:3000/auth/${path}`, {
+        method: "POST",
+        body: formBody({
+          email: "disabled@example.com",
+          password: "initial-password",
+        }),
+      });
+      expect(response.status).toBe(403);
+    }
+    for (const [path, body] of [
+      [
+        "sign-up/email",
+        {
+          name: "Disabled",
+          email: "disabled@example.com",
+          password: "initial-password",
+        },
+      ],
+      [
+        "sign-in/email",
+        { email: "disabled@example.com", password: "initial-password" },
+      ],
+      ["request-password-reset", { email: "disabled@example.com" }],
+      ["reset-password", { token: "old-token", newPassword: "new-password" }],
+      [
+        "change-password",
+        { currentPassword: "initial-password", newPassword: "new-password" },
+      ],
+    ] as const) {
+      const response = await app.request(
+        `http://localhost:3000/api/auth/${path}`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Origin: "http://localhost:3000",
+          },
+          body: JSON.stringify(body),
+        },
+      );
+      expect(response.status).toBe(403);
+      expect(await response.json()).toMatchObject({
+        code: "PASSWORD_AUTH_DISABLED",
+      });
+    }
+    await expect(
+      services.auth.api.signUpEmail({
+        body: {
+          name: "Disabled",
+          email: "disabled@example.com",
+          password: "initial-password",
+        },
+      }),
+    ).rejects.toThrow("Password authentication is disabled");
+    expect(await services.prisma.user.count()).toBe(0);
+    expect(emails).toHaveLength(0);
+
+    const google = await app.request("http://localhost:3000/auth/google");
+    expect(google.status).toBe(302);
+    expect(google.headers.get("location")).toContain("accounts.google.com");
+    const magicPage = await app.request(
+      "http://localhost:3000/auth/magic-link?next=%2Fauth%2Fdevice",
+    );
+    expect(await magicPage.text()).toContain(
+      'action="/auth/magic-link?next=%2Fauth%2Fdevice"',
+    );
+    await app.request(
+      "http://localhost:3000/auth/magic-link?next=%2Fauth%2Fdevice",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Origin: "http://localhost:3000",
+        },
+        body: formBody({ email: "magic-only@example.com" }),
+      },
+    );
+    const email = emails.find((email) => email.type === "magic-link");
+    expect(email).toBeDefined();
+    const verified = await app.request(email!.url);
+    expect(verified.status).toBe(302);
+    expect(verified.headers.get("location")).toContain("/auth/device");
+    expect(verified.headers.get("set-cookie")).toContain("session_token");
+  });
+
+  test("disabling password auth preserves existing sessions and credentials", async () => {
+    const { app, services, config } = await createAuthPageApp();
+    await signUp(app);
+    await verifyTestUser(services, "auth-user@example.com");
+    const signedIn = await login(app, "initial-password");
+    const cookie = signedIn.headers.get("set-cookie")!.split(";")[0]!;
+    const disabledConfig = { ...config, passwordAuthEnabled: false };
+    const disabledApp = createApp({
+      config: disabledConfig,
+      services: {
+        ...services,
+        auth: createAuth(services.prisma, disabledConfig),
+      },
+    });
+    const dashboard = await disabledApp.request(
+      "http://localhost:3000/auth/dashboard",
+      { headers: { Cookie: cookie } },
+    );
+    expect(dashboard.status).toBe(200);
+    expect(await dashboard.text()).toContain("auth-user@example.com");
+    expect((await login(disabledApp, "initial-password")).status).toBe(403);
+    // Re-enabling uses the existing credentials; no migration or reset is needed.
+    expect((await login(app, "initial-password")).status).toBe(302);
+  });
+
   test("redirects the root and renders auth forms before protected routes", async () => {
     const { app } = await createAuthPageApp();
 

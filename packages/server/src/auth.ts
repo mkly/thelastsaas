@@ -3,6 +3,7 @@ import { mcp } from "@better-auth/mcp";
 import type { PrismaClient } from "@prisma/client";
 import { genId } from "@lastsaas/shared";
 import { betterAuth } from "better-auth";
+import { APIError, createAuthMiddleware } from "better-auth/api";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import {
   bearer,
@@ -84,8 +85,29 @@ export function createAuth(
         },
       },
     },
+    hooks: {
+      before: createAuthMiddleware(async (context) => {
+        if (
+          !config.passwordAuthEnabled &&
+          ([
+            "/sign-in/email",
+            "/sign-up/email",
+            "/request-password-reset",
+            "/reset-password",
+            "/change-password",
+            "/verify-password",
+          ].includes(context.path) ||
+            context.path?.startsWith("/reset-password/"))
+        ) {
+          throw new APIError("FORBIDDEN", {
+            code: "PASSWORD_AUTH_DISABLED",
+            message: "Password authentication is disabled",
+          });
+        }
+      }),
+    },
     emailAndPassword: {
-      enabled: true,
+      enabled: config.passwordAuthEnabled,
       minPasswordLength: 8,
       requireEmailVerification: true,
       sendResetPassword: async ({ user, url }) => {
