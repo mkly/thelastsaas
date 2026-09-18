@@ -154,6 +154,10 @@ authPagesRouter.get("/login", async (context) => {
     googleClientId && googleClientSecret
       ? `<a class="button secondary" href="${escapeHtml(googleHref)}">Continue with Google</a>`
       : "";
+  const magicLogin = `<a class="button${passwordAuthEnabled ? " ghost" : ""}" href="${escapeHtml(authPath("/auth/magic-link", { next }))}">Log in with a magic link</a>`;
+  const alternativeLogins = passwordAuthEnabled
+    ? `${googleLogin}${magicLogin}`
+    : `${magicLogin}${googleLogin}`;
 
   return context.html(
     htmlPage(
@@ -171,8 +175,7 @@ authPagesRouter.get("/login", async (context) => {
         : ""
     }
     <div class="stack" style="margin-block-start:1rem">
-      ${googleLogin}
-      <a class="button ghost" href="${escapeHtml(authPath("/auth/magic-link", { next }))}">Log in with a magic link</a>
+      ${alternativeLogins}
     </div>
     ${
       passwordAuthEnabled
