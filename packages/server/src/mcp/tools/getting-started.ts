@@ -3,56 +3,35 @@ import { z } from "zod";
 
 const guide = `# Welcome to Last SaaS
 
-Last SaaS is a place to keep things you want to remember or organize, with help
-from your assistant. You could keep a reading list, collect recipes, or share
-notes for a community garden. A small list is a fine place to begin.
+Last SaaS stores lists, notes, and other data. You can ask your assistant to
+add things, find them, or update them.
 
-You can use everyday words. You don't need to learn tool names or write code.
-Try asking: "Help me keep a list of books I'd like to read."
+Start by creating your first reading list.
 
-## A few words you might see
+## The basics
 
-- A **collection** holds things of the same kind, like a reading list.
-- A **record** is one thing in that collection, like a book.
-- A **field** is a detail about it, like its title or author.
-- An **organization** is the space you're connected to. It can be for you or
-  shared with other people. What you can see and change depends on your access.
+- A **collection** is a group of records, like a reading list.
+- A **record** is one item, like a book.
+- A **field** is a detail, like the book's title or author.
+- An **organization** is the space you're connected to. It can be personal or
+  shared. Your permissions determine what you can see and change.
 
-## Have a look around
+## Make a reading list
 
-Ask "What lists are already here?" Your assistant can show the collections you
-have access to and explain one that interests you. If the space is empty,
-that's okay too.
+1. Ask "Create a reading list with a title and an author for each book."
+2. Ask "Add The Hobbit by J. R. R. Tolkien to my reading list."
+3. Ask "What's on my reading list?"
 
-## Try a little reading list
+You can also ask to find a book or change a detail.
 
-When you'd like to make something, ask "Create a reading list with a title and
-an author for each book." Here's how your assistant can help:
+Opening this guide doesn't change any data. Trying the steps above saves a
+list and a book. If you don't have permission for a step, your assistant will
+explain what's available.
 
-1. Your assistant checks whether you already have a reading list and what
-   details it keeps about each book.
-2. If you need a new list, your assistant creates one with a title and author
-   for each book. If the name is already used for something else, choose
-   another name together.
-3. Your assistant asks which book you'd like to add. Try "Add The Hobbit by
-   J. R. R. Tolkien to my reading list."
-4. Ask "What's on my reading list?" to see the books you've saved.
-
-Reading this guide doesn't create or change anything. The creation and addition
-steps save real data when you choose to try them. If your access doesn't allow a
-step, your assistant can explain that and help you explore what's available.
-
-## Where to go from here
-
-You can ask your assistant to find an entry, change a detail, or help you make
-another collection. Last SaaS also has tools for files, notifications, and
-sharing access when those would be useful.
-
-For the assistant: introduce the basics briefly, then follow the person's
-interests one step at a time. Keep suggestions in plain English, without tool
-names or code, and use the examples as a guide;
-don't run the writing steps just because this tutorial was requested. There's
-no need to cover every feature at once.
+For the assistant: assume this is the person's first time using Last SaaS.
+Keep the introduction short and follow the person's lead.
+Use plain language. Avoid sales pitches, em dashes, and unnecessary reassurance.
+Only create or change data when asked, not just because this guide was opened.
 `;
 
 export function registerGettingStarted(server: McpServer): void {
@@ -60,7 +39,7 @@ export function registerGettingStarted(server: McpServer): void {
     "getting_started",
     {
       description:
-        "Read a friendly introduction to Last SaaS and a small, optional reading-list tutorial. Use when someone asks what Last SaaS does or wants help getting started.",
+        "Read the basics of Last SaaS and an optional reading list example. Use when someone asks what Last SaaS does or wants help getting started.",
       inputSchema: z.object({}).strict(),
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
