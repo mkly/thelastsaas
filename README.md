@@ -1,22 +1,18 @@
 # The Last SaaS
 
-**The assistant is the interface.** The Last SaaS is a server that holds
-records and files, tracks who is on the team and what each person can
+The Last SaaS is a server that holds records and files, 
+tracks who is on the team and what each person can
 see, sends notifications, and logs the changes. It does not provide a
 user interface on its own; an assistant — Claude, ChatGPT, or any MCP
 client — connects over MCP and operates it.
 
-https://github.com/user-attachments/assets/3a401024-d3c0-417c-93e2-5d3867048989
 
 Most SaaS is built from the same parts: data, files, users, permissions,
 and notifications, with a user interface on top. That interface is a
-large part of what the subscription pays for, and it is work a model
+large part of what a SaaS app is, and it is work a model
 does well, so this server keeps the parts underneath. The assistant
-handles setup from a description of what's needed — gear tracking today,
-a client base tomorrow — and later changes, like a new field or a
-different rule, the same way.
-
-## What's in the box
+handles setup from of fields, permissions, and notifications via
+the MCP or CLI.
 
 - **Records.** Structured lists of anything from gear to invoices.
   Organizations own collections with dynamic schemas, and every record
@@ -31,8 +27,8 @@ different rule, the same way.
   or one-off, delivered by email.
 - **Audit logs.** Changes are recorded with who made them and when,
   whether it was a person or an assistant.
-- **Agent access.** An MCP endpoint with OAuth, plus a typed CLI that
-  embeds an operator guide for agents.
+
+---
 
 Single TypeScript monorepo running on [Bun](https://bun.sh). SQLite by
 default, PostgreSQL supported. The server compiles to one self-contained
@@ -81,7 +77,7 @@ currently require a Business, Enterprise, or Edu workspace, where an
 admin adds the connector under workspace settings. A listing in the
 ChatGPT apps directory is planned.
 
-From there, setup is a conversation:
+From there:
 
 > "Set up gear tracking for the studio. Anyone on the team can check
 > equipment out, but purchase prices stay between us."
