@@ -41,7 +41,7 @@ installRouter.get("/install", async (context) => {
     <nav class="button-row" aria-label="Installation methods"><a class="button secondary" href="#mcp">Connect over MCP</a><a class="button secondary" href="#cli">Install the CLI</a></nav>
     <section class="install-section" aria-labelledby="mcp">
     <h2 id="mcp">Connect over MCP</h2>
-    <p>Add this remote server URL to your assistant. No CLI or copied token is required.</p>
+    <p>Add this remote server URL to your assistant.</p>
     <div class="install-endpoint"><span class="small muted">MCP server URL</span>${code(endpoint)}</div>
     <p class="small muted">Choose your app for connection instructions.</p>
     ${instructions(

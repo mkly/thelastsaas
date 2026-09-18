@@ -424,7 +424,7 @@ describe("browser auth pages", () => {
     expect(html).toContain("http://localhost:3000/v1/mcp");
     expect(html).toContain("ChatGPT");
     expect(html).toContain("Claude");
-    expect(html).toContain("No CLI or copied token is required");
+    expect(html).toContain("Add this remote server URL to your assistant.");
     expect(html).not.toContain("session_token");
     expect(html).toContain('aria-current="page">Install</a>');
   });
