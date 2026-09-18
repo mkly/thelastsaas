@@ -12,7 +12,7 @@ describe("auth configuration", () => {
     expect(config.betterAuthSecret).not.toBe("");
     expect(config.passwordAuthEnabled).toBe(true);
     expect(config.cacheMaxBytes).toBe(32 * 1024 * 1024);
-    expect(config.cacheTtlSeconds).toBe(30);
+    expect(config.cacheTtlSeconds).toBe(3600);
     expect(config.googleClientId).toBe("");
     expect(config.maxUploadSize).toBe(50 * 1024 * 1024);
     expect(config.rateLimitEnabled).toBe(true);

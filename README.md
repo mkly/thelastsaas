@@ -136,7 +136,7 @@ and active-organization selections are not cached. Casbin enforcers are built
 from cached rule data, not stored as shared mutable objects.
 
 `CACHE_MAX_BYTES` defaults to `33554432` (32 MiB); set it to `0` to disable the
-cache. Entries expire after `CACHE_TTL_SECONDS` (default `30`). The cache also
+cache. Entries expire after `CACHE_TTL_SECONDS` (default `3600`, one hour). The cache also
 limits itself to 10,000 entries, evicts least recently used entries when full,
 and skips entries larger than its byte budget. Accounting includes serialized
 values, keys, and an allowance for overhead; this bounds retained cache data,

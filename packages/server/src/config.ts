@@ -16,7 +16,7 @@ const environmentSchema = z.object({
     .min(0)
     .max(Number.MAX_SAFE_INTEGER)
     .default(32 * 1024 * 1024),
-  CACHE_TTL_SECONDS: z.coerce.number().int().min(1).max(3600).default(30),
+  CACHE_TTL_SECONDS: z.coerce.number().int().min(1).max(3600).default(3600),
   PASSWORD_AUTH_ENABLED: z.stringbool().default(true),
   GOOGLE_CLIENT_ID: z.string().default(""),
   GOOGLE_CLIENT_SECRET: z.string().default(""),
