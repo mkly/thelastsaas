@@ -154,7 +154,7 @@ authPagesRouter.get("/login", async (context) => {
   const magicLogin = `<div class="card">
     <form method="POST" action="${escapeHtml(authPath("/auth/magic-link", { next }))}">
       <label>Email<br><input type="email" name="email" required autocomplete="email"></label><br><br>
-      <button type="submit">Send Magic Link</button>
+      <button type="submit">Continue with email</button>
     </form>
   </div>`;
 
@@ -247,7 +247,7 @@ authPagesRouter.get("/signup", async (context) => {
         <p>Enter your email to create an account. We'll send you a link to verify your email and sign in.</p>
         <form method="POST" action="${escapeHtml(authPath("/auth/magic-link", { next }))}">
           <label>Email<br><input type="email" name="email" required autocomplete="email"${emailAttributes}></label><br><br>
-          <button type="submit">Email Me a Sign-Up Link</button>
+          <button type="submit">Continue with email</button>
         </form>
       </div>
       ${googleLogin}
@@ -322,7 +322,7 @@ authPagesRouter.get("/magic-link", (context) =>
     <div class="card">
       <form method="POST" action="${escapeHtml(authPath("/auth/magic-link", { next: authNext(context) }))}">
         <label>Email<br><input type="email" name="email" required autocomplete="email"></label><br><br>
-        <button type="submit">Send Magic Link</button>
+        <button type="submit">Continue with email</button>
       </form>
     </div>`,
       {

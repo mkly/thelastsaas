@@ -124,10 +124,10 @@ describe("browser auth pages", () => {
       'action="/auth/magic-link?next=%2Fauth%2Fdevice"',
     );
     expect(signupHtml).toContain('value="new@example.com"');
-    expect(signupHtml.indexOf("Email Me a Sign-Up Link")).toBeLessThan(
+    expect(signupHtml.indexOf("Continue with email")).toBeLessThan(
       signupHtml.indexOf("Continue with Google"),
     );
-    expect(html.indexOf("Send Magic Link")).toBeLessThan(
+    expect(html.indexOf("Continue with email")).toBeLessThan(
       html.indexOf("Continue with Google"),
     );
     for (const path of ["forgot-password", "reset-password"]) {
