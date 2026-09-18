@@ -429,175 +429,239 @@ describe("browser auth pages", () => {
     expect(html).toContain('aria-current="page">Install</a>');
   });
 
-  test("completes MCP OAuth discovery, consent, token, and refresh", async () => {
-    const { app, services } = await createAuthPageApp();
-    await signUp(app);
-    await verifyTestUser(services, "auth-user@example.com");
-    const loginResponse = await login(app, "initial-password");
-    const cookie = loginResponse.headers.get("set-cookie")?.split(";")[0];
-    expect(cookie).toBeTruthy();
+  test.each(["password", "magic-link"] as const)(
+    "completes MCP OAuth discovery, consent, token, and refresh with %s",
+    async (method) => {
+      const { app, services, emails } = await createAuthPageApp({
+        passwordAuth: method === "password",
+      });
+      let cookie: string | undefined;
+      if (method === "password") {
+        await signUp(app);
+        await verifyTestUser(services, "auth-user@example.com");
+        const loginResponse = await login(app, "initial-password");
+        cookie = loginResponse.headers.get("set-cookie")?.split(";")[0];
+        expect(cookie).toBeTruthy();
+      }
 
-    const created = await app.request("http://localhost:3000/v1/orgs", {
-      method: "POST",
-      headers: {
-        Cookie: cookie!,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ name: "OAuth Org", slug: "oauth-org" }),
-    });
-    expect(created.status).toBe(201);
+      const protectedMetadata = await app.request(
+        "http://localhost:3000/.well-known/oauth-protected-resource/v1/mcp",
+      );
+      expect(protectedMetadata.status).toBe(200);
+      expect(await protectedMetadata.json()).toMatchObject({
+        resource: "http://localhost:3000/v1/mcp",
+        authorization_servers: ["http://localhost:3000/api/auth"],
+      });
+      const authMetadata = await app.request(
+        "http://localhost:3000/.well-known/oauth-authorization-server/api/auth",
+      );
+      expect(authMetadata.status).toBe(200);
+      expect(await authMetadata.json()).toMatchObject({
+        issuer: "http://localhost:3000/api/auth",
+        authorization_endpoint:
+          "http://localhost:3000/api/auth/oauth2/authorize",
+        token_endpoint: "http://localhost:3000/api/auth/oauth2/token",
+        registration_endpoint: "http://localhost:3000/api/auth/oauth2/register",
+      });
 
-    const protectedMetadata = await app.request(
-      "http://localhost:3000/.well-known/oauth-protected-resource/v1/mcp",
-    );
-    expect(protectedMetadata.status).toBe(200);
-    expect(await protectedMetadata.json()).toMatchObject({
-      resource: "http://localhost:3000/v1/mcp",
-      authorization_servers: ["http://localhost:3000/api/auth"],
-    });
-    const authMetadata = await app.request(
-      "http://localhost:3000/.well-known/oauth-authorization-server/api/auth",
-    );
-    expect(authMetadata.status).toBe(200);
-    expect(await authMetadata.json()).toMatchObject({
-      issuer: "http://localhost:3000/api/auth",
-      authorization_endpoint: "http://localhost:3000/api/auth/oauth2/authorize",
-      token_endpoint: "http://localhost:3000/api/auth/oauth2/token",
-      registration_endpoint: "http://localhost:3000/api/auth/oauth2/register",
-    });
-
-    const registration = await app.request(
-      "http://localhost:3000/api/auth/oauth2/register",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          client_name: "OAuth Test Client",
-          redirect_uris: ["https://client.example/callback"],
-          token_endpoint_auth_method: "none",
-          grant_types: ["authorization_code", "refresh_token"],
-          response_types: ["code"],
-          scope: "openid profile offline_access mcp:tools",
-        }),
-      },
-    );
-    expect(registration.status).toBe(201);
-    const client = (await registration.json()) as { client_id: string };
-
-    const verifier = randomBytes(48).toString("base64url");
-    const challenge = createHash("sha256").update(verifier).digest("base64url");
-    const authorize = new URL(
-      "http://localhost:3000/api/auth/oauth2/authorize",
-    );
-    authorize.search = new URLSearchParams({
-      client_id: client.client_id,
-      redirect_uri: "https://client.example/callback",
-      response_type: "code",
-      scope: "openid profile offline_access mcp:tools",
-      resource: "http://localhost:3000/v1/mcp",
-      state: "oauth-test-state",
-      code_challenge: challenge,
-      code_challenge_method: "S256",
-    }).toString();
-
-    const unauthenticatedAuthorize = await app.request(authorize);
-    expect(unauthenticatedAuthorize.status).toBe(302);
-    expect(unauthenticatedAuthorize.headers.get("location")).toStartWith(
-      "/auth/login?",
-    );
-
-    const authorized = await app.request(authorize, {
-      headers: { Cookie: cookie! },
-    });
-    expect(authorized.status).toBe(302);
-    const consentLocation = authorized.headers.get("location");
-    expect(consentLocation).toStartWith("/auth/mcp/consent?");
-    const consentQuery = new URL(
-      consentLocation!,
-      "http://localhost:3000",
-    ).searchParams.toString();
-
-    const consentPage = await app.request(
-      new URL(consentLocation!, "http://localhost:3000"),
-      { headers: { Cookie: cookie! } },
-    );
-    expect(consentPage.status).toBe(200);
-    expect(await consentPage.text()).toContain("OAuth Test Client");
-
-    const consent = await app.request(
-      "http://localhost:3000/auth/mcp/consent",
-      {
-        method: "POST",
-        headers: {
-          Cookie: cookie!,
-          "Content-Type": "application/x-www-form-urlencoded",
-          Origin: "http://localhost:3000",
+      const registration = await app.request(
+        "http://localhost:3000/api/auth/oauth2/register",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            client_name: "OAuth Test Client",
+            redirect_uris: ["https://client.example/callback"],
+            token_endpoint_auth_method: "none",
+            grant_types: ["authorization_code", "refresh_token"],
+            response_types: ["code"],
+            scope: "openid profile offline_access mcp:tools",
+          }),
         },
-        body: formBody({ decision: "allow", oauth_query: consentQuery }),
-      },
-    );
-    expect(consent.status).toBe(303);
-    const callback = new URL(consent.headers.get("location")!);
-    expect(callback.origin).toBe("https://client.example");
-    expect(callback.searchParams.get("state")).toBe("oauth-test-state");
-    expect(callback.searchParams.get("code")).toBeTruthy();
+      );
+      expect(registration.status).toBe(201);
+      const client = (await registration.json()) as { client_id: string };
 
-    const token = await app.request(
-      "http://localhost:3000/api/auth/oauth2/token",
-      {
+      const verifier = randomBytes(48).toString("base64url");
+      const challenge = createHash("sha256")
+        .update(verifier)
+        .digest("base64url");
+      const authorize = new URL(
+        "http://localhost:3000/api/auth/oauth2/authorize",
+      );
+      authorize.search = new URLSearchParams({
+        client_id: client.client_id,
+        redirect_uri: "https://client.example/callback",
+        response_type: "code",
+        scope: "openid profile offline_access mcp:tools",
+        resource: "http://localhost:3000/v1/mcp",
+        state: "oauth-test-state",
+        code_challenge: challenge,
+        code_challenge_method: "S256",
+      }).toString();
+
+      const unauthenticatedAuthorize = await app.request(authorize);
+      expect(unauthenticatedAuthorize.status).toBe(302);
+      expect(unauthenticatedAuthorize.headers.get("location")).toStartWith(
+        "/auth/login?",
+      );
+
+      let continuation = authorize.toString();
+      if (method === "magic-link") {
+        const loginPage = await app.request(
+          new URL(
+            unauthenticatedAuthorize.headers.get("location")!,
+            "http://localhost:3000",
+          ),
+        );
+        const html = await loginPage.text();
+        const action = html
+          .match(/action="([^"]*\/auth\/magic-link[^"]*)"/)?.[1]
+          ?.replaceAll("&amp;", "&");
+        expect(action).toBeTruthy();
+        const actionUrl = new URL(action!, "http://localhost:3000");
+        continuation = new URL(
+          actionUrl.searchParams.get("next")!,
+          "http://localhost:3000",
+        ).toString();
+        expect(new URL(continuation).searchParams.get("sig")).toBeTruthy();
+        const sent = await app.request(actionUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            Origin: "http://localhost:3000",
+          },
+          body: formBody({ email: "magic-oauth@example.com" }),
+        });
+        expect(sent.status).toBe(200);
+        const email = emails.find(
+          (candidate) => candidate.type === "magic-link",
+        );
+        expect(email).toBeDefined();
+        // Better Auth skips origin validation by default under bun test.
+        const authContext = await services.auth.$context;
+        authContext.skipOriginCheck = false;
+        const externalCallback = new URL(email!.url);
+        externalCallback.searchParams.set(
+          "callbackURL",
+          encodeURIComponent("https://untrusted.example/callback"),
+        );
+        const rejected = await app.request(externalCallback);
+        expect(rejected.status).toBe(403);
+        expect(await rejected.json()).toMatchObject({
+          code: "INVALID_CALLBACK_URL",
+        });
+        // Simulate opening the email in a fresh browser, without the popup's cookies.
+        const verified = await app.request(email!.url);
+        expect(verified.status).toBe(302);
+        expect(verified.headers.get("location")).toBe(continuation);
+        cookie = verified.headers
+          .getSetCookie()
+          .map((value) => value.split(";", 1)[0])
+          .join("; ");
+        expect(cookie).toBeTruthy();
+      }
+      const created = await app.request("http://localhost:3000/v1/orgs", {
         method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          grant_type: "authorization_code",
-          client_id: client.client_id,
-          redirect_uri: "https://client.example/callback",
-          code: callback.searchParams.get("code")!,
-          code_verifier: verifier,
-          resource: "http://localhost:3000/v1/mcp",
-        }),
-      },
-    );
-    expect(token.status).toBe(200);
-    const tokens = (await token.json()) as {
-      access_token: string;
-      refresh_token: string;
-      scope: string;
-      token_type: string;
-    };
-    expect(tokens.token_type).toBe("Bearer");
-    expect(tokens.refresh_token).toBeTruthy();
-    expect(tokens.scope).toContain("mcp:tools");
-    const claims = JSON.parse(
-      Buffer.from(tokens.access_token.split(".")[1]!, "base64url").toString(),
-    ) as Record<string, unknown>;
-    expect(claims.aud).toContain("http://localhost:3000/v1/mcp");
-    expect(claims["https://thelastsaas.com/claims/account_access"]).toBe(true);
+        headers: { Cookie: cookie!, "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "OAuth Org", slug: "oauth-org" }),
+      });
+      expect(created.status).toBe(201);
+      const authorized = await app.request(continuation, {
+        headers: { Cookie: cookie! },
+      });
+      expect(authorized.status).toBe(302);
+      const consentLocation = authorized.headers.get("location");
+      expect(consentLocation).toStartWith("/auth/mcp/consent?");
+      const consentQuery = new URL(
+        consentLocation!,
+        "http://localhost:3000",
+      ).searchParams.toString();
 
-    const refreshed = await app.request(
-      "http://localhost:3000/api/auth/oauth2/token",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          grant_type: "refresh_token",
-          client_id: client.client_id,
-          refresh_token: tokens.refresh_token,
-          resource: "http://localhost:3000/v1/mcp",
-        }),
-      },
-    );
-    expect(refreshed.status).toBe(200);
-    expect((await refreshed.json()).access_token).toBeTruthy();
+      const consentPage = await app.request(
+        new URL(consentLocation!, "http://localhost:3000"),
+        { headers: { Cookie: cookie! } },
+      );
+      expect(consentPage.status).toBe(200);
+      expect(await consentPage.text()).toContain("OAuth Test Client");
 
-    const challengeResponse = await app.request(
-      "http://localhost:3000/v1/mcp",
-      { method: "POST" },
-    );
-    expect(challengeResponse.status).toBe(401);
-    expect(challengeResponse.headers.get("www-authenticate")).toContain(
-      "resource_metadata=",
-    );
-  });
+      const consent = await app.request(
+        "http://localhost:3000/auth/mcp/consent",
+        {
+          method: "POST",
+          headers: {
+            Cookie: cookie!,
+            "Content-Type": "application/x-www-form-urlencoded",
+            Origin: "http://localhost:3000",
+          },
+          body: formBody({ decision: "allow", oauth_query: consentQuery }),
+        },
+      );
+      expect(consent.status).toBe(303);
+      const callback = new URL(consent.headers.get("location")!);
+      expect(callback.origin).toBe("https://client.example");
+      expect(callback.searchParams.get("state")).toBe("oauth-test-state");
+      expect(callback.searchParams.get("code")).toBeTruthy();
+
+      const token = await app.request(
+        "http://localhost:3000/api/auth/oauth2/token",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            grant_type: "authorization_code",
+            client_id: client.client_id,
+            redirect_uri: "https://client.example/callback",
+            code: callback.searchParams.get("code")!,
+            code_verifier: verifier,
+            resource: "http://localhost:3000/v1/mcp",
+          }),
+        },
+      );
+      expect(token.status).toBe(200);
+      const tokens = (await token.json()) as {
+        access_token: string;
+        refresh_token: string;
+        scope: string;
+        token_type: string;
+      };
+      expect(tokens.token_type).toBe("Bearer");
+      expect(tokens.refresh_token).toBeTruthy();
+      expect(tokens.scope).toContain("mcp:tools");
+      const claims = JSON.parse(
+        Buffer.from(tokens.access_token.split(".")[1]!, "base64url").toString(),
+      ) as Record<string, unknown>;
+      expect(claims.aud).toContain("http://localhost:3000/v1/mcp");
+      expect(claims["https://thelastsaas.com/claims/account_access"]).toBe(
+        true,
+      );
+
+      const refreshed = await app.request(
+        "http://localhost:3000/api/auth/oauth2/token",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            grant_type: "refresh_token",
+            client_id: client.client_id,
+            refresh_token: tokens.refresh_token,
+            resource: "http://localhost:3000/v1/mcp",
+          }),
+        },
+      );
+      expect(refreshed.status).toBe(200);
+      expect((await refreshed.json()).access_token).toBeTruthy();
+
+      const challengeResponse = await app.request(
+        "http://localhost:3000/v1/mcp",
+        { method: "POST" },
+      );
+      expect(challengeResponse.status).toBe(401);
+      expect(challengeResponse.headers.get("www-authenticate")).toContain(
+        "resource_metadata=",
+      );
+    },
+  );
 
   test("sends and verifies a magic link without revealing unknown users", async () => {
     const { app, emails } = await createAuthPageApp();

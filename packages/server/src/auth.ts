@@ -168,7 +168,28 @@ export function createAuth(
       }),
       magicLink({
         sendMagicLink: async ({ email, url }) => {
-          await sendAuthEmail({ type: "magic-link", to: email, url });
+          const link = new URL(url);
+          // TODO: Once https://github.com/better-auth/better-auth/pull/11174
+          // is merged and released, upgrade Better Auth and remove this extra
+          // encoding together. Keep the magic-link MCP OAuth regression test.
+          // Better Auth 1.7.1 decodes these values again after query parsing
+          // (https://github.com/better-auth/better-auth/issues/10916).
+          // Preserve nested OAuth parameters (including their signature) through
+          // that extra decode. Origin validation still checks the original URL.
+          for (const key of [
+            "callbackURL",
+            "newUserCallbackURL",
+            "errorCallbackURL",
+          ]) {
+            const callback = link.searchParams.get(key);
+            if (callback)
+              link.searchParams.set(key, encodeURIComponent(callback));
+          }
+          await sendAuthEmail({
+            type: "magic-link",
+            to: email,
+            url: link.toString(),
+          });
         },
       }),
       organization({
