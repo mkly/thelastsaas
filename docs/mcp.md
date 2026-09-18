@@ -39,7 +39,8 @@ File content is transferred as RFC 4648 base64 through `files_upload` and
 ## Getting started
 
 The `getting_started` tool returns a friendly introduction, explains collections,
-records, and fields, and offers a small reading-list tutorial using MCP tools.
+records, and fields, and offers a small reading-list tutorial with plain-English
+requests instead of tool names or code.
 It takes no arguments and does not read or change organization data.
 
 Try asking your assistant "What can I do with Last SaaS?" or "Help me get

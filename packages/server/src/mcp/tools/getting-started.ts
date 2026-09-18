@@ -20,25 +20,23 @@ Try asking: "Help me keep a list of books I'd like to read."
 
 ## Have a look around
 
-Ask "What lists are already here?" Your assistant can use collections_list to
-show the collections you have access to, then collections_describe to explain
-one that interests you. If the space is empty, that's okay too.
+Ask "What lists are already here?" Your assistant can show the collections you
+have access to and explain one that interests you. If the space is empty,
+that's okay too.
 
 ## Try a little reading list
 
 When you'd like to make something, ask "Create a reading list with a title and
 an author for each book." Here's how your assistant can help:
 
-1. Check collections_list for an existing reading list. If there is one, use
-   collections_describe to check its fields before adding anything.
-2. For a new list, call collections_create with:
-   {"name":"reading_list","description":"Books I'd like to read","schema":{"title":"string","author":"string"}}
-   If that name is already used for something else, choose another name together.
-3. Ask which book you'd like to add. For example, "Add The Hobbit by J. R. R.
-   Tolkien" becomes a records_insert call with:
-   {"collection":"reading_list","data":{"title":"The Hobbit","author":"J. R. R. Tolkien"}}
-4. Ask "What's on my reading list?" The assistant can call records_query with:
-   {"collection":"reading_list","limit":20}
+1. Your assistant checks whether you already have a reading list and what
+   details it keeps about each book.
+2. If you need a new list, your assistant creates one with a title and author
+   for each book. If the name is already used for something else, choose
+   another name together.
+3. Your assistant asks which book you'd like to add. Try "Add The Hobbit by
+   J. R. R. Tolkien to my reading list."
+4. Ask "What's on my reading list?" to see the books you've saved.
 
 Reading this guide doesn't create or change anything. The creation and addition
 steps save real data when you choose to try them. If your access doesn't allow a
@@ -51,7 +49,8 @@ another collection. Last SaaS also has tools for files, notifications, and
 sharing access when those would be useful.
 
 For the assistant: introduce the basics briefly, then follow the person's
-interests one step at a time. Use ordinary language and the examples as a guide;
+interests one step at a time. Keep suggestions in plain English, without tool
+names or code, and use the examples as a guide;
 don't run the writing steps just because this tutorial was requested. There's
 no need to cover every feature at once.
 `;
