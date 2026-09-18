@@ -36,7 +36,7 @@ import {
   listRowFilters,
   setRowFilter,
 } from "../../db/rowFilters";
-import type { McpToolContext } from "../context";
+import { requireOrganization, type McpToolContext } from "../context";
 
 import { decodeGrantOptions, grantOptionSchema } from "../../db/grant-options";
 
@@ -134,7 +134,7 @@ async function requirePermission(
   if (
     !(await hasPermission(
       context.services.prisma,
-      context.orgId,
+      requireOrganization(context),
       context.userId,
       resource,
       "manage",
@@ -156,7 +156,7 @@ function audit(
 ) {
   return addAuditLog(
     context.services.prisma,
-    context.orgId,
+    requireOrganization(context),
     context.userId,
     action,
     resourceType,
@@ -186,7 +186,7 @@ async function requireOrgMember(
   const member = await context.services.prisma.member.findUnique({
     where: {
       organizationId_userId: {
-        organizationId: context.orgId,
+        organizationId: requireOrganization(context),
         userId,
       },
     },
@@ -213,7 +213,7 @@ async function expandSubject(
         "subject must be role:<name> or user:<id|email>",
       );
     }
-    return roleSubject(context.orgId, role);
+    return roleSubject(requireOrganization(context), role);
   }
   if (subject.startsWith("user:")) {
     return requireOrgMember(subject.slice("user:".length), context);
@@ -258,17 +258,20 @@ function registerPermissionTools(
       const prisma = context.services.prisma;
       const [rules, members] = await Promise.all([
         prisma.casbinRule.findMany({
-          where: { orgId: context.orgId, ptype: { in: ["p", "g"] } },
+          where: {
+            orgId: requireOrganization(context),
+            ptype: { in: ["p", "g"] },
+          },
           orderBy: { id: "asc" },
           select: { ptype: true, v0: true, v1: true, v2: true, v3: true },
         }),
         prisma.member.findMany({
-          where: { organizationId: context.orgId },
+          where: { organizationId: requireOrganization(context) },
           select: { userId: true },
         }),
       ]);
       const memberIds = new Set(members.map(({ userId }) => userId));
-      const rolePrefix = roleSubject(context.orgId, "");
+      const rolePrefix = roleSubject(requireOrganization(context), "");
       return {
         status: "ok",
         policies: rules
@@ -281,7 +284,7 @@ function registerPermissionTools(
               (rule.v0.startsWith(rolePrefix) || memberIds.has(rule.v0)),
           )
           .map((rule) => ({
-            subject: contractSubject(rule.v0!, context.orgId),
+            subject: contractSubject(rule.v0!, requireOrganization(context)),
             resource: rule.v1!,
             action: rule.v2!,
             ...decodeGrantOptions(rule.v3),
@@ -322,7 +325,7 @@ function registerPermissionTools(
         if (
           !(await addPolicy(
             context.services.prisma,
-            context.orgId,
+            requireOrganization(context),
             subject,
             input.resource,
             input.action,
@@ -355,7 +358,7 @@ function registerPermissionTools(
         if (
           !(await removePolicy(
             context.services.prisma,
-            context.orgId,
+            requireOrganization(context),
             subject,
             input.resource,
             input.action,
@@ -389,7 +392,7 @@ function registerPermissionTools(
         if (
           !(await assignRole(
             context.services.prisma,
-            context.orgId,
+            requireOrganization(context),
             userId,
             input.role,
           ))
@@ -416,7 +419,7 @@ function registerPermissionTools(
         if (
           !(await unassignRole(
             context.services.prisma,
-            context.orgId,
+            requireOrganization(context),
             userId,
             input.role,
           ))
@@ -449,7 +452,7 @@ function registerPermissionTools(
           status: "ok",
           ...(await checkPermission(
             context.services.prisma,
-            context.orgId,
+            requireOrganization(context),
             userId,
             input.resource,
             input.action,
@@ -486,12 +489,12 @@ function registerFilterTools(server: McpServer, context: McpToolContext): void {
         const condition = whereSchema.parse(input.condition);
         const collection = await getCollection(
           context.services.prisma,
-          context.orgId,
+          requireOrganization(context),
           input.collection,
         );
         const row = await setRowFilter(
           context.services.prisma,
-          context.orgId,
+          requireOrganization(context),
           collection.id,
           input.role,
           input.action,
@@ -520,7 +523,7 @@ function registerFilterTools(server: McpServer, context: McpToolContext): void {
             collectionId = (
               await getCollection(
                 context.services.prisma,
-                context.orgId,
+                requireOrganization(context),
                 input.collection,
               )
             ).id;
@@ -533,7 +536,7 @@ function registerFilterTools(server: McpServer, context: McpToolContext): void {
         }
         const rows = await listRowFilters(
           context.services.prisma,
-          context.orgId,
+          requireOrganization(context),
           collectionId,
         );
         return {
@@ -561,7 +564,11 @@ function registerFilterTools(server: McpServer, context: McpToolContext): void {
       run(async () => {
         await requirePermission(context, "/permissions");
         if (
-          !(await deleteRowFilter(context.services.prisma, context.orgId, id))
+          !(await deleteRowFilter(
+            context.services.prisma,
+            requireOrganization(context),
+            id,
+          ))
         ) {
           throw new ToolError("NotFound", "Row filter not found");
         }
@@ -588,7 +595,7 @@ function registerFilterTools(server: McpServer, context: McpToolContext): void {
         await requirePermission(context, "/permissions");
         const collection = await getCollection(
           context.services.prisma,
-          context.orgId,
+          requireOrganization(context),
           input.collection,
         );
         const collectionSchema = collection.schema;
@@ -612,7 +619,7 @@ function registerFilterTools(server: McpServer, context: McpToolContext): void {
         }
         const row = await setFieldFilter(
           context.services.prisma,
-          context.orgId,
+          requireOrganization(context),
           collection.id,
           input.role,
           input.action,
@@ -642,7 +649,7 @@ function registerFilterTools(server: McpServer, context: McpToolContext): void {
             collectionId = (
               await getCollection(
                 context.services.prisma,
-                context.orgId,
+                requireOrganization(context),
                 input.collection,
               )
             ).id;
@@ -655,7 +662,7 @@ function registerFilterTools(server: McpServer, context: McpToolContext): void {
         }
         const rows = await listFieldFilters(
           context.services.prisma,
-          context.orgId,
+          requireOrganization(context),
           collectionId,
         );
         return {
@@ -684,7 +691,11 @@ function registerFilterTools(server: McpServer, context: McpToolContext): void {
       run(async () => {
         await requirePermission(context, "/permissions");
         if (
-          !(await deleteFieldFilter(context.services.prisma, context.orgId, id))
+          !(await deleteFieldFilter(
+            context.services.prisma,
+            requireOrganization(context),
+            id,
+          ))
         ) {
           throw new ToolError("NotFound", "Field filter not found");
         }
@@ -714,7 +725,7 @@ function registerInvitationTools(
         const invitation = await callAuthApi(
           () =>
             context.services.auth.api.createInvitation({
-              body: { ...input, organizationId: context.orgId },
+              body: { ...input, organizationId: requireOrganization(context) },
               headers,
             }),
           "Failed to create invitation",
@@ -740,7 +751,10 @@ function registerInvitationTools(
     run(async () => {
       await requirePermission(context, "/members");
       const invitations = await context.services.prisma.invitation.findMany({
-        where: { organizationId: context.orgId, status: "pending" },
+        where: {
+          organizationId: requireOrganization(context),
+          status: "pending",
+        },
         orderBy: { createdAt: "desc" },
         select: {
           id: true,
@@ -765,20 +779,20 @@ function registerInvitationTools(
     "invitations_accept",
     {
       description:
-        "Accept an invitation (the org-scoped MCP endpoint limits this to existing members)",
+        "Accept an invitation for the active organization (requires existing membership)",
       inputSchema: { invitation_id: z.string().min(1) },
     },
     ({ invitation_id }) =>
       run(async () => {
-        // The MCP endpoint authenticates organization membership before a tool
-        // can run, so this intentionally cannot bootstrap a non-member.
+        // The active organization has already passed a membership check.
+        // This tool only accepts invitations for that organization.
         const invitation = await context.services.prisma.invitation.findUnique({
           where: { id: invitation_id },
           select: { organizationId: true, status: true },
         });
         if (
           !invitation ||
-          invitation.organizationId !== context.orgId ||
+          invitation.organizationId !== requireOrganization(context) ||
           invitation.status !== "pending"
         ) {
           throw new ToolError("NotFound", "Invitation not found");
@@ -810,7 +824,7 @@ function registerInvitationTools(
         });
         if (
           !invitation ||
-          invitation.organizationId !== context.orgId ||
+          invitation.organizationId !== requireOrganization(context) ||
           invitation.status !== "pending"
         ) {
           throw new ToolError("NotFound", "Invitation not found");
@@ -845,7 +859,7 @@ function registerMemberTools(server: McpServer, context: McpToolContext): void {
     (input) =>
       run(async () => {
         const where = {
-          organizationId: context.orgId,
+          organizationId: requireOrganization(context),
           ...(input.role ? { role: input.role } : {}),
           ...(input.q
             ? {
@@ -872,11 +886,11 @@ function registerMemberTools(server: McpServer, context: McpToolContext): void {
           }),
           context.services.prisma.member.count({ where }),
           context.services.prisma.casbinRule.findMany({
-            where: { orgId: context.orgId, ptype: "g" },
+            where: { orgId: requireOrganization(context), ptype: "g" },
             select: { v0: true, v1: true },
           }),
         ]);
-        const prefix = roleSubject(context.orgId, "");
+        const prefix = roleSubject(requireOrganization(context), "");
         const rolesByUser = new Map<string, string[]>();
         for (const rule of groupingRules) {
           if (!rule.v0 || !rule.v1?.startsWith(prefix)) continue;
@@ -915,7 +929,10 @@ function registerMemberTools(server: McpServer, context: McpToolContext): void {
       run(async () => {
         await requirePermission(context, "/members");
         const member = await context.services.prisma.member.findFirst({
-          where: { id: input.member_id, organizationId: context.orgId },
+          where: {
+            id: input.member_id,
+            organizationId: requireOrganization(context),
+          },
           select: { id: true, userId: true, role: true },
         });
         if (!member) throw new ToolError("NotFound", "Member not found");
@@ -925,7 +942,7 @@ function registerMemberTools(server: McpServer, context: McpToolContext): void {
             context.services.auth.api.updateMemberRole({
               body: {
                 memberId: member.id,
-                organizationId: context.orgId,
+                organizationId: requireOrganization(context),
                 role: input.role,
               },
               headers,
@@ -934,7 +951,7 @@ function registerMemberTools(server: McpServer, context: McpToolContext): void {
         );
         await syncMemberRole(
           context.services.prisma,
-          context.orgId,
+          requireOrganization(context),
           member.userId,
           member.role,
           input.role,
@@ -957,7 +974,10 @@ function registerMemberTools(server: McpServer, context: McpToolContext): void {
       run(async () => {
         await requirePermission(context, "/members");
         const member = await context.services.prisma.member.findFirst({
-          where: { id: member_id, organizationId: context.orgId },
+          where: {
+            id: member_id,
+            organizationId: requireOrganization(context),
+          },
           select: { id: true, userId: true },
         });
         if (!member) throw new ToolError("NotFound", "Member not found");
@@ -967,7 +987,7 @@ function registerMemberTools(server: McpServer, context: McpToolContext): void {
             context.services.auth.api.removeMember({
               body: {
                 memberIdOrEmail: member.id,
-                organizationId: context.orgId,
+                organizationId: requireOrganization(context),
               },
               headers,
             }),
@@ -975,7 +995,7 @@ function registerMemberTools(server: McpServer, context: McpToolContext): void {
         );
         await removeMemberAccess(
           context.services.prisma,
-          context.orgId,
+          requireOrganization(context),
           member.userId,
         );
         await audit(context, "remove_member", "member", member.id, {
@@ -1003,7 +1023,7 @@ function registerServiceAccountTools(
         const issued = await issueServiceAccountTokenClaim(
           context.services,
           context.config,
-          context.orgId,
+          requireOrganization(context),
           input,
         );
         await audit(

@@ -696,11 +696,11 @@ authPagesRouter.get("/mcp", async (context) => {
       ? ""
       : `<div class="empty">
         <h3>No organizations yet</h3>
-        <p><a href="/auth/dashboard">Create an organization</a> or join one before connecting ChatGPT or Claude.</p>
+        <p>Connect your assistant to create your first organization, or <a href="/auth/dashboard">create one here</a>.</p>
       </div>`
     : `<div class="empty">
         <h3>No account yet</h3>
-        <p><a href="/auth/signup">Sign up</a> and create an organization before connecting. Your AI client sends you back here to sign in when it connects.</p>
+        <p><a href="/auth/signup">Sign up</a> to connect. Your assistant can help you create an organization. Your AI client sends you back here to sign in when it connects.</p>
       </div>`;
 
   return context.html(
@@ -709,14 +709,14 @@ authPagesRouter.get("/mcp", async (context) => {
       `${messageBanner(context)}${availability}
       <h2>Remote MCP URL</h2>
       <pre><code>${escapeHtml(endpoint)}</code></pre>
-      <p class="small muted">Your AI client opens this site so you can sign in, choose an organization, and approve access. No CLI or copied token is required.</p>
+      <p class="small muted">Your AI client opens this site so you can sign in and approve account access. No CLI or copied token is required.</p>
 
       <h2>Connect Claude</h2>
       <ol>
         <li>Open <strong>Settings → Connectors</strong> in claude.ai or the desktop app.</li>
         <li>Select <strong>Add custom connector</strong> and enter the remote MCP URL above.</li>
         <li>Select <strong>Add</strong>.</li>
-        <li>Sign in here, select an organization, and approve access.</li>
+        <li>Sign in here and approve account access. Then ask your assistant to select or create an organization.</li>
       </ol>
       <p class="small muted">New chats can use it right away. If you don't see it, enable it in the tools menu under the message box.</p>
 
@@ -724,7 +724,7 @@ authPagesRouter.get("/mcp", async (context) => {
       <ol>
         <li>In the desktop app, add a custom connector in ChatGPT's settings and enter the remote MCP URL above.</li>
         <li>Approve the connection when ChatGPT asks.</li>
-        <li>Sign in here, select an organization, and approve access.</li>
+        <li>Sign in here and approve account access. Then ask your assistant to select or create an organization.</li>
       </ol>
       <p class="small muted">On the web, custom connectors currently require a Business, Enterprise, or Edu workspace, where an admin adds the connector in workspace settings.</p>
 
@@ -777,96 +777,6 @@ async function runOAuthAction(
   return (await response.json()) as { url?: string };
 }
 
-authPagesRouter.get("/mcp/select-organization", async (context) => {
-  const { auth, prisma } = context.get("services");
-  const session = await auth.api.getSession({
-    headers: context.req.raw.headers,
-  });
-  if (!session?.user) return context.redirect("/auth/login");
-
-  const memberships = await prisma.member.findMany({
-    where: { userId: session.user.id },
-    orderBy: { createdAt: "asc" },
-    select: {
-      role: true,
-      organization: { select: { id: true, name: true } },
-    },
-  });
-  const choices = memberships.length
-    ? memberships
-        .map(
-          ({ organization, role }, index) => `<label class="record">
-            <input type="radio" name="organizationId" value="${escapeHtml(organization.id)}"${index === 0 ? " checked" : ""} required>
-            <span class="record__body">
-              <span class="record__title">${escapeHtml(organization.name)}</span>
-              <span class="record__meta">${escapeHtml(role)}</span>
-            </span>
-          </label>`,
-        )
-        .join("")
-    : '<div class="empty"><h3>No organizations available</h3><p>Create or join an organization, then start the connection again.</p></div>';
-  const action = memberships.length
-    ? `<button type="submit">Continue</button>`
-    : "";
-
-  return context.html(
-    htmlPage(
-      "Choose an Organization",
-      `<form method="POST" action="/auth/mcp/select-organization">
-        <input type="hidden" name="oauth_query" value="${escapeHtml(oauthQuery(context))}">
-        <div class="record-list">${choices}</div>
-        <div class="button-row" style="margin-block-start:1rem">${action}</div>
-      </form>`,
-      {
-        authenticated: true,
-        narrow: true,
-        description:
-          "Choose which organization's data this connection may access.",
-      },
-    ),
-  );
-});
-
-authPagesRouter.post("/mcp/select-organization", csrf(), async (context) => {
-  const form = await context.req.parseBody();
-  const organizationId = String(form.organizationId ?? "");
-  const oauth_query = String(form.oauth_query ?? "");
-  const { auth, prisma } = context.get("services");
-  const session = await auth.api.getSession({
-    headers: context.req.raw.headers,
-  });
-  if (!session?.user) return context.redirect("/auth/login");
-  const membership = await prisma.member.findUnique({
-    where: {
-      organizationId_userId: {
-        organizationId,
-        userId: session.user.id,
-      },
-    },
-    select: { id: true },
-  });
-  if (!membership) {
-    return context.html(
-      htmlPage(
-        "Choose an Organization",
-        '<p class="alert alert--error">You are not a member of that organization. Start the connection again.</p>',
-        { authenticated: true, narrow: true },
-      ),
-      403,
-    );
-  }
-
-  await auth.api.setActiveOrganization({
-    body: { organizationId },
-    headers: context.req.raw.headers,
-  });
-  const result = await runOAuthAction(context, "/api/auth/oauth2/continue", {
-    postLogin: true,
-    oauth_query,
-  });
-  return redirectFromOAuthResult(context, result);
-});
-
 authPagesRouter.get("/mcp/consent", async (context) => {
   const { auth } = context.get("services");
   const session = await auth.api.getSession({
@@ -901,10 +811,10 @@ authPagesRouter.get("/mcp/consent", async (context) => {
     htmlPage(
       "Authorize Connection",
       `<div class="card">
-        <p><strong>${escapeHtml(clientName)}</strong> is requesting access to the organization you selected.</p>
+        <p><strong>${escapeHtml(clientName)}</strong> is requesting access to your Last SaaS account.</p>
         <p class="small muted">Requested access:</p>
         <ul>${scopes}</ul>
-        <p>The client will be able to use Last SaaS tools with your existing organization permissions.</p>
+        <p>The client will be able to list and create organizations, select an active organization, and use Last SaaS tools with your existing permissions.</p>
       </div>
       <form method="POST" action="/auth/mcp/consent" style="margin-block-start:1rem">
         <input type="hidden" name="oauth_query" value="${escapeHtml(oauthQuery(context))}">
@@ -917,7 +827,7 @@ authPagesRouter.get("/mcp/consent", async (context) => {
         authenticated: true,
         narrow: true,
         description:
-          "Review this request before sharing access to your organization.",
+          "Review this request before sharing access to your account.",
       },
     ),
   );

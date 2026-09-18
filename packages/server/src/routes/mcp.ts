@@ -4,13 +4,12 @@ import { API_VERSION } from "@lastsaas/shared";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Hono, type Context } from "hono";
 
-import {
-  MCP_ORGANIZATION_CLAIM,
-  MCP_TOOLS_SCOPE,
-  mcpResourceUrl,
-} from "../auth";
+import { MCP_ACCOUNT_CLAIM, MCP_TOOLS_SCOPE, mcpResourceUrl } from "../auth";
 import type { AppEnvironment } from "../env";
-import { resolveMcpApiKeyPrincipal } from "../mcp/context";
+import {
+  resolveMcpApiKeyPrincipal,
+  resolveActiveOrganization,
+} from "../mcp/context";
 import { registerTools } from "../mcp/registry";
 
 function mcpAuthError(
@@ -47,8 +46,9 @@ async function handleAuthenticatedMcpRequest(
 
 async function handleMcpRequest(
   context: Context<AppEnvironment>,
-  orgId: string,
+  orgId: string | null,
   userId: string,
+  clientId?: string,
 ): Promise<Response> {
   const server = new McpServer({ name: "lastsaas", version: API_VERSION });
   const transport = new StreamableHTTPTransport({
@@ -61,6 +61,7 @@ async function handleMcpRequest(
     config: context.get("config"),
     orgId,
     userId,
+    clientId,
   });
 
   await server.connect(transport);
@@ -91,14 +92,32 @@ export const mcpRouter = new Hono<AppEnvironment>().post(
       services.auth,
       async (_request, claims) => {
         const userId = claims.sub;
-        const orgId = claims[MCP_ORGANIZATION_CLAIM];
-        if (typeof userId !== "string" || typeof orgId !== "string") {
+        const clientId = claims.client_id;
+        if (
+          typeof userId !== "string" ||
+          typeof clientId !== "string" ||
+          claims[MCP_ACCOUNT_CLAIM] !== true
+        ) {
           return mcpAuthError(
             context,
-            "The access token is missing its organization grant",
+            "Reconnect your MCP client to authorize account access",
           );
         }
-        return handleAuthenticatedMcpRequest(context, orgId, userId);
+        const user = await services.prisma.user.findUnique({
+          where: { id: userId },
+          select: { kind: true },
+        });
+        if (!user || user.kind !== "human")
+          return mcpAuthError(
+            context,
+            "Account access requires a user account",
+          );
+        const orgId = await resolveActiveOrganization(
+          services,
+          userId,
+          clientId,
+        );
+        return handleMcpRequest(context, orgId, userId, clientId);
       },
       {
         resource: mcpResourceUrl(context.get("config")),

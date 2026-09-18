@@ -165,6 +165,23 @@ describe("API key authentication", () => {
       userId: user.id,
     });
     expect(created.metadata).toEqual({ organizationId: organization.id });
+    for (const [name, args] of [
+      ["organizations_create", { name: "Forbidden" }],
+      ["organizations_select", { organizationId: organization.id }],
+    ] as const) {
+      const response = await app.request("/v1/mcp", {
+        ...mcpRequest(created.key),
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 2,
+          method: "tools/call",
+          params: { name, arguments: args },
+        }),
+      });
+      expect(response.status).toBe(200);
+      expect((await response.json()).result.isError).toBe(true);
+    }
+    expect(await services.prisma.organization.count()).toBe(1);
   });
 
   test("rejects invalid and revoked bearer API keys on MCP", async () => {

@@ -33,7 +33,7 @@ import type { PermissionAction } from "../../middleware/permission";
 import { scheduleResponse } from "../../routes/notification-schedules";
 import { channelPatchSchema } from "../../routes/notifications";
 import { portableDataSchema } from "../../routes/system";
-import type { McpToolContext } from "../context";
+import { requireOrganization, type McpToolContext } from "../context";
 
 const MAX_PATH_BYTES = 1024;
 const DEFAULT_AUDIT_LIMIT = 50;
@@ -106,7 +106,7 @@ async function requireToolPermission(
 ): Promise<void> {
   const allowed = await hasPermission(
     context.services.prisma,
-    context.orgId,
+    requireOrganization(context),
     context.userId,
     resource,
     action,
@@ -128,7 +128,7 @@ function audit(
 ): Promise<void> {
   return addAuditLog(
     context.services.prisma,
-    context.orgId,
+    requireOrganization(context),
     context.userId,
     action,
     resourceType,
@@ -253,7 +253,7 @@ function registerFileTools(server: McpServer, context: McpToolContext): void {
         }
         const files = await listFiles(
           context.services.prisma,
-          context.orgId,
+          requireOrganization(context),
           prefix,
         );
         return toolSuccess({ files });
@@ -270,7 +270,11 @@ function registerFileTools(server: McpServer, context: McpToolContext): void {
     ({ id }) =>
       withToolErrors(async () => {
         await requireToolPermission(context, "read", "/files");
-        const file = await getFile(context.services.prisma, context.orgId, id);
+        const file = await getFile(
+          context.services.prisma,
+          requireOrganization(context),
+          id,
+        );
         return toolSuccess({ file });
       }),
   );
@@ -297,12 +301,12 @@ function registerFileTools(server: McpServer, context: McpToolContext): void {
         const safeFilename = sanitizePathComponent(filename);
         const remotePath = validatePath(path ?? safeFilename);
         const fileId = genId();
-        const storageKey = `${context.orgId}/${fileId}`;
+        const storageKey = `${requireOrganization(context)}/${fileId}`;
         try {
           await context.services.storage.write(storageKey, byteInput(bytes));
           const file = await createFile(context.services.prisma, {
             id: fileId,
-            orgId: context.orgId,
+            orgId: requireOrganization(context),
             path: remotePath,
             filename: safeFilename,
             mimeType: mime_type ?? null,
@@ -333,7 +337,11 @@ function registerFileTools(server: McpServer, context: McpToolContext): void {
     ({ id }) =>
       withToolErrors(async () => {
         await requireToolPermission(context, "read", "/files");
-        const file = await getFile(context.services.prisma, context.orgId, id);
+        const file = await getFile(
+          context.services.prisma,
+          requireOrganization(context),
+          id,
+        );
         if (
           file.size_bytes !== null &&
           file.size_bytes > context.config.maxUploadSize
@@ -345,7 +353,7 @@ function registerFileTools(server: McpServer, context: McpToolContext): void {
           );
         }
         const content = await context.services.storage.read(
-          `${context.orgId}/${file.id}`,
+          `${requireOrganization(context)}/${file.id}`,
         );
         if (!content) throw new FileMissingError(file.id);
         const bytes = await readLimitedContent(
@@ -378,9 +386,19 @@ function registerFileTools(server: McpServer, context: McpToolContext): void {
           );
         }
         await requireToolPermission(context, "delete", "/files");
-        const file = await getFile(context.services.prisma, context.orgId, id);
-        await context.services.storage.delete(`${context.orgId}/${file.id}`);
-        await deleteFile(context.services.prisma, context.orgId, file.id);
+        const file = await getFile(
+          context.services.prisma,
+          requireOrganization(context),
+          id,
+        );
+        await context.services.storage.delete(
+          `${requireOrganization(context)}/${file.id}`,
+        );
+        await deleteFile(
+          context.services.prisma,
+          requireOrganization(context),
+          file.id,
+        );
         await audit(context, "delete_file", "file", file.id, {
           path: file.path,
         });
@@ -404,7 +422,7 @@ function registerNotificationTools(
       withToolErrors(async () => {
         const notifications = await getNotifications(
           context.services.prisma,
-          context.orgId,
+          requireOrganization(context),
           context.userId,
           unread,
         );
@@ -427,7 +445,7 @@ function registerNotificationTools(
           const result = await markNotificationRead(
             context.services.prisma,
             id,
-            context.orgId,
+            requireOrganization(context),
             context.userId,
             read,
           );
@@ -458,7 +476,7 @@ function registerNotificationTools(
         const result = await deleteNotification(
           context.services.prisma,
           id,
-          context.orgId,
+          requireOrganization(context),
           context.userId,
         );
         if (result.count === 0) {
@@ -500,7 +518,7 @@ function registerNotificationTools(
         const id = await queueDirectNotification(
           context.services.prisma,
           context.services.notificationQueue,
-          context.orgId,
+          requireOrganization(context),
           context.userId,
           {
             subject,
@@ -531,7 +549,10 @@ function registerNotificationTools(
       withToolErrors(async () => {
         const schedules =
           await context.services.prisma.notificationSchedule.findMany({
-            where: { orgId: context.orgId, userId: context.userId },
+            where: {
+              orgId: requireOrganization(context),
+              userId: context.userId,
+            },
             orderBy: { createdAt: "desc" },
           });
         return toolSuccess({ schedules: schedules.map(scheduleResponse) });
@@ -553,7 +574,7 @@ function registerNotificationTools(
           await context.services.prisma.notificationSchedule.create({
             data: {
               id: genId(),
-              orgId: context.orgId,
+              orgId: requireOrganization(context),
               userId: context.userId,
               dedupeKey: input.dedupe_key ?? genId(),
               type: input.type,
@@ -604,7 +625,7 @@ function registerNotificationTools(
           await context.services.prisma.notificationSchedule.create({
             data: {
               id: genId(),
-              orgId: context.orgId,
+              orgId: requireOrganization(context),
               userId: context.userId,
               dedupeKey: input.dedupe_key ?? genId(),
               type: input.type,
@@ -642,7 +663,7 @@ function registerNotificationTools(
           await context.services.prisma.notificationSchedule.updateMany({
             where: {
               id,
-              orgId: context.orgId,
+              orgId: requireOrganization(context),
               userId: context.userId,
               status: "scheduled",
             },
@@ -695,6 +716,7 @@ function registerNotificationTools(
     },
     ({ kind, in_app, email }) =>
       withToolErrors(async () => {
+        requireOrganization(context);
         if (in_app === undefined && email === undefined) {
           throw new ToolFailure(
             "InvalidRequest",
@@ -738,7 +760,7 @@ function registerSystemTools(server: McpServer, context: McpToolContext): void {
         await requireToolPermission(context, "read", "/system/audit");
         const entries = await getAuditLog(
           context.services.prisma,
-          context.orgId,
+          requireOrganization(context),
           Math.min(limit ?? DEFAULT_AUDIT_LIMIT, MAX_AUDIT_LIMIT),
           action,
           resource_type,
@@ -757,7 +779,10 @@ function registerSystemTools(server: McpServer, context: McpToolContext): void {
     () =>
       withToolErrors(async () => {
         await requireToolPermission(context, "read", "/system/stats");
-        const stats = await getStats(context.services.prisma, context.orgId);
+        const stats = await getStats(
+          context.services.prisma,
+          requireOrganization(context),
+        );
         return toolSuccess(stats);
       }),
   );
@@ -771,7 +796,10 @@ function registerSystemTools(server: McpServer, context: McpToolContext): void {
     () =>
       withToolErrors(async () => {
         await requireToolPermission(context, "manage", "/system/export");
-        const data = await exportData(context.services.prisma, context.orgId);
+        const data = await exportData(
+          context.services.prisma,
+          requireOrganization(context),
+        );
         await audit(context, "export_data", "system", null);
         return toolSuccess({ ...data });
       }),
@@ -807,7 +835,7 @@ function registerSystemTools(server: McpServer, context: McpToolContext): void {
         const { status: _status, ...portableData } = parsed.data;
         const result = await importData(
           context.services.prisma,
-          context.orgId,
+          requireOrganization(context),
           portableData as ExportData,
         );
         await audit(context, "import_data", "system", null, {

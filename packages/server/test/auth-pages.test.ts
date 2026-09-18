@@ -431,9 +431,7 @@ describe("browser auth pages", () => {
       },
       body: JSON.stringify({ name: "OAuth Org", slug: "oauth-org" }),
     });
-    const organization = (await created.json()) as {
-      organization: { id: string };
-    };
+    expect(created.status).toBe(201);
 
     const protectedMetadata = await app.request(
       "http://localhost:3000/.well-known/oauth-protected-resource/v1/mcp",
@@ -498,30 +496,7 @@ describe("browser auth pages", () => {
       headers: { Cookie: cookie! },
     });
     expect(authorized.status).toBe(302);
-    const selectLocation = authorized.headers.get("location");
-    expect(selectLocation).toStartWith("/auth/mcp/select-organization?");
-    const oauth_query = new URL(
-      selectLocation!,
-      "http://localhost:3000",
-    ).searchParams.toString();
-
-    const selection = await app.request(
-      "http://localhost:3000/auth/mcp/select-organization",
-      {
-        method: "POST",
-        headers: {
-          Cookie: cookie!,
-          "Content-Type": "application/x-www-form-urlencoded",
-          Origin: "http://localhost:3000",
-        },
-        body: formBody({
-          organizationId: organization.organization.id,
-          oauth_query,
-        }),
-      },
-    );
-    expect(selection.status).toBe(303);
-    const consentLocation = selection.headers.get("location");
+    const consentLocation = authorized.headers.get("location");
     expect(consentLocation).toStartWith("/auth/mcp/consent?");
     const consentQuery = new URL(
       consentLocation!,
@@ -582,9 +557,7 @@ describe("browser auth pages", () => {
       Buffer.from(tokens.access_token.split(".")[1]!, "base64url").toString(),
     ) as Record<string, unknown>;
     expect(claims.aud).toContain("http://localhost:3000/v1/mcp");
-    expect(claims["https://thelastsaas.com/claims/organization_id"]).toBe(
-      organization.organization.id,
-    );
+    expect(claims["https://thelastsaas.com/claims/account_access"]).toBe(true);
 
     const refreshed = await app.request(
       "http://localhost:3000/api/auth/oauth2/token",

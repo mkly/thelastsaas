@@ -36,6 +36,7 @@ model User {
   oauthAccessTokens       OauthAccessToken[]
   oauthConsents           OauthConsent[]
   apiKeys                 Apikey[]
+  mcpOrganizations        McpOrganization[]
 
   @@map("user")
 }
@@ -179,6 +180,7 @@ model OauthClient {
   refreshTokens                    OauthRefreshToken[]
   accessTokens                     OauthAccessToken[]
   consents                         OauthConsent[]
+  mcpOrganizations                 McpOrganization[]
 
   @@index([userId])
   @@map("oauthClient")
@@ -564,4 +566,17 @@ model AuditLog {
   @@index([orgId, createdAt])
   @@index([orgId, resourceType, resourceId])
   @@map("audit_log")
+}
+
+// Active organization for one account's MCP client. It survives token refresh.
+// Keep orgId after deletion or membership removal so requests require reselection.
+model McpOrganization {
+  userId   String
+  clientId String
+  orgId    String
+  user     User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  client   OauthClient @relation(fields: [clientId], references: [clientId], onDelete: Cascade)
+
+  @@id([userId, clientId])
+  @@map("mcp_organization")
 }

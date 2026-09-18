@@ -15,10 +15,27 @@ https://<lastsaas-host>/v1/mcp
 ```
 
 The client discovers Last SaaS's OAuth endpoints automatically. When the
-browser opens, sign in, choose the organization to connect, and approve the
-requested access. The resulting connection is limited to that organization and
-to the permissions of the signed-in user. Last SaaS issues a refresh token so
-the client can renew its access without asking the user to reconnect each time.
+browser opens, sign in and approve account access. You can connect before
+creating an organization. The client can list and create organizations and
+select which one to use, subject to the signed-in user's permissions.
+Last SaaS issues a refresh token so the client can renew access.
+
+Use `organizations_list`, `organizations_create`, and `organizations_select`
+to manage the active organization. Creating one also selects it. If no selection
+exists and you belong to exactly one organization, it is selected automatically;
+otherwise the assistant must ask you to choose or create one. The selection is
+stored in `mcp_organization` per user and OAuth client, survives server restarts
+and token refreshes, and is separate from the browser and CLI selections.
+Conversations using the same OAuth client share that selection. In-flight calls
+use the organization resolved at the start of their request.
+
+Membership is checked on every request. If access to the selected organization
+is removed, organization operations stop until you select another organization.
+Organization-bound API keys remain restricted to their assigned organization;
+they cannot create or switch organizations.
+
+Existing organization-scoped OAuth connections must reconnect and approve account
+access. Their tokens and refresh grants cannot acquire account access implicitly.
 
 In ChatGPT, add the URL as a custom app in **Settings > Apps > Advanced
 settings > Developer mode**. In Claude, add it as a custom connector in
@@ -26,7 +43,7 @@ settings > Developer mode**. In Claude, add it as a custom connector in
 controls are available.
 
 The `server_info` tool returns the API version and the authenticated `userId`
-and `orgId`. Authorization is identical to the REST API: collection tools apply
+and `orgId` (`null` when no organization is active). Authorization is identical to the REST API: collection tools apply
 Casbin permissions plus row and field filters, while administrative tools
 require their corresponding management permissions. Tool failures are returned
 as structured MCP errors.
@@ -110,6 +127,9 @@ stable tool identifiers.
 | `notifications preferences set-default` | `notification_preferences_set` without `kind` |
 | `notifications preferences set-kind`    | `notification_preferences_set` with `kind`    |
 | `audit`                                 | `audit_log`                                   |
+| `orgs list`                             | `organizations_list`                          |
+| `orgs create`                           | `organizations_create`                        |
+| `orgs use`                              | `organizations_select`                        |
 | `stats`                                 | `stats`                                       |
 | `export`                                | `org_export`                                  |
 | `import`                                | `org_import`                                  |
@@ -120,12 +140,10 @@ The following commands deliberately do not have MCP tools:
   through the browser OAuth flow described above.
 - `whoami` includes CLI configuration and credential-store state. Use
   `server_info` for the server-confirmed user and organization identity.
-- `orgs list`, `orgs create`, and `orgs use` operate outside the MCP server.
-  MCP clients choose an existing organization in the browser.
 - `skills print` and `skills install` read an asset embedded in the CLI build
   and write the user's local filesystem, so they are not server operations.
 - Accepting an invitation as a not-yet-member user cannot go through the
-  organization-scoped MCP endpoint because that endpoint requires membership.
+  organization-specific `invitations_accept` tool because it requires an active organization and membership.
   Use the CLI, browser flow, or REST endpoint for that initial acceptance.
 
 ## Conditional row and field grants

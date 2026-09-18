@@ -64,6 +64,16 @@ async function toToolResult(response: Response): Promise<CallToolResult> {
 function createRouteCaller(context: McpToolContext) {
   const app = new Hono<AppEnvironment>();
   app.use("*", async (routeContext, next) => {
+    if (!context.orgId)
+      return routeContext.json(
+        {
+          status: "error",
+          error: "OrganizationRequired",
+          message:
+            "Use organizations_list, then organizations_select or organizations_create.",
+        },
+        403,
+      );
     routeContext.set("config", context.config);
     routeContext.set("services", context.services);
     routeContext.set("orgId", context.orgId);

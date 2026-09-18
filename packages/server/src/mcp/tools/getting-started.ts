@@ -6,7 +6,7 @@ const guide = `# Welcome to Last SaaS
 Last SaaS stores lists, notes, and other data. You can ask your assistant to
 add things, find them, or update them.
 
-Start by creating your first reading list.
+Start by choosing a space for your data, then create your first reading list.
 
 ## The basics
 
@@ -15,6 +15,13 @@ Start by creating your first reading list.
 - A **field** is a detail, like the book's title or author.
 - An **organization** is the space you're connected to. It can be personal or
   shared. Your permissions determine what you can see and change.
+
+## Choose your organization
+
+Your assistant can check your organizations and active selection. If you have
+only one organization, it is selected automatically. If you have none, ask
+"Create an organization for me" and choose a name. If you have several, choose
+which to use. You can switch organizations later by asking your assistant.
 
 ## Make a reading list
 
@@ -50,7 +57,7 @@ explain what's available.
 For the assistant: assume this is the person's first time using Last SaaS.
 Keep the introduction short and follow the person's lead.
 Use plain language. Avoid sales pitches, em dashes, and unnecessary reassurance.
-Start with the reading list. After it's created, offer to set up a reading
+First call organizations_list to check the active organization. If none is selected, help the person choose one with organizations_select, or ask for a name and permission to create one with organizations_create. Then start with the reading list. After it's created, offer to set up a reading
 reminder. After the reminder is set up, mention inviting someone or connecting
 an agent as optional next steps. Introduce one step at a time and let the
 person skip or stop. Ask for missing details before carrying out a step.

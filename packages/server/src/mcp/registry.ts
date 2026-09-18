@@ -6,6 +6,7 @@ import type { McpToolContext } from "./context";
 import { registerAccessTools } from "./tools/access";
 import { registerDataTools } from "./tools/data";
 import { registerGettingStarted } from "./tools/getting-started";
+import { registerOrganizationTools } from "./tools/organizations";
 import { registerOperationsTools } from "./tools/operations";
 
 type ToolRegistrar = (server: McpServer, context: McpToolContext) => void;
@@ -18,7 +19,7 @@ const registerServerInfo: ToolRegistrar = (server, context) => {
         "Return the Last SaaS API version and authenticated request identity.",
       outputSchema: {
         apiVersion: z.literal(API_VERSION),
-        orgId: z.string(),
+        orgId: z.string().nullable(),
         userId: z.string(),
       },
     },
@@ -38,6 +39,7 @@ const registerServerInfo: ToolRegistrar = (server, context) => {
 
 const toolRegistrars: readonly ToolRegistrar[] = [
   registerGettingStarted,
+  registerOrganizationTools,
   registerServerInfo,
   registerDataTools,
   registerAccessTools,

@@ -45,6 +45,9 @@ const expectedTools = [
   "notifications_queue",
   "notifications_read",
   "notifications_unread",
+  "organizations_list",
+  "organizations_create",
+  "organizations_select",
   "org_export",
   "org_import",
   "permissions_assign_role",
@@ -74,7 +77,7 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0)) await cleanup();
 });
 
-async function createHarness() {
+async function createHarness(createInitialOrganization = true) {
   const directory = mkdtempSync(join(tmpdir(), "lastsaas-mcp-e2e-"));
   // Assigned after Bun.serve so the app can be built with the real origin;
   // the fetch closure below reads it lazily, which prefer-const cannot see.
@@ -129,18 +132,21 @@ async function createHarness() {
     .join("; ");
   if (!cookie) throw new Error("Sign-in did not return a browser session");
 
-  const organization = await app.request("/v1/orgs", {
-    method: "POST",
-    headers: {
-      cookie,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({ name: "MCP E2E Org", slug: "mcp-e2e-org" }),
-  });
-  expect(organization.status).toBe(201);
-  const organizationBody = (await organization.json()) as {
-    organization: { id: string };
-  };
+  let organizationBody = { organization: { id: "" } };
+  if (createInitialOrganization) {
+    const organization = await app.request("/v1/orgs", {
+      method: "POST",
+      headers: {
+        cookie,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ name: "MCP E2E Org", slug: "mcp-e2e-org" }),
+    });
+    expect(organization.status).toBe(201);
+    organizationBody = (await organization.json()) as {
+      organization: { id: string };
+    };
+  }
   const user = await services.prisma.user.findUnique({
     where: { email: "mcp-admin@example.com" },
   });
@@ -177,29 +183,7 @@ async function createHarness() {
     headers: { cookie },
   });
   expect(authorization.status).toBe(302);
-  const selectionLocation = authorization.headers.get("location");
-  expect(selectionLocation).toStartWith("/auth/mcp/select-organization?");
-  const oauthQuery = new URL(
-    selectionLocation!,
-    origin,
-  ).searchParams.toString();
-  const selection = await app.request(
-    `${origin}/auth/mcp/select-organization`,
-    {
-      method: "POST",
-      headers: {
-        cookie,
-        "content-type": "application/x-www-form-urlencoded",
-        origin,
-      },
-      body: new URLSearchParams({
-        organizationId: organizationBody.organization.id,
-        oauth_query: oauthQuery,
-      }).toString(),
-    },
-  );
-  expect(selection.status).toBe(303);
-  const consentLocation = selection.headers.get("location");
+  const consentLocation = authorization.headers.get("location");
   expect(consentLocation).toStartWith("/auth/mcp/consent?");
   const consentQuery = new URL(
     consentLocation!,
@@ -234,10 +218,18 @@ async function createHarness() {
     }).toString(),
   });
   expect(tokenResponse.status).toBe(200);
-  const tokens = (await tokenResponse.json()) as { access_token: string };
+  const tokens = (await tokenResponse.json()) as {
+    access_token: string;
+    refresh_token: string;
+  };
 
   return {
     app,
+    services,
+    config,
+    origin,
+    clientId: client.client_id,
+    refreshToken: tokens.refresh_token,
     endpoint: "/v1/mcp",
     removedEndpointPath: `/v1/orgs/${organizationBody.organization.id}/mcp`,
     cookie,
@@ -430,4 +422,153 @@ describe("MCP end-to-end walkthrough", () => {
     expect(actions).toContain("upload_file");
     expect(actions).toContain("queue_notification");
   });
+});
+
+test("connects without organizations, creates and switches, and retains selection after refresh", async () => {
+  const {
+    app,
+    endpoint,
+    token,
+    services,
+    userId,
+    clientId,
+    refreshToken,
+    origin,
+  } = await createHarness(false);
+  let id = 100;
+  const call = (name: string, args = {}) =>
+    callTool(app, endpoint, token, id++, name, args);
+  expect(await call("organizations_list")).toEqual({
+    organizations: [],
+    activeOrganizationId: null,
+  });
+  const guide = await app.request(
+    endpoint,
+    mcpRequest(token, id++, "tools/call", {
+      name: "getting_started",
+      arguments: {},
+    }),
+  );
+  expect(await guide.text()).toContain("organizations_create");
+  const blocked = async (name: string, args = {}) => {
+    const response = await app.request(
+      endpoint,
+      mcpRequest(token, id++, "tools/call", { name, arguments: args }),
+    );
+    expect(response.status).toBe(200);
+    expect((await response.json()).result.isError).toBe(true);
+  };
+  await blocked("collections_list");
+  await blocked("members_list");
+  await blocked("stats");
+  await blocked("notification_preferences_set", { email: false });
+  expect(
+    (await services.prisma.user.findUniqueOrThrow({ where: { id: userId } }))
+      .notificationPreferences,
+  ).toBeNull();
+  const first = await call("organizations_create", { name: "First" });
+  const firstId = first.activeOrganizationId as string;
+  expect(await call("server_info")).toMatchObject({ orgId: firstId });
+  await call("collections_create", {
+    name: "first_only",
+    schema: { title: "string" },
+  });
+  const second = await call("organizations_create", { name: "Second" });
+  const secondId = second.activeOrganizationId as string;
+  expect(await call("server_info")).toMatchObject({ orgId: secondId });
+  expect(JSON.stringify(await call("collections_list"))).not.toContain(
+    "first_only",
+  );
+  await blocked("organizations_select", { organizationId: "not-a-member" });
+  expect(await call("server_info")).toMatchObject({ orgId: secondId });
+  await call("organizations_select", { organizationId: firstId });
+  expect(JSON.stringify(await call("collections_list"))).toContain(
+    "first_only",
+  );
+  const refreshed = await app.request(`${origin}/api/auth/oauth2/token`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "refresh_token",
+      client_id: clientId,
+      refresh_token: refreshToken,
+      resource: `${origin}/v1/mcp`,
+    }),
+  });
+  expect(refreshed.status).toBe(200);
+  const refreshedToken = (await refreshed.json()).access_token;
+  expect(
+    await callTool(app, endpoint, refreshedToken, id++, "server_info", {}),
+  ).toMatchObject({ orgId: firstId });
+  await services.prisma.member.delete({
+    where: { organizationId_userId: { userId, organizationId: firstId } },
+  });
+  expect(await call("server_info")).toMatchObject({ orgId: null });
+  await blocked("collections_list");
+  await call("organizations_select", { organizationId: secondId });
+  expect(await call("server_info")).toMatchObject({ orgId: secondId });
+});
+
+test("does not guess among several organizations and keeps client selections separate", async () => {
+  const { resolveActiveOrganization } = await import("../src/mcp/context");
+  const { createOrganizationForUser } = await import("../src/organizations");
+  const { app, endpoint, token, services, userId, clientId, orgId } =
+    await createHarness();
+  const second = await createOrganizationForUser(services, userId, {
+    name: "Other",
+  });
+  expect(
+    await callTool(app, endpoint, token, 100, "server_info", {}),
+  ).toMatchObject({ orgId: null });
+  await callTool(app, endpoint, token, 101, "organizations_select", {
+    organizationId: second.id,
+  });
+  await services.prisma.oauthClient.create({
+    data: {
+      id: "other-client",
+      clientId: "other-client",
+      redirectUris: [],
+      grantTypes: [],
+      responseTypes: [],
+    },
+  });
+  expect(
+    await resolveActiveOrganization(services, userId, "other-client"),
+  ).toBeNull();
+  await services.prisma.mcpOrganization.create({
+    data: { userId, clientId: "other-client", orgId },
+  });
+  expect(
+    await resolveActiveOrganization(services, userId, "other-client"),
+  ).toBe(orgId);
+  expect(await resolveActiveOrganization(services, userId, clientId)).toBe(
+    second.id,
+  );
+});
+
+test("organization-specific refresh grants cannot upgrade to account access", async () => {
+  const { app, services, clientId, refreshToken, origin, orgId } =
+    await createHarness();
+  await services.prisma.oauthRefreshToken.updateMany({
+    where: { clientId },
+    data: { referenceId: orgId },
+  });
+  const response = await app.request(`${origin}/api/auth/oauth2/token`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "refresh_token",
+      client_id: clientId,
+      refresh_token: refreshToken,
+      resource: `${origin}/v1/mcp`,
+    }),
+  });
+  expect(response.status).toBe(200);
+  const token = (await response.json()).access_token;
+  const request = await app.request(
+    "/v1/mcp",
+    mcpRequest(token, 1, "tools/list"),
+  );
+  expect(request.status).toBe(403);
+  expect(await request.text()).toContain("Reconnect");
 });

@@ -21,8 +21,8 @@ import { syncMemberRole } from "./db/casbin";
 export const SESSION_EXPIRES_IN_SECONDS = 60 * 60 * 24 * 90;
 const SESSION_UPDATE_AGE = 60 * 60 * 24;
 export const MCP_TOOLS_SCOPE = "mcp:tools";
-export const MCP_ORGANIZATION_CLAIM =
-  "https://thelastsaas.com/claims/organization_id";
+export const MCP_ACCOUNT_CLAIM =
+  "https://thelastsaas.com/claims/account_access";
 
 export function mcpResourceUrl(config: AppConfig): string {
   return new URL("/v1/mcp", config.betterAuthUrl).toString();
@@ -158,34 +158,9 @@ export function createAuth(
         scopes: ["openid", "profile", "offline_access", MCP_TOOLS_SCOPE],
         allowDynamicClientRegistration: true,
         allowUnauthenticatedClientRegistration: true,
-        postLogin: {
-          page: "/auth/mcp/select-organization",
-          shouldRedirect: async ({ session, scopes }) => {
-            if (!scopes.includes(MCP_TOOLS_SCOPE)) return false;
-            const organizationId = session.activeOrganizationId;
-            if (typeof organizationId !== "string") return true;
-            const membership = await prisma.member.findUnique({
-              where: {
-                organizationId_userId: {
-                  organizationId,
-                  userId: session.userId,
-                },
-              },
-              select: { id: true },
-            });
-            return !membership;
-          },
-          consentReferenceId: ({ session, scopes }) => {
-            if (!scopes.includes(MCP_TOOLS_SCOPE)) return undefined;
-            const organizationId = session?.activeOrganizationId;
-            if (typeof organizationId !== "string") {
-              throw new Error("Select an organization before granting access");
-            }
-            return organizationId;
-          },
-        },
+        // Organization-specific grants cannot acquire account access on refresh.
         customAccessTokenClaims: ({ referenceId }) =>
-          referenceId ? { [MCP_ORGANIZATION_CLAIM]: referenceId } : {},
+          referenceId ? {} : { [MCP_ACCOUNT_CLAIM]: true },
       }),
       deviceAuthorization({
         verificationUri: "/auth/device",
