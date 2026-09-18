@@ -63,6 +63,9 @@ to run one package's tests. Use `bun run format` to apply formatting.
 
 ## Working with the CLI
 
+`saas login` defaults to `https://app.thelastsaas.com` when no server is saved.
+Use `--server` to select a local or self-hosted deployment.
+
 With the development server running, build and log in from another terminal:
 
 ```sh

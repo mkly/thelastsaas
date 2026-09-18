@@ -10,7 +10,7 @@ import { dirname, join } from "node:path";
 
 import { CliError } from "./errors";
 
-export const DEFAULT_SERVER_URL = "http://localhost:8787";
+export const DEFAULT_SERVER_URL = "https://app.thelastsaas.com";
 
 export interface ClientConfig {
   expires_at?: string;
