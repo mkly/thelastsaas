@@ -252,7 +252,7 @@ authPagesRouter.get("/signup", async (context) => {
         {
           narrow: true,
           description:
-            "Create your account with an email link.",
+            "Create your account.",
         },
       ),
     );
