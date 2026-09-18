@@ -325,7 +325,7 @@ authPagesRouter.get("/magic-link", (context) =>
     </div>`,
       {
         narrow: true,
-        description: "We'll email you a link that signs you in — no password.",
+        description: "We'll email you a link that signs you in.",
       },
     ),
   ),
