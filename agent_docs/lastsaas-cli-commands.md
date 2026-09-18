@@ -56,7 +56,7 @@ saas permissions field-filter delete <id>
 saas members list [--role <role>] [--search <query>] [--limit <n>] [--offset <n>]
 saas members role-change <member-id> --role <role>
 saas members remove <member-id> --confirm
-saas permissions invite --email <email> [--role <role>]
+saas permissions invite --email <email> [--role <role>] [--permissions <json>]
 saas permissions invitations
 saas permissions accept-invite --id <invitation-id>
 saas permissions cancel-invite --id <invitation-id>
@@ -93,3 +93,14 @@ the organization and the user's role.
 
 `skill` aliases `skills`; `path` aliases `skills install`. The default install
 location is `~/.lastsaas/skills/lastsaas/SKILL.md`.
+
+### Invite with collection access
+
+```bash
+saas permissions invite --email reader@example.com --permissions '[{"resource":"/collections/reading_list","action":"read"}]'
+```
+
+Optional `--permissions` accepts an array of grants (`resource`, `action`, and
+optional `where`/`fields`). Grants are saved on the invitation and applied when
+it is accepted. Setting grants requires permission to manage permissions.
+`permissions invitations --json` includes the pending grants.

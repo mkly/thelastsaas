@@ -16,7 +16,10 @@ import {
 import { databaseProvider, type AppConfig } from "./config";
 import { log } from "./logger";
 import { createAuditWriter } from "./db/audit";
-import { syncMemberRole } from "./db/casbin";
+import {
+  applyInvitationPermissions,
+  validateInvitationPermissions,
+} from "./invitation-permissions";
 
 export const SESSION_EXPIRES_IN_SECONDS = 60 * 60 * 24 * 90;
 const SESSION_UPDATE_AGE = 60 * 60 * 24;
@@ -198,14 +201,44 @@ export function createAuth(
         // Last SaaS generates opaque UUIDv7 invitation IDs. Better Auth cannot
         // infer that from a custom generator, so preserve the emailed-link flow.
         requireEmailVerificationOnInvitation: false,
+        schema: {
+          invitation: {
+            additionalFields: {
+              permissions: {
+                type: "string",
+                required: false,
+                defaultValue: "[]",
+              },
+            },
+          },
+        },
         organizationHooks: {
-          afterAcceptInvitation: async ({ invitation, member, user }) => {
-            await syncMemberRole(
+          beforeCreateInvitation: async ({ invitation, inviter }) => {
+            const permissions = await validateInvitationPermissions(
               prisma,
               invitation.organizationId,
-              user.id,
-              member.role,
-              member.role,
+              inviter.id,
+              JSON.parse(invitation.permissions ?? "[]"),
+            );
+            return { data: { permissions: JSON.stringify(permissions) } };
+          },
+          beforeAcceptInvitation: async ({ invitation }) => {
+            await validateInvitationPermissions(
+              prisma,
+              invitation.organizationId,
+              invitation.inviterId,
+              JSON.parse(invitation.permissions),
+            );
+          },
+          afterAcceptInvitation: async ({ invitation, member, user }) => {
+            await applyInvitationPermissions(
+              prisma,
+              {
+                id: invitation.id,
+                organizationId: invitation.organizationId,
+                permissions: JSON.parse(invitation.permissions),
+              },
+              member,
             );
             await createAuditWriter(prisma, invitation.organizationId, user.id)(
               "accept_invitation",

@@ -5,9 +5,12 @@ import { z } from "zod";
 import type { AppEnvironment } from "../env";
 import { requirePermission } from "../middleware/permission";
 
+import { invitationPermissionsSchema } from "../invitation-permissions";
+
 const createInvitationSchema = z
   .object({
     email: z.string().email(),
+    permissions: invitationPermissionsSchema.optional(),
     role: z.enum(["admin", "member"]).default("member"),
   })
   .strict();
@@ -44,6 +47,7 @@ export const invitationRouter = new Hono<AppEnvironment>()
         .auth.api.createInvitation({
           body: {
             ...parsed.data,
+            permissions: JSON.stringify(parsed.data.permissions ?? []),
             organizationId: context.get("orgId"),
           },
           headers: context.req.raw.headers,
@@ -83,12 +87,19 @@ export const invitationRouter = new Hono<AppEnvironment>()
           id: true,
           email: true,
           role: true,
+          permissions: true,
           status: true,
           expiresAt: true,
           createdAt: true,
         },
       });
-    return context.json({ status: "ok" as const, invitations });
+    return context.json({
+      status: "ok" as const,
+      invitations: invitations.map(({ permissions, ...invitation }) => ({
+        ...invitation,
+        permissions: JSON.parse(permissions),
+      })),
+    });
   })
   .post("/accept", async (context) => {
     const parsed = invitationActionSchema.safeParse(

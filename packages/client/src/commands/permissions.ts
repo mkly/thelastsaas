@@ -384,10 +384,14 @@ function registerInvitationCommands(
     .description("Invite a user to the organization")
     .requiredOption("-e, --email <email>", "email address")
     .option("-r, --role <role>", "organization role", "member")
+    .option(
+      "--permissions <json>",
+      "permission grants to apply when the invitation is accepted",
+    )
     .action(
       withErrorHandling(
         async (
-          commandOptions: { email: string; role: string },
+          commandOptions: { email: string; role: string; permissions?: string },
           command: Command,
         ) => {
           const options = globalOptions(command);
@@ -399,6 +403,14 @@ function registerInvitationCommands(
             json: {
               email: commandOptions.email,
               role: invitationRole(commandOptions.role),
+              ...(commandOptions.permissions === undefined
+                ? {}
+                : {
+                    permissions: parseJson(
+                      commandOptions.permissions,
+                      "permissions",
+                    ),
+                  }),
             },
           });
           const result = await dependencies.handleResponse<{

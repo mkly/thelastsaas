@@ -22,6 +22,7 @@ interface MemberRow {
 }
 
 interface InvitationRow {
+  permissions: string;
   id: string;
   organizationId: string;
   email: string;
@@ -184,10 +185,16 @@ function createFixture() {
       createInvitation: async ({
         body,
       }: {
-        body: { email: string; role: string; organizationId: string };
+        body: {
+          email: string;
+          role: string;
+          organizationId: string;
+          permissions: string;
+        };
       }) => {
         const invitation = {
           id: `invitation_${nextInvitationId++}`,
+          permissions: body.permissions,
           organizationId: body.organizationId,
           email: body.email,
           role: body.role,

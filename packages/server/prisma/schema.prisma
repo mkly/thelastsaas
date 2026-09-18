@@ -347,6 +347,7 @@ model Member {
 }
 
 model Invitation {
+  permissions    String       @default("[]")
   id             String       @id
   organizationId String
   email          String

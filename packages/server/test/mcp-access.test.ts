@@ -267,13 +267,27 @@ describe("MCP access tools", () => {
 
     const created = await admin.callTool({
       name: "invitations_create",
-      arguments: { email: "invitee@example.com", role: "member" },
+      arguments: {
+        email: "invitee@example.com",
+        role: "member",
+        permissions: [{ resource: "/collections/tasks", action: "read" }],
+      },
     });
     expect(created.isError).not.toBe(true);
     expect(created.structuredContent).toMatchObject({
       status: "ok",
       email: "invitee@example.com",
       role: "member",
+    });
+
+    const pending = await admin.callTool({
+      name: "invitations_list",
+      arguments: {},
+    });
+    expect(pending.structuredContent).toMatchObject({
+      invitations: [
+        { permissions: [{ resource: "/collections/tasks", action: "read" }] },
+      ],
     });
 
     const denied = await reader.callTool({

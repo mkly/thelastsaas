@@ -238,6 +238,8 @@ describe("invitation commands", () => {
         "invite",
         "--email",
         "new@example.test",
+        "--permissions",
+        '[{"resource":"/collections/reading_list","action":"read"}]',
         "--role",
         "admin",
       ],
@@ -265,6 +267,7 @@ describe("invitation commands", () => {
     expect(await requestBody(0)).toEqual({
       email: "new@example.test",
       role: "admin",
+      permissions: [{ resource: "/collections/reading_list", action: "read" }],
     });
     expect(await requestBody(2)).toEqual({ invitation_id: "invite_1" });
     expect(await requestBody(3)).toEqual({ invitation_id: "invite_2" });

@@ -1,3 +1,4 @@
+import { invitationPermissionsSchema } from "../../invitation-permissions";
 import {
   CollectionNotFoundError,
   LastSaasError,
@@ -712,9 +713,11 @@ function registerInvitationTools(
   server.registerTool(
     "invitations_create",
     {
-      description: "Invite a user to the organization",
+      description:
+        "Invite a user with optional permissions, applied automatically when they accept. Members have no collection access by default.",
       inputSchema: {
         email: z.string().email(),
+        permissions: invitationPermissionsSchema.optional(),
         role: z.enum(memberRoles).default("member"),
       },
     },
@@ -725,18 +728,20 @@ function registerInvitationTools(
         const invitation = await callAuthApi(
           () =>
             context.services.auth.api.createInvitation({
-              body: { ...input, organizationId: requireOrganization(context) },
+              body: {
+                ...input,
+                permissions: JSON.stringify(input.permissions ?? []),
+                organizationId: requireOrganization(context),
+              },
               headers,
             }),
           "Failed to create invitation",
         );
-        await audit(
-          context,
-          "create_invitation",
-          "invitation",
-          invitation.id,
-          input,
-        );
+        await audit(context, "create_invitation", "invitation", invitation.id, {
+          email: input.email,
+          role: input.role,
+          permissions: JSON.stringify(input.permissions ?? []),
+        });
         return {
           status: "ok",
           invitation_id: invitation.id,
@@ -760,6 +765,7 @@ function registerInvitationTools(
           id: true,
           email: true,
           role: true,
+          permissions: true,
           status: true,
           expiresAt: true,
           createdAt: true,
@@ -769,6 +775,7 @@ function registerInvitationTools(
         status: "ok",
         invitations: invitations.map((invitation) => ({
           ...invitation,
+          permissions: JSON.parse(invitation.permissions),
           expiresAt: invitation.expiresAt.toISOString(),
           createdAt: invitation.createdAt.toISOString(),
         })),

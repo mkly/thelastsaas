@@ -59,7 +59,8 @@ Sunday at 7 pm."
 
 If you'd like someone to join you, ask "Help me invite someone to my
 organization." Your assistant will ask for their email address and help you
-choose their access.
+choose their access. For example, ask "Invite someone to view my Reading List."
+Their access is applied automatically when they accept.
 
 If you have an agent you'd like to connect, ask "Help me set up a service
 account for my agent." A service account gives the agent its own identity
@@ -73,6 +74,8 @@ explain what's available.
 For the assistant: assume this is the person's first time using Last SaaS.
 Keep the introduction short and follow the person's lead.
 Use plain language. Avoid sales pitches, em dashes, and unnecessary reassurance.
+When inviting someone with specific access, include the requested permissions in
+the invitation. Do not wait for them to join before setting up their access.
 ${organizationInstructions[interfaceType]}
 
 Then start with the reading list. After it's created, offer to set up a reading

@@ -216,3 +216,9 @@ new configurations should use conditional grants. No database migration is
 needed: optional grant metadata uses the existing `casbin_rule.v3` column. All
 server instances must run this version before creating conditional grants;
 older versions do not interpret that metadata.
+
+`invitations_create` accepts optional `permissions`, an array of grants with
+`resource`, `action`, and optional `where`/`fields`. For read-only access to a
+reading list, include `[{"resource":"/collections/reading_list","action":"read"}]`.
+The grants are applied when the recipient accepts; no existing account is needed
+to send the invitation. `invitations_list` includes the pending grants.

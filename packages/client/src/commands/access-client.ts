@@ -98,7 +98,7 @@ interface InvitationRoutes {
   $get(input: { param: OrgParam }): Promise<Response>;
   $post(input: {
     param: OrgParam;
-    json: { email: string; role: "admin" | "member" };
+    json: { email: string; role: "admin" | "member"; permissions?: unknown };
   }): Promise<Response>;
   accept: {
     $post(input: {
