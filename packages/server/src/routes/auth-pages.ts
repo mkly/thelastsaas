@@ -344,7 +344,7 @@ authPagesRouter.post("/magic-link", async (context) => {
     htmlPage(
       "Check Your Email",
       `<div class="card">
-        <p>Check <strong>${escapeHtml(email)}</strong> for a sign-in link. If you are new here, following the link will create your account. The link expires shortly, so use it soon.</p>
+        <p>Check <strong>${escapeHtml(email)}</strong> for a sign-in link.</p>
       </div>`,
       { narrow: true },
     ),

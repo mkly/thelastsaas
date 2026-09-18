@@ -609,9 +609,7 @@ describe("browser auth pages", () => {
       body: formBody({ email: "auth-user@example.com" }),
     });
     expect(sent.status).toBe(200);
-    expect(await sent.text()).toContain(
-      "following the link will create your account",
-    );
+    expect(await sent.text()).toContain("for a sign-in link.");
     const email = emails.find((candidate) => candidate.type === "magic-link");
     expect(email?.to).toBe("auth-user@example.com");
 
