@@ -878,7 +878,7 @@ pre > code { padding: 0; border: 0; background: none; font-size: var(--text-sm);
 .install-section > h2 { margin-block-start: 0; scroll-margin-block-start: 1.5rem; }
 .install-section > h3 { margin-block-start: 1.75rem; }
 .install-guide pre { white-space: pre-wrap; overflow-wrap: anywhere; }
-.install-endpoint { padding: 1rem; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-md); }
+.install-endpoint { margin-block-end: 1.25rem; padding: 1rem; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-md); }
 .install-endpoint pre { margin: .375rem 0 0; padding: 0; border: 0; background: transparent; }
 .install-client { border: 1px solid var(--border); border-radius: var(--radius-md); margin-block: .625rem; overflow: hidden; }
 .install-client > summary { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1rem; font-weight: 600; cursor: pointer; list-style: none; }
