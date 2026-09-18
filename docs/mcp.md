@@ -40,6 +40,8 @@ File content is transferred as RFC 4648 base64 through `files_upload` and
 
 The `getting_started` tool explains collections, records, and fields, and
 includes a reading list example using requests you can give your assistant.
+After creating the list, the guide suggests a reading reminder, followed by
+optional steps for inviting someone or connecting an agent with a service account.
 It takes no arguments and does not read or change organization data.
 
 Try asking your assistant "What can I do with Last SaaS?" or "Help me get

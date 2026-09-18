@@ -24,13 +24,36 @@ Start by creating your first reading list.
 
 You can also ask to find a book or change a detail.
 
-Opening this guide doesn't change any data. Trying the steps above saves a
-list and a book. If you don't have permission for a step, your assistant will
+## Set a reading reminder
+
+Once you've made your list, you can set up a notification. Ask "Remind me to
+read tomorrow at 7 pm." Your assistant will help you choose where to receive it.
+
+You can also ask for a recurring reminder, like "Remind me to read every
+Sunday at 7 pm."
+
+## Invite someone or set up an agent
+
+If you'd like someone to join you, ask "Help me invite someone to my
+organization." Your assistant will ask for their email address and help you
+choose their access.
+
+If you have an agent you'd like to connect, ask "Help me set up a service
+account for my agent." A service account gives the agent its own identity
+and access. Your assistant will help you choose what it can do and provide
+a link to claim its access token.
+
+Opening this guide doesn't change any data. Your assistant will carry out
+the steps you ask for. If you don't have permission for a step, it will
 explain what's available.
 
 For the assistant: assume this is the person's first time using Last SaaS.
 Keep the introduction short and follow the person's lead.
 Use plain language. Avoid sales pitches, em dashes, and unnecessary reassurance.
+Start with the reading list. After it's created, offer to set up a reading
+reminder. After the reminder is set up, mention inviting someone or connecting
+an agent as optional next steps. Introduce one step at a time and let the
+person skip or stop. Ask for missing details before carrying out a step.
 Only create or change data when asked, not just because this guide was opened.
 `;
 
@@ -39,7 +62,7 @@ export function registerGettingStarted(server: McpServer): void {
     "getting_started",
     {
       description:
-        "Read the basics of Last SaaS and an optional reading list example. Use when someone asks what Last SaaS does or wants help getting started.",
+        "Read the basics of Last SaaS with a reading list example and optional steps for reminders, invitations, and agent service accounts. Use when someone asks what Last SaaS does or wants help getting started.",
       inputSchema: z.object({}).strict(),
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
