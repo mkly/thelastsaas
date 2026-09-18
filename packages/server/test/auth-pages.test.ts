@@ -268,16 +268,16 @@ describe("browser auth pages", () => {
       ["/auth/magic-link", "Magic Link"],
       ["/auth/forgot-password", "Forgot Password"],
       ["/auth/reset-password?token=test-token", "Reset Password"],
-      ["/auth/install", "Install CLI"],
+      ["/install", "Install"],
     ]) {
       const response = await app.request(`http://localhost:3000${path}`);
       expect(response.status).toBe(200);
       const html = await response.text();
       expect(html).toContain(`<h1>${heading}</h1>`);
-      expect(html).toContain('<a href="/auth/install">Install CLI</a>');
+      expect(html).toContain('<a href="/install">Install</a>');
     }
 
-    const install = await app.request("http://localhost:3000/auth/install");
+    const install = await app.request("http://localhost:3000/install");
     const installHtml = await install.text();
     expect(installHtml).toContain('href="/dl/linux-x64/saas"');
     expect(installHtml).toContain('href="/dl/windows-x64/saas.exe"');
@@ -312,8 +312,7 @@ describe("browser auth pages", () => {
     );
     expect(dashboard.status).toBe(200);
     const dashboardHtml = await dashboard.text();
-    expect(dashboardHtml).toContain('<a href="/auth/install">Install CLI</a>');
-    expect(dashboardHtml).toContain('<a href="/auth/mcp">MCP Server</a>');
+    expect(dashboardHtml).toContain('<a href="/install">Install</a>');
     /* Log out is an icon in the header, so the name is only in the label. */
     expect(dashboardHtml).toContain(
       '<a class="icon-link" href="/auth/logout" aria-label="Log Out"',
@@ -344,7 +343,7 @@ describe("browser auth pages", () => {
     );
     expect(createdOrganization.status).toBe(303);
     expect(createdOrganization.headers.get("location")).toBe(
-      "/auth/mcp?message=Browser+Organization+created.+Next%2C+connect+your+assistant.",
+      "/install?message=Browser+Organization+created.+Next%2C+connect+your+assistant.",
     );
 
     const dashboardAfterCreation = await app.request(
@@ -368,7 +367,7 @@ describe("browser auth pages", () => {
       expect(response.headers.get("location")).toBe("/auth/dashboard");
     }
 
-    const install = await app.request("http://localhost:3000/auth/install", {
+    const install = await app.request("http://localhost:3000/install", {
       headers: { Cookie: cookie! },
     });
     const installHtml = await install.text();
@@ -399,10 +398,9 @@ describe("browser auth pages", () => {
     const cookie = loginResponse.headers.get("set-cookie")?.split(";")[0];
     expect(cookie).toBeTruthy();
 
-    const unauthenticated = await app.request("http://localhost:3000/auth/mcp");
+    const unauthenticated = await app.request("http://localhost:3000/install");
     expect(unauthenticated.status).toBe(200);
     const anonymousHtml = await unauthenticated.text();
-    expect(anonymousHtml).toContain("No account yet");
     expect(anonymousHtml).toContain('<a href="/auth/signup">');
     expect(anonymousHtml).toContain("http://localhost:3000/v1/mcp");
 
@@ -417,18 +415,18 @@ describe("browser auth pages", () => {
     expect(created.status).toBe(201);
     await created.json();
 
-    const page = await app.request("http://localhost:3000/auth/mcp", {
+    const page = await app.request("http://localhost:3000/install", {
       headers: { Cookie: cookie! },
     });
     expect(page.status).toBe(200);
     const html = await page.text();
-    expect(html).toContain("<h1>MCP Server</h1>");
+    expect(html).toContain("<h1>Install</h1>");
     expect(html).toContain("http://localhost:3000/v1/mcp");
     expect(html).toContain("ChatGPT");
     expect(html).toContain("Claude");
     expect(html).toContain("No CLI or copied token is required");
     expect(html).not.toContain("session_token");
-    expect(html).toContain('aria-current="page">MCP Server</a>');
+    expect(html).toContain('aria-current="page">Install</a>');
   });
 
   test("completes MCP OAuth discovery, consent, token, and refresh", async () => {

@@ -3,13 +3,7 @@ import { deleteCookie, setCookie } from "hono/cookie";
 import { csrf } from "hono/csrf";
 
 import type { AppEnvironment } from "../env";
-import {
-  THEME_COOKIE,
-  escapeHtml,
-  getExternalOrigin,
-  htmlPage,
-  parseTheme,
-} from "../html";
+import { THEME_COOKIE, escapeHtml, htmlPage, parseTheme } from "../html";
 import {
   createOrganizationForUser,
   createOrganizationSchema,
@@ -628,7 +622,7 @@ authPagesRouter.post("/dashboard/organizations", csrf(), async (context) => {
     });
     if (memberships === 1) {
       return context.redirect(
-        authPath("/auth/mcp", {
+        authPath("/install", {
           message: `${organization.name} created. Next, connect your assistant.`,
         }),
         303,
@@ -654,119 +648,6 @@ authPagesRouter.post("/dashboard/organizations", csrf(), async (context) => {
 function initial(name: string, email: string): string {
   return (name.trim() || email).charAt(0);
 }
-
-authPagesRouter.get("/install", async (context) => {
-  const server = getExternalOrigin(
-    context.req.raw,
-    context.get("config")?.betterAuthUrl,
-  );
-  const oneLiner = `curl -fsSL ${server}/install.sh | sh`;
-  const binaries = [
-    ["Linux x64", "linux-x64", "saas"],
-    ["Linux arm64", "linux-arm64", "saas"],
-    ["macOS x64 (Intel)", "darwin-x64", "saas"],
-    ["macOS arm64 (Apple Silicon)", "darwin-arm64", "saas"],
-    ["Windows x64", "windows-x64", "saas.exe"],
-  ]
-    .map(
-      ([label, platform, file]) =>
-        `<li class="record">
-          <div class="record__body"><div class="record__title">${escapeHtml(label)}</div></div>
-          <a class="button secondary" href="/dl/${platform}/${file}">Download</a>
-        </li>`,
-    )
-    .join("");
-
-  return context.html(
-    htmlPage(
-      "Install CLI",
-      `<h2>Quick install (Linux / macOS)</h2>
-    <pre><code>${escapeHtml(oneLiner)}</code></pre>
-    <p class="small muted">Detects your OS and architecture, downloads the matching binary, and installs it to <code>$HOME/.local/bin/saas</code>. Override the destination with <code>LASTSAAS_INSTALL_DIR=~/bin</code>.</p>
-
-    <h2>Manual download</h2>
-    <ul class="record-list">${binaries}</ul>
-    <p class="small muted" style="margin-block-start:0.75rem">After downloading on Linux or macOS, make it executable (<code>chmod +x saas</code>) and move it somewhere on your <code>$PATH</code>.</p>
-
-    <h2>First run</h2>
-    <pre><code>saas login --server ${escapeHtml(server)}</code></pre>
-    <p class="small muted">This opens a browser window to complete authentication. See <a href="/auth/dashboard">your dashboard</a> once signed in.</p>`,
-      {
-        authenticated: await isAuthenticated(context),
-        current: "/auth/install",
-        description:
-          "The saas CLI lets you manage your account on The Last SaaS from a terminal.",
-      },
-    ),
-  );
-});
-
-authPagesRouter.get("/mcp", async (context) => {
-  const { auth, prisma } = context.get("services");
-  const session = await auth.api.getSession({
-    headers: context.req.raw.headers,
-  });
-
-  const server = getExternalOrigin(
-    context.req.raw,
-    context.get("config")?.betterAuthUrl,
-  );
-  const memberships = session?.user
-    ? await prisma.member.count({
-        where: { userId: session.user.id },
-      })
-    : 0;
-  const endpoint = `${server}/v1/mcp`;
-  const availability = session?.user
-    ? memberships
-      ? ""
-      : `<div class="empty">
-        <h3>No organizations yet</h3>
-        <p>Connect your assistant to create your first organization, or <a href="/auth/dashboard">create one here</a>.</p>
-      </div>`
-    : `<div class="empty">
-        <h3>No account yet</h3>
-        <p><a href="/auth/signup">Sign up</a> to connect. Your assistant can help you create an organization. Your AI client sends you back here to sign in when it connects.</p>
-      </div>`;
-
-  return context.html(
-    htmlPage(
-      "MCP Server",
-      `${messageBanner(context)}${availability}
-      <h2>Remote MCP URL</h2>
-      <pre><code>${escapeHtml(endpoint)}</code></pre>
-      <p class="small muted">Your AI client opens this site so you can sign in and approve account access. No CLI or copied token is required.</p>
-
-      <h2>Connect Claude</h2>
-      <ol>
-        <li>Open <strong>Settings → Connectors</strong> in claude.ai or the desktop app.</li>
-        <li>Select <strong>Add custom connector</strong> and enter the remote MCP URL above.</li>
-        <li>Select <strong>Add</strong>.</li>
-        <li>Sign in here and approve account access. Then ask your assistant to select or create an organization.</li>
-      </ol>
-      <p class="small muted">New chats can use it right away. If you don't see it, enable it in the tools menu under the message box.</p>
-
-      <h2>Connect ChatGPT</h2>
-      <ol>
-        <li>In the desktop app, add a custom connector in ChatGPT's settings and enter the remote MCP URL above.</li>
-        <li>Approve the connection when ChatGPT asks.</li>
-        <li>Sign in here and approve account access. Then ask your assistant to select or create an organization.</li>
-      </ol>
-      <p class="small muted">On the web, custom connectors currently require a Business, Enterprise, or Edu workspace, where an admin adds the connector in workspace settings.</p>
-
-      <h2>Connect Claude Code</h2>
-      <pre><code>claude mcp add --transport http lastsaas ${escapeHtml(endpoint)}</code></pre>
-
-      <p class="small muted">Prefer a terminal? <a href="/auth/install">Install the CLI</a> instead.</p>`,
-      {
-        authenticated: Boolean(session?.user),
-        current: "/auth/mcp",
-        description:
-          "Connect ChatGPT, Claude, or any MCP client to The Last SaaS.",
-      },
-    ),
-  );
-});
 
 function oauthQuery(context: Context<AppEnvironment>): string {
   return new URL(context.req.url).searchParams.toString();

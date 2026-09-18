@@ -871,4 +871,25 @@ pre > code { padding: 0; border: 0; background: none; font-size: var(--text-sm);
   .nav { inline-size: 100%; overflow-x: auto; order: 1; }
   .record { flex-wrap: wrap; }
 }
+
+/* Installation instructions use native disclosures, including keyboard support. */
+.install-guide { max-inline-size: 48rem; }
+.install-section { margin-block-start: 2.5rem; }
+.install-section > h2 { margin-block-start: 0; scroll-margin-block-start: 1.5rem; }
+.install-section > h3 { margin-block-start: 1.75rem; }
+.install-guide pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.install-endpoint { padding: 1rem; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-md); }
+.install-endpoint pre { margin: .375rem 0 0; padding: 0; border: 0; background: transparent; }
+.install-client { border: 1px solid var(--border); border-radius: var(--radius-md); margin-block: .625rem; overflow: hidden; }
+.install-client > summary { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1rem; font-weight: 600; cursor: pointer; list-style: none; }
+.install-client > summary::-webkit-details-marker { display: none; }
+.install-client > summary::after { content: "+"; color: var(--text-muted); font-weight: 400; }
+.install-client[open] > summary::after { content: "-"; }
+.install-client > summary:hover { background: var(--surface-2); }
+.install-client > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
+.install-client[open] > summary { border-bottom: 1px solid var(--border); }
+.install-instructions { padding: .25rem 1rem 1rem; }
+.install-instructions ol { padding-inline-start: 1.25rem; }
+.install-instructions li + li { margin-block-start: .75rem; }
+.install-instructions > :last-child { margin-block-end: 0; }
 `;

@@ -1,3 +1,4 @@
+import { installRouter } from "./routes/install";
 import { Hono } from "hono";
 import { getCookie } from "hono/cookie";
 import { HTTPException } from "hono/http-exception";
@@ -78,6 +79,7 @@ export function createApp({
   );
 
   app.route("/auth", authPagesRouter);
+  app.route("/", installRouter);
   app.route("/", downloadsRouter);
   app.route("/", assetsRouter);
   app.route("/", homeRouter);
