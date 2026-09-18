@@ -1,32 +1,20 @@
+import { sql } from "../kysely";
 import type { QueryAdapter } from "./types";
-
-/** Statements built by the shared compiler use ? exclusively as bind markers. */
-export function postgresParameters(statement: string): string {
-  let index = 0;
-  return statement.replaceAll("?", () => `$${++index}`);
-}
 
 /** PostgreSQL queries target JSONB directly, including the data GIN index. */
 export const postgresAdapter: QueryAdapter = {
-  extract: (field) => `data->>'${field}'`,
-  numeric: (expression) => `(${expression})::numeric`,
-  boolean: (expression) => `(${expression})::boolean`,
+  extract: (field) => sql`data->>${field}`,
+  numeric: (expression) => sql`(${expression})::numeric`,
+  boolean: (expression) => sql`(${expression})::boolean`,
   parameter: (value) => value,
   equality(field, value, preserveUnknown) {
-    const contains = "data @> CAST(? AS jsonb)";
-    return {
-      // SQL comparisons with missing/null values are UNKNOWN. Preserve that
-      // under NOT, otherwise negation could accidentally grant access to rows.
-      // Positive predicates use bare containment so GIN can locate candidates.
-      sql: preserveUnknown
-        ? `CASE WHEN ${this.extract(field)} IS NULL THEN NULL ELSE ${contains} END`
-        : contains,
-      params: [JSON.stringify({ [field]: value })],
-    };
+    const contains = sql`data @> CAST(${JSON.stringify({ [field]: value })} AS jsonb)`;
+    // Preserve SQL UNKNOWN under NOT so missing/null fields cannot grant access.
+    return preserveUnknown
+      ? sql`CASE WHEN ${this.extract(field)} IS NULL THEN NULL ELSE ${contains} END`
+      : contains;
   },
-  fieldExists: (field) => `data->'${field}' IS NOT NULL`,
-  sql: postgresParameters,
-  candidateJson: "CAST(? AS jsonb)",
-  candidateTimestamp: "CAST(? AS timestamp)",
-  timestampParameter: (value) => value.toISOString(),
+  fieldExists: (field) => sql`data->${field} IS NOT NULL`,
+  candidateJson: (value) => sql`CAST(${JSON.stringify(value)} AS jsonb)`,
+  candidateTimestamp: (value) => sql`CAST(${value.toISOString()} AS timestamp)`,
 };

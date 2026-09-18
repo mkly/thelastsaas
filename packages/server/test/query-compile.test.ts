@@ -5,15 +5,34 @@ import type { AggregateRequest, Schema, Where } from "@lastsaas/shared";
 import {
   andWhere,
   applyOrgScope,
-  compileAggregate,
-  compileOrderBy,
-  compileWhere,
+  compileAggregate as buildAggregate,
+  compileOrderBy as buildOrderBy,
+  compileWhere as buildWhere,
   substitute,
-  toPgParams,
   validateField,
   type Principal,
 } from "../src/db/query/compile";
 import { whereSchema } from "../src/db/query/validation";
+
+import { sql, compileSql, type SqlFragment } from "../src/db/query/kysely";
+import type { DbProvider } from "../src/db/query/adapters";
+
+function rendered(expression: SqlFragment | undefined, provider: DbProvider) {
+  if (!expression) return { sql: "", params: [] };
+  const compiled = compileSql(expression, provider);
+  return { sql: compiled.sql, params: [...compiled.parameters] };
+}
+function compileWhere(...args: Parameters<typeof buildWhere>) {
+  const { expression, ...rest } = buildWhere(...args);
+  return { ...rest, ...rendered(expression, args[2]) };
+}
+function compileOrderBy(...args: Parameters<typeof buildOrderBy>) {
+  return rendered(buildOrderBy(...args), args[2]).sql;
+}
+function compileAggregate(...args: Parameters<typeof buildAggregate>) {
+  const { expression, ...rest } = buildAggregate(...args);
+  return { ...rest, ...rendered(expression, args[2]) };
+}
 
 const schema: Schema = {
   name: "string",
@@ -37,12 +56,12 @@ describe("compileWhere — flat leaves", () => {
 
   test("compiles exact matches for both dialects", () => {
     expect(compileWhere({ name: "Alice" }, schema, "sqlite")).toEqual({
-      sql: "json_extract(data, '$.name') = ?",
-      params: ["Alice"],
+      sql: "json_extract(data, ?) = ?",
+      params: ["$.name", "Alice"],
       postFilters: [],
     });
     expect(compileWhere({ name: "Alice" }, schema, "postgresql")).toEqual({
-      sql: "data @> CAST(? AS jsonb)",
+      sql: "data @> CAST($1 AS jsonb)",
       params: ['{"name":"Alice"}'],
       postFilters: [],
     });
@@ -52,15 +71,15 @@ describe("compileWhere — flat leaves", () => {
     expect(
       compileWhere({ name: { eq: "Bob" } } as Where, schema, "sqlite"),
     ).toMatchObject({
-      sql: "json_extract(data, '$.name') = ?",
-      params: ["Bob"],
+      sql: "json_extract(data, ?) = ?",
+      params: ["$.name", "Bob"],
     });
     expect(
       compileWhere({ amount: { gt: 100 } } as Where, schema, "sqlite").sql,
-    ).toBe("CAST(json_extract(data, '$.amount') AS REAL) > ?");
+    ).toBe("CAST(json_extract(data, ?) AS REAL) > ?");
     expect(
       compileWhere({ amount: { gt: 100 } } as Where, schema, "postgresql").sql,
-    ).toBe("(data->>'amount')::numeric > ?");
+    ).toBe("(data->>$1)::numeric > $2");
   });
 
   test("casts boolean fields for typed comparison on both dialects", () => {
@@ -69,26 +88,26 @@ describe("compileWhere — flat leaves", () => {
     // live). SQLite has no boolean type, so the parameter binds as 1/0 to
     // match json_extract's output.
     expect(compileWhere({ active: true }, schema, "postgresql")).toEqual({
-      sql: "data @> CAST(? AS jsonb)",
+      sql: "data @> CAST($1 AS jsonb)",
       params: ['{"active":true}'],
       postFilters: [],
     });
     expect(compileWhere({ active: true }, schema, "sqlite")).toEqual({
-      sql: "json_extract(data, '$.active') = ?",
-      params: [1],
+      sql: "json_extract(data, ?) = ?",
+      params: ["$.active", 1],
       postFilters: [],
     });
     expect(
       compileWhere({ active: { not: false } } as Where, schema, "postgresql"),
     ).toMatchObject({
-      sql: "NOT (CASE WHEN data->>'active' IS NULL THEN NULL ELSE data @> CAST(? AS jsonb) END)",
-      params: ['{"active":false}'],
+      sql: "NOT (CASE WHEN data->>$1 IS NULL THEN NULL ELSE data @> CAST($2 AS jsonb) END)",
+      params: ["active", '{"active":false}'],
     });
     expect(
       compileWhere({ active: { not: false } } as Where, schema, "sqlite"),
     ).toMatchObject({
-      sql: "NOT (json_extract(data, '$.active') = ?)",
-      params: [0],
+      sql: "NOT (json_extract(data, ?) = ?)",
+      params: ["$.active", 0],
     });
   });
 
@@ -96,18 +115,18 @@ describe("compileWhere — flat leaves", () => {
     expect(
       compileWhere({ amount: { eq: 5 } } as Where, schema, "postgresql"),
     ).toMatchObject({
-      sql: "data @> CAST(? AS jsonb)",
+      sql: "data @> CAST($1 AS jsonb)",
       params: ['{"amount":5}'],
     });
     expect(compileWhere({ amount: 5 }, schema, "sqlite")).toMatchObject({
-      sql: "json_extract(data, '$.amount') = ?",
-      params: [5],
+      sql: "json_extract(data, ?) = ?",
+      params: ["$.amount", 5],
     });
     expect(
       compileWhere({ count: { in: [1, 2] } } as Where, schema, "postgresql"),
     ).toMatchObject({
-      sql: "(data->>'count')::numeric IN (?, ?)",
-      params: [1, 2],
+      sql: "(data->>$1)::numeric IN ($2, $3)",
+      params: ["count", 1, 2],
     });
   });
 
@@ -122,8 +141,8 @@ describe("compileWhere — flat leaves", () => {
         "postgresql",
       ),
     ).toMatchObject({
-      sql: "data->>'due_at' >= ?",
-      params: ["2026-01-01"],
+      sql: "data->>$1 >= $2",
+      params: ["due_at", "2026-01-01"],
     });
     expect(
       compileWhere(
@@ -132,8 +151,8 @@ describe("compileWhere — flat leaves", () => {
         "sqlite",
       ),
     ).toMatchObject({
-      sql: "json_extract(data, '$.due_at') >= ?",
-      params: ["2026-01-01"],
+      sql: "json_extract(data, ?) >= ?",
+      params: ["$.due_at", "2026-01-01"],
     });
     expect(
       compileWhere(
@@ -141,7 +160,7 @@ describe("compileWhere — flat leaves", () => {
         schema,
         "postgresql",
       ).sql,
-    ).toBe("data->>'due_at' BETWEEN ? AND ?");
+    ).toBe("data->>$1 BETWEEN $2 AND $3");
     // Metadata datetime columns are native, so they compare uncast.
     expect(
       compileWhere(
@@ -149,7 +168,7 @@ describe("compileWhere — flat leaves", () => {
         schema,
         "postgresql",
       ).sql,
-    ).toBe("created_at < ?");
+    ).toBe('"created_at" < $1');
   });
 
   test("compiles contains with LIKE escaping", () => {
@@ -158,7 +177,7 @@ describe("compileWhere — flat leaves", () => {
       schema,
       "sqlite",
     );
-    expect(result.params).toEqual(["%\\%test\\_%"]);
+    expect(result.params).toEqual(["$.name", "%\\%test\\_%"]);
     expect(result.sql).toContain("LIKE");
     expect(result.sql).toContain("ESCAPE");
   });
@@ -171,8 +190,8 @@ describe("compileWhere — flat leaves", () => {
         "sqlite",
       ),
     ).toMatchObject({
-      sql: "json_extract(data, '$.status') IN (?, ?, ?)",
-      params: ["a", "b", "c"],
+      sql: "json_extract(data, ?) IN (?, ?, ?)",
+      params: ["$.status", "a", "b", "c"],
     });
     expect(
       compileWhere({ status: { in: [] } } as Where, schema, "sqlite").sql,
@@ -188,7 +207,7 @@ describe("compileWhere — flat leaves", () => {
       ),
     ).toMatchObject({
       sql: expect.stringContaining("BETWEEN ? AND ?"),
-      params: [10, 50],
+      params: ["$.amount", 10, 50],
     });
   });
 
@@ -213,7 +232,7 @@ describe("compileWhere — boolean composition", () => {
       "sqlite",
     );
     expect(andResult.sql).toContain(" AND ");
-    expect(andResult.params).toEqual(["A", 10]);
+    expect(andResult.params).toEqual(["$.name", "A", "$.amount", 10]);
 
     const orResult = compileWhere(
       { or: [{ status: "draft" }, { status: "pending" }] } as Where,
@@ -221,7 +240,12 @@ describe("compileWhere — boolean composition", () => {
       "sqlite",
     );
     expect(orResult.sql).toContain(" OR ");
-    expect(orResult.params).toEqual(["draft", "pending"]);
+    expect(orResult.params).toEqual([
+      "$.status",
+      "draft",
+      "$.status",
+      "pending",
+    ]);
 
     const notResult = compileWhere(
       { not: { name: "X" } } as Where,
@@ -229,7 +253,7 @@ describe("compileWhere — boolean composition", () => {
       "sqlite",
     );
     expect(notResult.sql).toContain("NOT (");
-    expect(notResult.params).toEqual(["X"]);
+    expect(notResult.params).toEqual(["$.name", "X"]);
 
     const nested = compileWhere(
       {
@@ -240,7 +264,14 @@ describe("compileWhere — boolean composition", () => {
     );
     expect(nested.sql).toContain("OR");
     expect(nested.sql).toContain("AND");
-    expect(nested.params).toHaveLength(3);
+    expect(nested.params).toEqual([
+      "$.name",
+      "A",
+      "$.name",
+      "B",
+      "$.amount",
+      5,
+    ]);
   });
 });
 
@@ -250,7 +281,7 @@ describe("policy seams", () => {
       extraWhere: { region: "us" },
     });
     expect(result.sql).toContain(" AND ");
-    expect(result.params).toEqual(["Ada", "us"]);
+    expect(result.params).toEqual(["$.name", "Ada", "$.region", "us"]);
   });
 
   test("exempts the injected predicate from the caller's field allowlist", () => {
@@ -259,15 +290,15 @@ describe("policy seams", () => {
       isFieldAllowed: (field) => field !== "region",
     });
     expect(result.sql).toContain(" AND ");
-    expect(result.params).toEqual(["Ada", "us"]);
+    expect(result.params).toEqual(["$.name", "Ada", "$.region", "us"]);
   });
 
   test("compiles the injected predicate alone when no Where is requested", () => {
     const result = compileWhere(null, schema, "sqlite", {
       extraWhere: { region: "us" },
     });
-    expect(result.sql).toBe("json_extract(data, '$.region') = ?");
-    expect(result.params).toEqual(["us"]);
+    expect(result.sql).toBe("json_extract(data, ?) = ?");
+    expect(result.params).toEqual(["$.region", "us"]);
   });
 
   test("calls the allowlist for Where and ordering references", () => {
@@ -363,8 +394,8 @@ describe("occurs_between extraction", () => {
       schema,
       "sqlite",
     );
-    expect(andResult.sql).toContain("status");
-    expect(andResult.params).toEqual(["open"]);
+    expect(andResult.sql).toContain("json_extract");
+    expect(andResult.params).toEqual(["$.status", "open"]);
     expect(andResult.postFilters).toHaveLength(1);
 
     // A post-filter descriptor carries no boolean position, so the caller can
@@ -421,40 +452,38 @@ describe("occurs_between extraction", () => {
 
 describe("compileOrderBy", () => {
   test("defaults to the native created_at DateTime column", () => {
-    expect(compileOrderBy(null, schema, "sqlite")).toBe(
-      "ORDER BY created_at DESC",
-    );
+    expect(compileOrderBy(null, schema, "sqlite")).toBe("created_at DESC");
   });
 
   test("handles native timestamps and JSON schema fields", () => {
     expect(compileOrderBy("-updated_at", schema, "sqlite")).toBe(
-      "ORDER BY updated_at DESC",
+      '"updated_at" DESC',
     );
     expect(compileOrderBy("created_at", schema, "sqlite")).toBe(
-      "ORDER BY created_at ASC",
+      '"created_at" ASC',
     );
     expect(compileOrderBy("name", schema, "sqlite")).toContain("json_extract");
     // Numeric fields sort numerically on Postgres, not as `->>` text.
     expect(compileOrderBy("-amount", schema, "postgresql")).toBe(
-      "ORDER BY (data->>'amount')::numeric DESC NULLS FIRST",
+      "(data->>$1)::numeric DESC NULLS FIRST",
     );
     expect(compileOrderBy("active", schema, "postgresql")).toBe(
-      "ORDER BY (data->>'active')::boolean ASC NULLS LAST",
+      "(data->>$1)::boolean ASC NULLS LAST",
     );
-    expect(compileOrderBy("name", schema, "postgresql")).toContain(
-      "data->>'name'",
-    );
+    expect(compileOrderBy("name", schema, "postgresql")).toContain("data->>$1");
     expect(() => compileOrderBy("bogus", schema, "sqlite")).toThrow();
   });
 });
 
 describe("scope and Where composition", () => {
   test("prepends org and collection scope", () => {
-    expect(applyOrgScope("org1", "col1", "amount > ?", [10])).toEqual({
-      sql: "org_id = ? AND collection_id = ? AND amount > ?",
+    expect(
+      rendered(applyOrgScope("org1", "col1", sql`amount > ${10}`), "sqlite"),
+    ).toEqual({
+      sql: "org_id = ? AND collection_id = ? AND (amount > ?)",
       params: ["org1", "col1", 10],
     });
-    expect(applyOrgScope("org1", "col1", "", [])).toEqual({
+    expect(rendered(applyOrgScope("org1", "col1"), "sqlite")).toEqual({
       sql: "org_id = ? AND collection_id = ?",
       params: ["org1", "col1"],
     });
@@ -507,10 +536,17 @@ describe("substitute", () => {
 });
 
 describe("parameter and identifier helpers", () => {
-  test("converts placeholders for PostgreSQL", () => {
-    expect(toPgParams("WHERE a = ? AND b = ? LIMIT ?")).toBe(
-      "WHERE a = $1 AND b = $2 LIMIT $3",
-    );
+  test("numbers nested parameters without rewriting question marks or SQL literals", () => {
+    const inner = sql`data ? ${"key?"} AND id = ${"' OR 1=1 --"}`;
+    expect(
+      rendered(
+        sql`SELECT '?' FROM records WHERE org_id = ${"org"} AND (${inner}) LIMIT ${5}`,
+        "postgresql",
+      ),
+    ).toEqual({
+      sql: "SELECT '?' FROM records WHERE org_id = $1 AND (data ? $2 AND id = $3) LIMIT $4",
+      params: ["org", "key?", "' OR 1=1 --", 5],
+    });
   });
 
   test("validates schema fields", () => {
@@ -623,8 +659,8 @@ describe("compileAggregate", () => {
       "org1",
       "col1",
     );
-    expect(postgres.sql).toContain(`(data->>'active')::boolean AS "active"`);
-    expect(postgres.sql).toContain(`(data->>'amount')::numeric AS "amount"`);
+    expect(postgres.sql).toContain(`(data->>$1)::boolean AS "active"`);
+    expect(postgres.sql).toContain(`(data->>$2)::numeric AS "amount"`);
     expect(postgres.params).toContain(true);
 
     // SQLite group columns surface JSON booleans as 1/0, so the having
@@ -640,7 +676,7 @@ describe("compileAggregate", () => {
       "org1",
       "col1",
     );
-    expect(sqlite.sql).toContain(`json_extract(data, '$.active') AS "active"`);
+    expect(sqlite.sql).toContain(`json_extract(data, ?) AS "active"`);
     expect(sqlite.params).toContain(1);
     expect(sqlite.params).not.toContain(true);
   });
@@ -687,7 +723,14 @@ describe("compileAggregate", () => {
       "col1",
       { extraWhere: { status: "active" } },
     );
-    expect(result.params.slice(0, 4)).toEqual(["org1", "col1", "us", "active"]);
+    expect(result.params.slice(0, 6)).toEqual([
+      "org1",
+      "col1",
+      "$.region",
+      "us",
+      "$.status",
+      "active",
+    ]);
     expect(result.sql).toContain("org_id = ?");
     expect(result.sql).toContain("collection_id = ?");
   });

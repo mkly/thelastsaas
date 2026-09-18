@@ -12,3 +12,5 @@ data/
 *.db-wal
 packages/server/prisma/schema.postgres.prisma
 packages/server/prisma/:memory:
+
+packages/server/src/db/generated/

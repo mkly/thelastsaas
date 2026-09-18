@@ -45,6 +45,7 @@ try {
     "prisma/schema.postgres.prisma",
     "--skip-generate",
   ]);
+  await run(["bun", "run", "--cwd", "packages/server", "typecheck"]);
   await run(["bun", "test", "packages/server/test/query-backends.test.ts"]);
 } finally {
   try {

@@ -1,3 +1,4 @@
+import { sql, queryRows } from "../src/db/query/kysely";
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -19,7 +20,7 @@ import {
   queryRecords,
   updateRecord,
 } from "../src/db/records";
-import { compileWhere, dialectSql } from "../src/db/query/compile";
+import { compileWhere } from "../src/db/query/compile";
 import { closeServices, createServices } from "../src/services";
 import { testMigrationSql } from "./test-migrations";
 
@@ -177,6 +178,70 @@ describe(`query backend contract (${provider})`, () => {
     });
     expect(Number(result.rows[0]?.total)).toBe(12);
     expect(Number(result.rows[0]?.n)).toBe(2);
+  });
+
+  test("bound JSON paths work across grouping, having, ordering and pagination", async () => {
+    const { prisma, orgId, query } = await fixture();
+    const result = await aggregateRecords(prisma, orgId, "tasks", {
+      group_by: ["active", "amount"],
+      where: { amount: { is_null: false } },
+      metrics: [
+        { op: "count", as: "n" },
+        { op: "sum", field: "amount", as: "total" },
+      ],
+      having: { active: true, total: { between: [1, 3] }, n: { gte: 1 } },
+      order_by: "-total",
+      limit: 1,
+    });
+    expect(result.rows).toHaveLength(1);
+    expect(Boolean(result.rows[0]?.active)).toBe(true);
+    expect(Number(result.rows[0]?.amount)).toBe(2);
+    expect(Number(result.rows[0]?.total)).toBe(2);
+    expect(Number(result.rows[0]?.n)).toBe(1);
+    const page = await queryRecords(
+      prisma,
+      orgId,
+      "tasks",
+      { amount: { is_null: false } },
+      "amount",
+      1,
+      1,
+    );
+    expect(titles(page)).toEqual(["B"]);
+    expect(page.total).toBe(2);
+    expect(
+      titles(await query({ amount: { is_null: false } }, "amount")),
+    ).toEqual(["A", "B"]);
+  });
+
+  test("Kysely queries execute inside the supplied Prisma transaction", async () => {
+    const { prisma, orgId, collection, query } = await fixture();
+    await expect(
+      prisma.$transaction(async (tx) => {
+        await tx.record.create({
+          data: {
+            id: crypto.randomUUID(),
+            orgId,
+            collectionId: collection.id,
+            createdBy: "test",
+            data: { title: "Rollback", status: "temporary" },
+          },
+        });
+        const predicate = compileWhere(
+          { status: "temporary" },
+          schema,
+          provider,
+        );
+        const rows = await queryRows<{ id: string }>(
+          tx,
+          provider,
+          sql`SELECT id FROM records WHERE org_id = ${orgId} AND collection_id = ${collection.id} AND ${predicate.expression}`,
+        );
+        expect(rows).toHaveLength(1);
+        throw new Error("rollback probe");
+      }),
+    ).rejects.toThrow("rollback probe");
+    expect((await query({ status: "temporary" })).total).toBe(0);
   });
 
   test("conditional grants constrain reads, query inputs, writes and deletes", async () => {
@@ -419,12 +484,10 @@ describe(`query backend contract (${provider})`, () => {
       // plan locally to prove the generated predicate can use the actual index.
       const plan = await prisma.$transaction(async (tx) => {
         await tx.$executeRawUnsafe("SET LOCAL enable_seqscan = off");
-        return tx.$queryRawUnsafe(
-          dialectSql(
-            `EXPLAIN (FORMAT JSON) SELECT id FROM records WHERE ${where.sql}`,
-            provider,
-          ),
-          ...where.params,
+        return queryRows(
+          tx,
+          provider,
+          sql`EXPLAIN (FORMAT JSON) SELECT id FROM records WHERE ${where.expression}`,
         );
       });
       expect(JSON.stringify(plan)).toContain("records_data_gin_idx");

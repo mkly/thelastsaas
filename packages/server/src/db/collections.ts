@@ -1,3 +1,4 @@
+import { sql, queryRows } from "./query/kysely";
 import { queryProvider } from "./provider";
 import { queryAdapter } from "./query/adapters";
 import {
@@ -136,12 +137,10 @@ export async function updateCollectionSchema(
       } else {
         // Removing a field leaves its JSON data intact. Do not let re-adding
         // that name silently reinterpret those values as a different schema.
-        const rows = await prisma.$queryRawUnsafe<Array<{ id: string }>>(
-          adapter.sql(
-            `SELECT id FROM records WHERE org_id = ? AND collection_id = ? AND ${adapter.fieldExists(field)} LIMIT 1`,
-          ),
-          orgId,
-          collection.id,
+        const rows = await queryRows<{ id: string }>(
+          prisma,
+          queryProvider(prisma),
+          sql`SELECT id FROM records WHERE org_id = ${orgId} AND collection_id = ${collection.id} AND ${adapter.fieldExists(field)} LIMIT 1`,
         );
         if (rows.length)
           throw new SchemaValidationError([

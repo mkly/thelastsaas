@@ -7,6 +7,12 @@ generator client {
   provider = "prisma-client-js"
 }
 
+generator kysely {
+  provider = "prisma-kysely"
+  output = "../src/db/generated"
+  fileName = "types.ts"
+}
+
 // --- BetterAuth core models ---
 
 model User {

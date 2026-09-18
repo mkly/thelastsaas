@@ -1,3 +1,4 @@
+import { sql, queryBuilder, queryRows, executeStatement } from "./query/kysely";
 import {
   InvalidQueryError,
   RecordNotFoundError,
@@ -26,7 +27,6 @@ import {
   compileAggregate,
   compileOrderBy,
   compileWhere,
-  dialectSql,
   type QueryPostFilter,
 } from "./query/compile";
 
@@ -292,28 +292,16 @@ export async function getRecord(
       { extraWhere: rowFilter },
     );
     rejectDeferredFilters(compiled.postFilters);
-    const scoped = applyOrgScope(
-      orgId,
-      collection.id,
-      compiled.sql,
-      compiled.params,
-    );
-    const rows = await prisma.$queryRawUnsafe<
-      Array<{
-        id: string;
-        data: string | Prisma.JsonObject;
-        created_by: string;
-        created_at: Date;
-        updated_at: Date;
-      }>
-    >(
-      dialectSql(
-        `SELECT id, data, created_by, created_at, updated_at${projection?.sql ? ", " + projection.sql : ""} FROM records WHERE id = ? AND ${scoped.sql}`,
-        provider,
-      ),
-      ...(projection?.params ?? []),
-      recordId,
-      ...scoped.params,
+    const scoped = applyOrgScope(orgId, collection.id, compiled.expression);
+    const rows = await queryRows<QueryRow>(
+      prisma,
+      provider,
+      queryBuilder(provider)
+        .selectFrom("records")
+        .select(["id", "data", "created_by", "created_at", "updated_at"])
+        .select(projection ?? [])
+        .where("id", "=", recordId)
+        .where(sql<boolean>`${scoped}`),
     );
     const filtered = rows[0];
     if (!filtered) throw new RecordNotFoundError(recordId);
@@ -414,21 +402,11 @@ export async function updateRecord(
       extraWhere: rowFilter,
     });
     rejectDeferredFilters(compiled.postFilters);
-    const scoped = applyOrgScope(
-      orgId,
-      collection.id,
-      compiled.sql,
-      compiled.params,
-    );
-    const rows = await prisma.$queryRawUnsafe<
-      Array<{ data: string | Prisma.JsonObject }>
-    >(
-      dialectSql(
-        `SELECT data FROM records WHERE id = ? AND ${scoped.sql}`,
-        provider,
-      ),
-      recordId,
-      ...scoped.params,
+    const scoped = applyOrgScope(orgId, collection.id, compiled.expression);
+    const rows = await queryRows<{ data: string | Prisma.JsonObject }>(
+      prisma,
+      provider,
+      sql`SELECT data FROM records WHERE id = ${recordId} AND ${scoped}`,
     );
     const filtered = rows[0];
     existing = filtered
@@ -475,19 +453,11 @@ export async function deleteRecord(
       provider,
     );
     rejectDeferredFilters(compiled.postFilters);
-    const scoped = applyOrgScope(
-      orgId,
-      collection.id,
-      compiled.sql,
-      compiled.params,
-    );
-    const deleted = await prisma.$executeRawUnsafe(
-      dialectSql(
-        `DELETE FROM records WHERE id = ? AND ${scoped.sql}`,
-        provider,
-      ),
-      recordId,
-      ...scoped.params,
+    const scoped = applyOrgScope(orgId, collection.id, compiled.expression);
+    const deleted = await executeStatement(
+      prisma,
+      provider,
+      sql`DELETE FROM records WHERE id = ${recordId} AND ${scoped}`,
     );
     if (!deleted) throw new RecordNotFoundError(recordId);
     return;
@@ -500,19 +470,11 @@ export async function deleteRecord(
       { extraWhere: rowFilter },
     );
     rejectDeferredFilters(compiled.postFilters);
-    const scoped = applyOrgScope(
-      orgId,
-      collection.id,
-      compiled.sql,
-      compiled.params,
-    );
-    const rows = await prisma.$queryRawUnsafe<Array<{ id: string }>>(
-      dialectSql(
-        `SELECT id FROM records WHERE id = ? AND ${scoped.sql}`,
-        provider,
-      ),
-      recordId,
-      ...scoped.params,
+    const scoped = applyOrgScope(orgId, collection.id, compiled.expression);
+    const rows = await queryRows<{ id: string }>(
+      prisma,
+      provider,
+      sql`SELECT id FROM records WHERE id = ${recordId} AND ${scoped}`,
     );
     if (rows.length === 0) throw new RecordNotFoundError(recordId);
   }
@@ -563,29 +525,23 @@ export async function queryRecords(
       "Only one 'occurs_between' clause may be used in a record query",
     );
   }
-  const scoped = applyOrgScope(
-    orgId,
-    collection.id,
-    compiled.sql,
-    compiled.params,
-  );
+  const scoped = applyOrgScope(orgId, collection.id, compiled.expression);
   const safeLimit = Math.max(1, Math.min(Math.trunc(limit), 1000));
   const safeOffset = Math.max(0, Math.trunc(offset));
   const recurrenceFilter = recurrenceFilters[0];
+
+  const selection = queryBuilder(provider)
+    .selectFrom("records")
+    .select(["id", "data", "created_by", "created_at", "updated_at"])
+    .select(projection ?? [])
+    .where(sql<boolean>`${scoped}`)
+    .orderBy(order);
 
   if (recurrenceFilter) {
     // Pagination must happen after recurrence expansion. Fetch the SQL-filtered
     // candidate set once so a large offset never turns into repeated database
     // page crawling and records with no occurrence cannot consume a page.
-    const recordsSql = dialectSql(
-      `SELECT id, data, created_by, created_at, updated_at${projection?.sql ? ", " + projection.sql : ""} FROM records WHERE ${scoped.sql} ${order}`,
-      provider,
-    );
-    const rows = await prisma.$queryRawUnsafe<QueryRow[]>(
-      recordsSql,
-      ...(projection?.params ?? []),
-      ...scoped.params,
-    );
+    const rows = await queryRows<QueryRow>(prisma, provider, selection);
     const candidates = rows.map((row) => ({ row, data: queryRecordData(row) }));
     const recurringCandidates = candidates.filter(
       (candidate) => typeof candidate.data[recurrenceFilter.field] === "string",
@@ -620,25 +576,16 @@ export async function queryRecords(
     };
   }
 
-  const countSql = dialectSql(
-    `SELECT COUNT(*) AS count FROM records WHERE ${scoped.sql}`,
-    provider,
-  );
-  const recordsSql = dialectSql(
-    `SELECT id, data, created_by, created_at, updated_at${projection?.sql ? ", " + projection.sql : ""} FROM records WHERE ${scoped.sql} ${order} LIMIT ? OFFSET ?`,
-    provider,
-  );
   const [counts, rows] = await Promise.all([
-    prisma.$queryRawUnsafe<Array<{ count: bigint | number }>>(
-      countSql,
-      ...scoped.params,
+    queryRows<{ count: bigint | number }>(
+      prisma,
+      provider,
+      sql`SELECT COUNT(*) AS count FROM records WHERE ${scoped}`,
     ),
-    prisma.$queryRawUnsafe<QueryRow[]>(
-      recordsSql,
-      ...(projection?.params ?? []),
-      ...scoped.params,
-      safeLimit,
-      safeOffset,
+    queryRows<QueryRow>(
+      prisma,
+      provider,
+      selection.limit(safeLimit).offset(safeOffset),
     ),
   ]);
 
@@ -722,9 +669,10 @@ export async function aggregateRecords(
     },
   );
   rejectDeferredFilters(compiled.postFilters);
-  const rows = await prisma.$queryRawUnsafe<Array<Record<string, unknown>>>(
-    dialectSql(compiled.sql, provider),
-    ...compiled.params,
+  const rows = await queryRows<Record<string, unknown>>(
+    prisma,
+    provider,
+    compiled.expression,
   );
   return {
     rows: rows.map((row) =>

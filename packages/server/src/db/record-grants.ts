@@ -1,3 +1,4 @@
+import { sql, queryRows } from "./query/kysely";
 import { queryAdapter } from "./query/adapters";
 import {
   FieldPermissionDeniedError,
@@ -12,7 +13,6 @@ import { createOrgEnforcer, roleSubject } from "./casbin";
 import { decodeGrantOptions } from "./grant-options";
 import {
   compileWhere,
-  dialectSql,
   substitute,
   type DbProvider,
   type Principal,
@@ -131,20 +131,18 @@ export function grantProjection(
   schema: Schema,
   provider: DbProvider,
 ) {
-  const params: unknown[] = [];
-  const sql = grants
-    .map((grant, i) => {
-      const compiled = compileWhere(grant.where, schema, provider);
-      if (compiled.postFilters.length)
-        throw new InvalidQueryError(
-          "Deferred recurrence conditions are not supported in permission grants",
-        );
-      params.push(...compiled.params);
-      return `CASE WHEN ${compiled.sql || "1=1"} THEN 1 ELSE 0 END AS grant_${i}`;
-    })
-    .join(", ");
-  return { sql, params };
+  return grants.map((grant, i) => {
+    const compiled = compileWhere(grant.where, schema, provider);
+    if (compiled.postFilters.length)
+      throw new InvalidQueryError(
+        "Deferred recurrence conditions are not supported in permission grants",
+      );
+    return sql<number>`CASE WHEN ${compiled.expression ?? sql`1=1`} THEN 1 ELSE 0 END`.as(
+      `grant_${i}`,
+    );
+  });
 }
+
 export function matchingGrants(
   grants: RecordGrants,
   row: object,
@@ -181,19 +179,13 @@ export async function evaluateGrants(
   if (!grants.length) return [];
   const projection = grantProjection(grants, schema, provider);
   const adapter = queryAdapter(provider);
-  const json = adapter.candidateJson;
-  const timestamp = adapter.candidateTimestamp;
-  const result = await prisma.$queryRawUnsafe<Array<Record<string, unknown>>>(
-    dialectSql(
-      `SELECT ${projection.sql} FROM (SELECT ? AS id, ${json} AS data, ? AS created_by, ${timestamp} AS created_at, ${timestamp} AS updated_at) AS candidate`,
-      provider,
-    ),
-    ...projection.params,
-    row.id,
-    JSON.stringify(row.data),
-    row.createdBy,
-    adapter.timestampParameter(row.createdAt),
-    adapter.timestampParameter(row.updatedAt),
+  const result = await queryRows<Record<string, unknown>>(
+    prisma,
+    provider,
+    sql`SELECT ${sql.join(projection)} FROM (SELECT ${row.id} AS id,
+      ${adapter.candidateJson(row.data)} AS data, ${row.createdBy} AS created_by,
+      ${adapter.candidateTimestamp(row.createdAt)} AS created_at,
+      ${adapter.candidateTimestamp(row.updatedAt)} AS updated_at) AS candidate`,
   );
   return grants.map((_, i) => Boolean(result[0]?.[`grant_${i}`]));
 }

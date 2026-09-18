@@ -3,7 +3,6 @@ import { sqliteAdapter } from "./sqlite";
 import type { DbProvider, QueryAdapter } from "./types";
 
 export type { DbProvider, QueryAdapter, SqlFragment } from "./types";
-export { postgresParameters } from "./postgres";
 
 const adapters: Record<DbProvider, QueryAdapter> = {
   postgresql: postgresAdapter,

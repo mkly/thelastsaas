@@ -2,3 +2,5 @@ node_modules
 dist
 coverage
 bun.lock
+
+packages/server/src/db/generated/

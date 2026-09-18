@@ -27,6 +27,7 @@
     "casbin": "^5.49.0",
     "croner": "^10.0.1",
     "hono": "^4.9.8",
+    "kysely": "^0.28.17",
     "luxon": "^3.7.2",
     "nodemailer": "^7.0.6",
     "pg-boss": "^12.15.0",
@@ -39,9 +40,10 @@
     "@aws-sdk/lib-storage": "^3.1103.0"
   },
   "devDependencies": {
-    "@types/luxon": "^3.7.1",
     "@types/busboy": "^1.5.4",
+    "@types/luxon": "^3.7.1",
     "@types/nodemailer": "^7.0.1",
-    "prisma": "^6.16.2"
+    "prisma": "^6.16.2",
+    "prisma-kysely": "^2"
   }
 }

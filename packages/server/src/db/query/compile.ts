@@ -19,7 +19,8 @@ import {
   type WhereLeaf,
 } from "@lastsaas/shared";
 
-import { queryAdapter, postgresParameters, type DbProvider } from "./adapters";
+import { queryAdapter, type DbProvider } from "./adapters";
+import { sql, type SqlFragment } from "./kysely";
 export type { DbProvider } from "./adapters";
 
 export type FieldReferenceKind =
@@ -56,8 +57,7 @@ export interface OccursBetweenPostFilter {
 export type QueryPostFilter = OccursBetweenPostFilter;
 
 export interface CompiledFragment {
-  sql: string;
-  params: unknown[];
+  expression: SqlFragment | undefined;
   postFilters: QueryPostFilter[];
 }
 
@@ -117,13 +117,16 @@ function isNumericField(fieldName: string, schema: Schema): boolean {
 // ---------------------------------------------------------------------------
 
 /** Extract a JSON field or return a validated native metadata column. */
-export function extractField(field: string, provider: DbProvider): string {
+export function extractField(field: string, provider: DbProvider): SqlFragment {
   return field in RECORD_METADATA_TYPES
-    ? field
+    ? sql.ref(field)
     : queryAdapter(provider).extract(field);
 }
 
-function numericExpr(expression: string, provider: DbProvider): string {
+function numericExpr(
+  expression: SqlFragment,
+  provider: DbProvider,
+): SqlFragment {
   return queryAdapter(provider).numeric(expression);
 }
 
@@ -131,7 +134,7 @@ function comparisonExpr(
   field: string,
   schema: Schema,
   provider: DbProvider,
-): string {
+): SqlFragment {
   const expression = extractField(field, provider);
   const type = fieldType(field, schema);
   const adapter = queryAdapter(provider);
@@ -144,18 +147,13 @@ function comparisonParam(value: unknown, provider: DbProvider): unknown {
   return queryAdapter(provider).parameter(value);
 }
 
-export const toPgParams = postgresParameters;
-export function dialectSql(sql: string, provider: DbProvider): string {
-  return queryAdapter(provider).sql(sql);
-}
-
 function compileEquality(
   field: string,
   value: unknown,
   schema: Schema,
   provider: DbProvider,
   preserveUnknown = false,
-): Omit<CompiledFragment, "postFilters"> {
+): SqlFragment {
   const type = fieldType(field, schema);
   if (!(field in RECORD_METADATA_TYPES) && type !== "json" && value !== null) {
     const expected =
@@ -178,10 +176,7 @@ function compileEquality(
       preserveUnknown,
     );
   }
-  return {
-    sql: `${comparisonExpr(field, schema, provider)} = ?`,
-    params: [comparisonParam(value, provider)],
-  };
+  return sql`${comparisonExpr(field, schema, provider)} = ${comparisonParam(value, provider)}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -191,14 +186,10 @@ function compileEquality(
 export function applyOrgScope(
   orgId: string,
   collectionId: string,
-  whereFragment: string,
-  whereParams: unknown[],
-): { sql: string; params: unknown[] } {
-  const head = "org_id = ? AND collection_id = ?";
-  return {
-    sql: whereFragment ? `${head} AND ${whereFragment}` : head,
-    params: [orgId, collectionId, ...whereParams],
-  };
+  expression?: SqlFragment,
+): SqlFragment {
+  const scope = sql`org_id = ${orgId} AND collection_id = ${collectionId}`;
+  return expression ? sql`${scope} AND (${expression})` : scope;
 }
 
 // ---------------------------------------------------------------------------
@@ -274,7 +265,7 @@ function compileOptionalNode(
   options: CompileOptions,
 ): CompiledFragment {
   if (!node || (isPlainObject(node) && Object.keys(node).length === 0)) {
-    return { sql: "", params: [], postFilters: [] };
+    return { expression: undefined, postFilters: [] };
   }
   return compileNode(node, schema, provider, options, true);
 }
@@ -284,11 +275,10 @@ function andFragments(
   right: CompiledFragment,
 ): CompiledFragment {
   const postFilters = [...left.postFilters, ...right.postFilters];
-  if (!left.sql) return { ...right, postFilters };
-  if (!right.sql) return { ...left, postFilters };
+  if (!left.expression) return { ...right, postFilters };
+  if (!right.expression) return { ...left, postFilters };
   return {
-    sql: `(${left.sql}) AND (${right.sql})`,
-    params: [...left.params, ...right.params],
+    expression: sql`(${left.expression}) AND (${right.expression})`,
     postFilters,
   };
 }
@@ -340,10 +330,9 @@ function compileNode(
         false,
       );
       // Negating an always-true expression must match no rows.
-      if (!inner.sql) return { sql: "1=0", params: [], postFilters: [] };
+      if (!inner.expression) return { expression: sql`1=0`, postFilters: [] };
       return {
-        sql: `NOT (${inner.sql})`,
-        params: inner.params,
+        expression: sql`NOT (${inner.expression})`,
         postFilters: [],
       };
     }
@@ -367,24 +356,17 @@ function compileBoolList(
 
   // An always-true OR branch satisfies the whole disjunction, so applying any
   // other branch in SQL would incorrectly drop candidate rows.
-  if (operator === "OR" && compiled.some((part) => !part.sql)) {
-    return { sql: "", params: [], postFilters };
+  if (operator === "OR" && compiled.some((part) => !part.expression)) {
+    return { expression: undefined, postFilters };
   }
 
-  const sqlParts: string[] = [];
-  const params: unknown[] = [];
-  for (const part of compiled) {
-    if (!part.sql) continue;
-    sqlParts.push(`(${part.sql})`);
-    params.push(...part.params);
-  }
-
+  const parts = compiled.flatMap((part) =>
+    part.expression ? [sql`(${part.expression})`] : [],
+  );
   return {
-    sql:
-      sqlParts.length <= 1
-        ? (sqlParts[0] ?? "")
-        : sqlParts.join(` ${operator} `),
-    params,
+    expression: parts.length
+      ? sql.join(parts, operator === "AND" ? sql` AND ` : sql` OR `)
+      : undefined,
     postFilters,
   };
 }
@@ -396,8 +378,7 @@ function compileLeaf(
   options: CompileOptions,
   conjunctive: boolean,
 ): CompiledFragment {
-  const clauses: string[] = [];
-  const params: unknown[] = [];
+  const clauses: SqlFragment[] = [];
   const postFilters: QueryPostFilter[] = [];
 
   for (const [fieldName, condition] of Object.entries(leaf)) {
@@ -430,8 +411,7 @@ function compileLeaf(
           provider,
           options.preserveUnknown,
         );
-        clauses.push(compiled.sql);
-        params.push(...compiled.params);
+        clauses.push(compiled);
       }
     } else {
       const compiled = compileEquality(
@@ -441,12 +421,14 @@ function compileLeaf(
         provider,
         options.preserveUnknown,
       );
-      clauses.push(compiled.sql);
-      params.push(...compiled.params);
+      clauses.push(compiled);
     }
   }
 
-  return { sql: clauses.join(" AND "), params, postFilters };
+  return {
+    expression: clauses.length ? sql.join(clauses, sql` AND `) : undefined,
+    postFilters,
+  };
 }
 
 function compileOccursBetween(
@@ -484,7 +466,7 @@ function compileFilterOp(
   schema: Schema,
   provider: DbProvider,
   preserveUnknown = false,
-): Omit<CompiledFragment, "postFilters"> {
+): SqlFragment {
   const extract = extractField(field, provider);
   const comparison = comparisonExpr(field, schema, provider);
 
@@ -493,16 +475,16 @@ function compileFilterOp(
       return compileEquality(field, value, schema, provider, preserveUnknown);
     case "not": {
       const equal = compileEquality(field, value, schema, provider, true);
-      return { sql: `NOT (${equal.sql})`, params: equal.params };
+      return sql`NOT (${equal})`;
     }
     case "gt":
-      return { sql: `${comparison} > ?`, params: [value] };
+      return sql`${comparison} > ${value}`;
     case "lt":
-      return { sql: `${comparison} < ?`, params: [value] };
+      return sql`${comparison} < ${value}`;
     case "gte":
-      return { sql: `${comparison} >= ?`, params: [value] };
+      return sql`${comparison} >= ${value}`;
     case "lte":
-      return { sql: `${comparison} <= ?`, params: [value] };
+      return sql`${comparison} <= ${value}`;
     case "contains": {
       if (typeof value !== "string") {
         throw new InvalidQueryError(
@@ -513,10 +495,7 @@ function compileFilterOp(
         .replaceAll("\\", "\\\\")
         .replaceAll("%", "\\%")
         .replaceAll("_", "\\_");
-      return {
-        sql: `${extract} LIKE ? ESCAPE '\\'`,
-        params: [`%${escaped}%`],
-      };
+      return sql`${extract} LIKE ${`%${escaped}%`} ESCAPE '\\'`;
     }
     case "in": {
       if (!Array.isArray(value)) {
@@ -524,26 +503,18 @@ function compileFilterOp(
           `'in' operator requires a list, got ${typeof value}`,
         );
       }
-      if (value.length === 0) return { sql: "1 = 0", params: [] };
-      return {
-        sql: `${comparison} IN (${value.map(() => "?").join(", ")})`,
-        params: value.map((item) => comparisonParam(item, provider)),
-      };
+      if (value.length === 0) return sql`1 = 0`;
+      return sql`${comparison} IN (${sql.join(value.map((item) => comparisonParam(item, provider)))})`;
     }
     case "is_null":
-      return value
-        ? { sql: `${extract} IS NULL`, params: [] }
-        : { sql: `${extract} IS NOT NULL`, params: [] };
+      return value ? sql`${extract} IS NULL` : sql`${extract} IS NOT NULL`;
     case "between": {
       if (!Array.isArray(value) || value.length !== 2) {
         throw new InvalidQueryError(
           "'between' operator requires a [low, high] tuple",
         );
       }
-      return {
-        sql: `${comparison} BETWEEN ? AND ?`,
-        params: [value[0], value[1]],
-      };
+      return sql`${comparison} BETWEEN ${value[0]} AND ${value[1]}`;
     }
     default:
       throw new InvalidQueryError(`Unknown operator: '${operator}'`);
@@ -559,21 +530,21 @@ export function compileOrderBy(
   schema: Schema,
   provider: DbProvider,
   options: CompileOptions = {},
-): string {
-  if (!orderBy) return "ORDER BY created_at DESC";
+): SqlFragment {
+  if (!orderBy) return sql`created_at DESC`;
 
   const descending = orderBy.startsWith("-");
   const field = descending ? orderBy.slice(1) : orderBy;
-  const direction = descending ? "DESC" : "ASC";
+  const direction = descending ? sql`DESC` : sql`ASC`;
 
   // These are native DateTime columns rather than JSON/ISO-string fields.
   if (field === "created_at" || field === "updated_at") {
-    return `ORDER BY ${field} ${direction}`;
+    return sql`${sql.ref(field)} ${direction}`;
   }
   validateFieldReference(field, schema, "order_by", options);
   // Typed expression so numeric fields sort numerically on Postgres, where
   // `->>` would otherwise sort them as text ("10" before "9").
-  return `ORDER BY ${comparisonExpr(field, schema, provider)} ${direction} NULLS ${descending ? "FIRST" : "LAST"}`;
+  return sql`${comparisonExpr(field, schema, provider)} ${direction} NULLS ${descending ? sql`FIRST` : sql`LAST`}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -594,8 +565,7 @@ export function andWhere(
 // ---------------------------------------------------------------------------
 
 export interface CompiledAggregate {
-  sql: string;
-  params: unknown[];
+  expression: SqlFragment;
   columns: string[];
   postFilters: QueryPostFilter[];
 }
@@ -609,8 +579,8 @@ export function compileAggregate(
   options: CompileOptions = {},
 ): CompiledAggregate {
   const groupBy = request.group_by ?? [];
-  const selectParts: string[] = [];
-  const groupExpressions: string[] = [];
+  const selectParts: SqlFragment[] = [];
+  const groupExpressions: SqlFragment[] = [];
   const aliasSources = new Map<string, string | undefined>();
   const columns: string[] = [];
 
@@ -623,8 +593,10 @@ export function compileAggregate(
     // their schema type on Postgres (and HAVING can compare them against
     // typed parameters) instead of as `->>` text.
     const expression = comparisonExpr(field, schema, provider);
-    selectParts.push(`${expression} AS "${field}"`);
-    groupExpressions.push(expression);
+    selectParts.push(sql`${expression} AS ${sql.id(field)}`);
+    // Group by the selected position: repeated bound JSON paths otherwise
+    // become different PostgreSQL expressions ($1 versus $5).
+    groupExpressions.push(sql.lit(groupExpressions.length + 1));
     aliasSources.set(field, field);
     columns.push(field);
   }
@@ -643,7 +615,7 @@ export function compileAggregate(
     }
 
     if (metric.op === "count") {
-      selectParts.push(`COUNT(*) AS "${alias}"`);
+      selectParts.push(sql`COUNT(*) AS ${sql.id(alias)}`);
       aliasSources.set(alias, undefined);
     } else {
       validateFieldReference(metric.field, schema, "metric", options, alias);
@@ -656,24 +628,30 @@ export function compileAggregate(
         extractField(metric.field, provider),
         provider,
       );
-      selectParts.push(`${metric.op.toUpperCase()}(${numeric}) AS "${alias}"`);
+      const functions = {
+        sum: sql`SUM`,
+        avg: sql`AVG`,
+        min: sql`MIN`,
+        max: sql`MAX`,
+      };
+      const fn = functions[metric.op];
+      if (!fn)
+        throw new InvalidQueryError(
+          `Unknown aggregate operator: '${metric.op}'`,
+        );
+      selectParts.push(sql`${fn}(${numeric}) AS ${sql.id(alias)}`);
       aliasSources.set(alias, metric.field);
     }
     columns.push(alias);
   }
 
   const where = compileWhere(request.where, schema, provider, options);
-  const scoped = applyOrgScope(orgId, collectionId, where.sql, where.params);
+  const scoped = applyOrgScope(orgId, collectionId, where.expression);
   const groupClause = groupExpressions.length
-    ? ` GROUP BY ${groupExpressions.join(", ")}`
-    : "";
-  const inner =
-    `WITH agg AS (` +
-    `SELECT ${selectParts.join(", ")} FROM records WHERE ${scoped.sql}${groupClause}` +
-    `)`;
-
-  let outer = "SELECT * FROM agg";
-  const outerParams: unknown[] = [];
+    ? sql` GROUP BY ${sql.join(groupExpressions)}`
+    : sql``;
+  const inner = sql`WITH agg AS (SELECT ${sql.join(selectParts)} FROM records WHERE ${scoped}${groupClause})`;
+  let outer = sql`SELECT * FROM agg`;
   if (request.having && Object.keys(request.having).length > 0) {
     const having = compileLeafAgainstAliases(
       request.having,
@@ -681,24 +659,12 @@ export function compileAggregate(
       provider,
       options,
     );
-    if (having.sql) {
-      outer += ` WHERE ${having.sql}`;
-      outerParams.push(...having.params);
-    }
+    outer = sql`${outer} WHERE ${having}`;
   }
-  if (request.order_by) {
-    outer += ` ${compileAliasOrderBy(request.order_by, aliasSources, options)}`;
-  }
-
-  outer += " LIMIT ? OFFSET ?";
-  outerParams.push(
-    clampLimit(request.limit ?? 100),
-    clampOffset(request.offset ?? 0),
-  );
-
+  if (request.order_by)
+    outer = sql`${outer} ${compileAliasOrderBy(request.order_by, aliasSources, options)}`;
   return {
-    sql: `${inner} ${outer}`,
-    params: [...scoped.params, ...outerParams],
+    expression: sql`${inner} ${outer} LIMIT ${clampLimit(request.limit ?? 100)} OFFSET ${clampOffset(request.offset ?? 0)}`,
     columns,
     postFilters: where.postFilters,
   };
@@ -722,9 +688,8 @@ function compileLeafAgainstAliases(
   aliasSources: Map<string, string | undefined>,
   provider: DbProvider,
   options: CompileOptions,
-): Omit<CompiledFragment, "postFilters"> {
-  const clauses: string[] = [];
-  const params: unknown[] = [];
+): SqlFragment {
+  const clauses: SqlFragment[] = [];
 
   for (const [name, condition] of Object.entries(leaf)) {
     if (!aliasSources.has(name)) {
@@ -748,69 +713,53 @@ function compileLeafAgainstAliases(
       );
     }
 
-    const reference = `"${name}"`;
+    const reference = sql.ref(name);
     if (isPlainObject(condition)) {
       for (const [operator, value] of Object.entries(condition)) {
         const compiled = compileAliasOp(reference, operator, value, provider);
-        clauses.push(compiled.sql);
-        params.push(...compiled.params);
+        clauses.push(compiled);
       }
     } else {
-      clauses.push(`${reference} = ?`);
-      params.push(comparisonParam(condition, provider));
+      clauses.push(sql`${reference} = ${comparisonParam(condition, provider)}`);
     }
   }
 
-  return { sql: clauses.join(" AND "), params };
+  return clauses.length ? sql.join(clauses, sql` AND `) : sql`1=1`;
 }
 
 function compileAliasOp(
-  reference: string,
+  reference: SqlFragment,
   operator: string,
   value: unknown,
   provider: DbProvider,
-): Omit<CompiledFragment, "postFilters"> {
+): SqlFragment {
   switch (operator) {
     case "eq":
-      return {
-        sql: `${reference} = ?`,
-        params: [comparisonParam(value, provider)],
-      };
+      return sql`${reference} = ${comparisonParam(value, provider)}`;
     case "not":
-      return {
-        sql: `${reference} != ?`,
-        params: [comparisonParam(value, provider)],
-      };
+      return sql`${reference} != ${comparisonParam(value, provider)}`;
     case "gt":
-      return { sql: `${reference} > ?`, params: [value] };
+      return sql`${reference} > ${value}`;
     case "lt":
-      return { sql: `${reference} < ?`, params: [value] };
+      return sql`${reference} < ${value}`;
     case "gte":
-      return { sql: `${reference} >= ?`, params: [value] };
+      return sql`${reference} >= ${value}`;
     case "lte":
-      return { sql: `${reference} <= ?`, params: [value] };
+      return sql`${reference} <= ${value}`;
     case "in": {
       if (!Array.isArray(value)) {
         throw new InvalidQueryError("'in' operator requires a list");
       }
-      if (value.length === 0) return { sql: "1 = 0", params: [] };
-      return {
-        sql: `${reference} IN (${value.map(() => "?").join(", ")})`,
-        params: value.map((item) => comparisonParam(item, provider)),
-      };
+      if (value.length === 0) return sql`1 = 0`;
+      return sql`${reference} IN (${sql.join(value.map((item) => comparisonParam(item, provider)))})`;
     }
     case "is_null":
-      return value
-        ? { sql: `${reference} IS NULL`, params: [] }
-        : { sql: `${reference} IS NOT NULL`, params: [] };
+      return value ? sql`${reference} IS NULL` : sql`${reference} IS NOT NULL`;
     case "between": {
       if (!Array.isArray(value) || value.length !== 2) {
         throw new InvalidQueryError("'between' requires a [low, high] tuple");
       }
-      return {
-        sql: `${reference} BETWEEN ? AND ?`,
-        params: [value[0], value[1]],
-      };
+      return sql`${reference} BETWEEN ${value[0]} AND ${value[1]}`;
     }
     default:
       throw new InvalidQueryError(`Unknown HAVING operator: '${operator}'`);
@@ -821,10 +770,10 @@ function compileAliasOrderBy(
   orderBy: string,
   aliasSources: Map<string, string | undefined>,
   options: CompileOptions,
-): string {
+): SqlFragment {
   const descending = orderBy.startsWith("-");
   const alias = descending ? orderBy.slice(1) : orderBy;
-  const direction = descending ? "DESC" : "ASC";
+  const direction = descending ? sql`DESC` : sql`ASC`;
   if (!aliasSources.has(alias)) {
     throw new InvalidQueryError(
       `order_by '${alias}' is not a group_by field or metric alias`,
@@ -845,5 +794,5 @@ function compileAliasOrderBy(
       `Field '${sourceField}' is not allowed in order by`,
     );
   }
-  return `ORDER BY "${alias}" ${direction} NULLS ${descending ? "FIRST" : "LAST"}`;
+  return sql`ORDER BY ${sql.ref(alias)} ${direction} NULLS ${descending ? sql`FIRST` : sql`LAST`}`;
 }
