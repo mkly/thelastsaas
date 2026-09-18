@@ -7,6 +7,9 @@ saas [--org <org-id>] [--json] <command>
 ```
 
 ```text
+# Tutorial (prints the shared guide; no login required)
+saas getting-started
+
 # Authentication
 saas login [--server <url>]
 saas whoami

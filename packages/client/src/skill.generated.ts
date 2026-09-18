@@ -14,6 +14,12 @@ notifications, and files.
 Assume \`saas\` is installed and available on \`PATH\`. Add \`--json\` when another
 program will consume the output.
 
+## Guided tutorial
+
+When someone asks to get started, run \`saas getting-started\` and follow the shared
+tutorial one step at a time. Reading it does not require login or change data.
+Only perform the data changes the user asks for.
+
 ## Authenticate and choose an organization
 
 \`\`\`bash

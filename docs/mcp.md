@@ -55,6 +55,10 @@ File content is transferred as RFC 4648 base64 through `files_upload` and
 
 ## Getting started
 
+The MCP `getting_started` tool and CLI `saas getting-started` command use one
+tutorial source in `packages/shared/src/getting-started.ts`. Only their
+organization setup and tool/command instructions differ.
+
 The `getting_started` tool explains collections, records, and fields, and
 includes a reading list example using requests you can give your assistant.
 After creating the list, the guide suggests a reading reminder, followed by
