@@ -10,6 +10,13 @@ const environmentSchema = z.object({
   DATABASE_URL: z.string().default("file:./data/lastsaas.db"),
   BETTER_AUTH_SECRET: z.string().min(32).optional(),
   BETTER_AUTH_URL: z.string().url().optional(),
+  CACHE_MAX_BYTES: z.coerce
+    .number()
+    .int()
+    .min(0)
+    .max(Number.MAX_SAFE_INTEGER)
+    .default(32 * 1024 * 1024),
+  CACHE_TTL_SECONDS: z.coerce.number().int().min(1).max(3600).default(30),
   PASSWORD_AUTH_ENABLED: z.stringbool().default(true),
   GOOGLE_CLIENT_ID: z.string().default(""),
   GOOGLE_CLIENT_SECRET: z.string().default(""),
@@ -43,6 +50,8 @@ export interface AppConfig {
   betterAuthSecret: string;
   betterAuthUrl: string;
   passwordAuthEnabled: boolean;
+  cacheMaxBytes: number;
+  cacheTtlSeconds: number;
   googleClientId: string;
   googleClientSecret: string;
   smtpHost: string;
@@ -104,6 +113,8 @@ export function loadConfig(
       parsed.BETTER_AUTH_SECRET ?? "development-only-change-before-production",
     betterAuthUrl: parsed.BETTER_AUTH_URL ?? `http://localhost:${parsed.PORT}`,
     passwordAuthEnabled: parsed.PASSWORD_AUTH_ENABLED,
+    cacheMaxBytes: parsed.CACHE_MAX_BYTES,
+    cacheTtlSeconds: parsed.CACHE_TTL_SECONDS,
     googleClientId: parsed.GOOGLE_CLIENT_ID,
     googleClientSecret: parsed.GOOGLE_CLIENT_SECRET,
     smtpHost: parsed.SMTP_HOST,

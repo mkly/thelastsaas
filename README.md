@@ -127,3 +127,30 @@ fixed when the Prisma client is generated, so choose the matching server build.
 - [API endpoints](agent_docs/api-endpoints.md)
 - [MCP](docs/mcp.md)
 - [Organization access](docs/organization-access.md)
+
+## Server metadata cache
+
+MCP and CLI/API requests share a bounded in-memory cache of collection definitions
+and organization permission rules. Records, query results, membership checks,
+and active-organization selections are not cached. Casbin enforcers are built
+from cached rule data, not stored as shared mutable objects.
+
+`CACHE_MAX_BYTES` defaults to `33554432` (32 MiB); set it to `0` to disable the
+cache. Entries expire after `CACHE_TTL_SECONDS` (default `30`). The cache also
+limits itself to 10,000 entries, evicts least recently used entries when full,
+and skips entries larger than its byte budget. Accounting includes serialized
+values, keys, and an allowance for overhead; this bounds retained cache data,
+not total process memory or temporary allocations while loading a value.
+
+Schema changes, collection creation/deletion, and permission/role changes
+invalidate affected entries after database writes settle. An older in-flight
+read cannot repopulate an invalidated entry. Direct database edits become visible
+when entries expire. Row and field filters continue to be read from the database.
+
+The memory backend is for a single server process. With multiple processes sharing
+one database, set `CACHE_MAX_BYTES=0` until a shared backend is configured; local
+invalidation cannot immediately revoke cached permissions in another process.
+The asynchronous `Cache` interface in `packages/server/src/cache/index.ts` uses
+JSON-serializable values and can be injected into `createServices`. A future Redis
+adapter must provide shared invalidation (including in-flight reads) and a key
+namespace for each deployment. Redis is not required or implemented today.

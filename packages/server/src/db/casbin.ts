@@ -1,3 +1,4 @@
+import { cachedMetadata, policyCacheKey, invalidateMetadata } from "./cache";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { newEnforcer, newModel, Util, type Enforcer } from "casbin";
 
@@ -37,20 +38,24 @@ async function addRule(
   orgId: string,
   rule: StoredRule,
 ): Promise<boolean> {
-  return prisma.$transaction(async (transaction) => {
-    const existing = await transaction.casbinRule.findFirst({
-      where: {
-        orgId,
-        ...rule,
-        ...(rule.ptype === "p" ? { v3: rule.v3 ?? null } : {}),
-      },
-      select: { id: true },
-    });
-    if (existing) return false;
+  try {
+    return await prisma.$transaction(async (transaction) => {
+      const existing = await transaction.casbinRule.findFirst({
+        where: {
+          orgId,
+          ...rule,
+          ...(rule.ptype === "p" ? { v3: rule.v3 ?? null } : {}),
+        },
+        select: { id: true },
+      });
+      if (existing) return false;
 
-    await transaction.casbinRule.create({ data: { orgId, ...rule } });
-    return true;
-  });
+      await transaction.casbinRule.create({ data: { orgId, ...rule } });
+      return true;
+    });
+  } finally {
+    await invalidateMetadata(prisma, policyCacheKey(orgId));
+  }
 }
 
 async function removeRule(
@@ -58,18 +63,32 @@ async function removeRule(
   orgId: string,
   rule: StoredRule,
 ): Promise<boolean> {
-  const result = await prisma.casbinRule.deleteMany({
-    where: {
-      orgId,
-      ...rule,
-      ...(rule.ptype === "p" ? { v3: rule.v3 ?? null } : {}),
-    },
-  });
-  return result.count > 0;
+  try {
+    const result = await prisma.casbinRule.deleteMany({
+      where: {
+        orgId,
+        ...rule,
+        ...(rule.ptype === "p" ? { v3: rule.v3 ?? null } : {}),
+      },
+    });
+    return result.count > 0;
+  } finally {
+    await invalidateMetadata(prisma, policyCacheKey(orgId));
+  }
 }
 
 export function roleSubject(orgId: string, role: string): string {
   return `org:${orgId}:user:${role}`;
+}
+
+export function getOrgRules(prisma: PrismaClient, orgId: string) {
+  return cachedMetadata(prisma, policyCacheKey(orgId), async () => {
+    return prisma.casbinRule.findMany({
+      where: { orgId, ptype: { in: ["p", "g"] } },
+      orderBy: { id: "asc" },
+      select: { ptype: true, v0: true, v1: true, v2: true, v3: true },
+    });
+  });
 }
 
 export async function createOrgEnforcer(
@@ -79,11 +98,7 @@ export async function createOrgEnforcer(
   const model = newModel();
   model.loadModelFromText(CASBIN_MODEL);
   const enforcer = await newEnforcer(model);
-  const rules = await prisma.casbinRule.findMany({
-    where: { orgId, ptype: { in: ["p", "g"] } },
-    orderBy: { id: "asc" },
-    select: { ptype: true, v0: true, v1: true, v2: true, v3: true },
-  });
+  const rules = await getOrgRules(prisma, orgId);
 
   for (const rule of rules) {
     if (!rule.v0 || !rule.v1) continue;
@@ -127,9 +142,7 @@ export async function checkPermission(
     subject,
     ...(await enforcer.getImplicitRolesForUser(subject)),
   ];
-  const rules = await prisma.casbinRule.findMany({
-    where: { orgId, ptype: "p", v0: { in: subjects }, v3: { not: null } },
-  });
+  const rules = await getOrgRules(prisma, orgId);
   const conditional = rules.some(
     (rule) =>
       rule.ptype === "p" &&
@@ -227,10 +240,13 @@ export async function removeMemberAccess(
   orgId: string,
   userId: string,
 ): Promise<void> {
-  await Promise.all([
-    prisma.casbinRule.deleteMany({ where: { orgId, ptype: "g", v0: userId } }),
-    prisma.casbinRule.deleteMany({ where: { orgId, ptype: "p", v0: userId } }),
-  ]);
+  try {
+    await prisma.casbinRule.deleteMany({
+      where: { orgId, ptype: { in: ["p", "g"] }, v0: userId },
+    });
+  } finally {
+    await invalidateMetadata(prisma, policyCacheKey(orgId));
+  }
 }
 
 export async function bootstrapOrgPolicies(
@@ -238,21 +254,25 @@ export async function bootstrapOrgPolicies(
   orgId: string,
   adminUserId: string,
 ): Promise<void> {
-  const role = roleSubject(orgId, "admin");
-  const policies: readonly StoredRule[] = [
-    { ptype: "p", v0: role, v1: "/*", v2: "*" },
-    { ptype: "g", v0: adminUserId, v1: role, v2: null },
-  ];
+  try {
+    const role = roleSubject(orgId, "admin");
+    const policies: readonly StoredRule[] = [
+      { ptype: "p", v0: role, v1: "/*", v2: "*" },
+      { ptype: "g", v0: adminUserId, v1: role, v2: null },
+    ];
 
-  await prisma.$transaction(async (transaction: Prisma.TransactionClient) => {
-    for (const policy of policies) {
-      const existing = await transaction.casbinRule.findFirst({
-        where: { orgId, ...policy },
-        select: { id: true },
-      });
-      if (!existing) {
-        await transaction.casbinRule.create({ data: { orgId, ...policy } });
+    await prisma.$transaction(async (transaction: Prisma.TransactionClient) => {
+      for (const policy of policies) {
+        const existing = await transaction.casbinRule.findFirst({
+          where: { orgId, ...policy },
+          select: { id: true },
+        });
+        if (!existing) {
+          await transaction.casbinRule.create({ data: { orgId, ...policy } });
+        }
       }
-    }
-  });
+    });
+  } finally {
+    await invalidateMetadata(prisma, policyCacheKey(orgId));
+  }
 }

@@ -92,6 +92,8 @@ function createPrismaFixture() {
         orgId: "org_123",
         name: "tasks",
         schema: { title: "string" },
+        createdAt: new Date(),
+        updatedAt: new Date(),
       }),
     },
     rowFilter: {

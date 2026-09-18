@@ -318,6 +318,11 @@ describe("background service lifecycle", () => {
   test("stops the scheduler before closing database connections", async () => {
     const callOrder: string[] = [];
     await closeServices({
+      cache: {
+        clear: async () => {
+          callOrder.push("cache.clear");
+        },
+      },
       scheduler: {
         stop: mock().mockImplementation(async () => {
           callOrder.push("scheduler.stop");
@@ -337,6 +342,7 @@ describe("background service lifecycle", () => {
 
     expect(callOrder).toEqual([
       "scheduler.stop",
+      "cache.clear",
       "database.close",
       "prisma.disconnect",
     ]);

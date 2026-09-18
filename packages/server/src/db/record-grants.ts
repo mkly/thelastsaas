@@ -9,7 +9,7 @@ import {
 } from "@lastsaas/shared";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { Util } from "casbin";
-import { createOrgEnforcer, roleSubject } from "./casbin";
+import { createOrgEnforcer, getOrgRules, roleSubject } from "./casbin";
 import { decodeGrantOptions } from "./grant-options";
 import {
   compileWhere,
@@ -45,9 +45,7 @@ export async function resolveRecordGrants(
   const roles = await enforcer.getImplicitRolesForUser(principal.userId);
   const subjects = [principal.userId, ...roles];
   const [policies, rows, fields] = await Promise.all([
-    prisma.casbinRule.findMany({
-      where: { orgId: principal.orgId, ptype: "p", v0: { in: subjects } },
-    }),
+    getOrgRules(prisma, principal.orgId),
     prisma.rowFilter.findMany({
       where: { orgId: principal.orgId, collectionId },
     }),

@@ -1,3 +1,9 @@
+import {
+  cachedMetadata,
+  collectionCacheKey,
+  policyCacheKey,
+  invalidateMetadata,
+} from "./cache";
 import { sql, queryRows } from "./query/kysely";
 import { queryProvider } from "./provider";
 import { queryAdapter } from "./query/adapters";
@@ -93,6 +99,12 @@ export async function createCollection(
       throw new CollectionExistsError(name);
     }
     throw error;
+  } finally {
+    await invalidateMetadata(
+      prisma,
+      collectionCacheKey(orgId, name),
+      policyCacheKey(orgId),
+    );
   }
 }
 
@@ -167,11 +179,15 @@ export async function updateCollectionSchema(
     ]);
   }
 
-  const updated = await prisma.collection.update({
-    where: { id: collection.id },
-    data: { schema: schemaJson(schema) },
-  });
-  return serializeCollection(updated);
+  try {
+    const updated = await prisma.collection.update({
+      where: { id: collection.id },
+      data: { schema: schemaJson(schema) },
+    });
+    return serializeCollection(updated);
+  } finally {
+    await invalidateMetadata(prisma, collectionCacheKey(orgId, name));
+  }
 }
 
 export async function dropCollection(
@@ -180,16 +196,24 @@ export async function dropCollection(
   name: string,
 ): Promise<void> {
   const collection = await getCollection(prisma, orgId, name);
-  await prisma.$transaction(async (transaction) => {
-    await transaction.collection.delete({ where: { id: collection.id } });
-    await transaction.casbinRule.deleteMany({
-      where: {
-        orgId,
-        ptype: "p",
-        v1: `/collections/${name}`,
-      },
+  try {
+    await prisma.$transaction(async (transaction) => {
+      await transaction.collection.delete({ where: { id: collection.id } });
+      await transaction.casbinRule.deleteMany({
+        where: {
+          orgId,
+          ptype: "p",
+          v1: `/collections/${name}`,
+        },
+      });
     });
-  });
+  } finally {
+    await invalidateMetadata(
+      prisma,
+      collectionCacheKey(orgId, name),
+      policyCacheKey(orgId),
+    );
+  }
 }
 
 export async function getCollection(
@@ -197,12 +221,27 @@ export async function getCollection(
   orgId: string,
   name: string,
 ) {
-  const collection = await prisma.collection.findUnique({
-    where: { orgId_name: { orgId, name } },
-  });
-  if (!collection) throw new CollectionNotFoundError(name);
-  asSchema(collection.schema);
-  return collection;
+  const collection = await cachedMetadata(
+    prisma,
+    collectionCacheKey(orgId, name),
+    async () => {
+      const row = await prisma.collection.findUnique({
+        where: { orgId_name: { orgId, name } },
+      });
+      if (!row) throw new CollectionNotFoundError(name);
+      asSchema(row.schema);
+      return {
+        ...row,
+        createdAt: row.createdAt.toISOString(),
+        updatedAt: row.updatedAt.toISOString(),
+      };
+    },
+  );
+  return {
+    ...collection,
+    createdAt: new Date(collection.createdAt),
+    updatedAt: new Date(collection.updatedAt),
+  };
 }
 
 /**

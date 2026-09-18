@@ -1,3 +1,5 @@
+import { MemoryCache, type Cache } from "./cache";
+import { registerMetadataCache } from "./db/cache";
 import { registerDatabaseProvider } from "./db/provider";
 import { PrismaClient } from "@prisma/client";
 import { Database } from "bun:sqlite";
@@ -20,6 +22,7 @@ import {
 import type { Storage } from "./storage/interface";
 
 export interface AppServices {
+  cache: Cache;
   database: Database | null;
   prisma: PrismaClient;
   auth: Auth;
@@ -43,6 +46,7 @@ function sqlitePath(databaseUrl: string): string {
 export async function createServices(
   config: AppConfig,
   sendAuthEmail?: AuthEmailSender,
+  cache: Cache = new MemoryCache(config.cacheMaxBytes),
 ): Promise<AppServices> {
   const provider = databaseProvider(config.databaseUrl);
   let database: Database | null = null;
@@ -59,6 +63,7 @@ export async function createServices(
   }
   const prisma = new PrismaClient({ datasourceUrl });
   registerDatabaseProvider(prisma, datasourceUrl);
+  registerMetadataCache(prisma, cache, config.cacheTtlSeconds * 1000);
   const notificationServices = createNotificationServices(prisma, config);
   const auth = createAuth(
     prisma,
@@ -73,6 +78,7 @@ export async function createServices(
   );
   const storage = await createStorage(config);
   return {
+    cache,
     database,
     prisma,
     auth,
@@ -84,6 +90,7 @@ export async function createServices(
 
 export async function closeServices(services: AppServices): Promise<void> {
   await services.scheduler.stop();
+  await services.cache.clear();
   services.database?.close();
   await services.prisma.$disconnect();
 }

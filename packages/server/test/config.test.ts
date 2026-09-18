@@ -11,6 +11,8 @@ describe("auth configuration", () => {
     expect(config.betterAuthUrl).toBe("http://localhost:9000");
     expect(config.betterAuthSecret).not.toBe("");
     expect(config.passwordAuthEnabled).toBe(true);
+    expect(config.cacheMaxBytes).toBe(32 * 1024 * 1024);
+    expect(config.cacheTtlSeconds).toBe(30);
     expect(config.googleClientId).toBe("");
     expect(config.maxUploadSize).toBe(50 * 1024 * 1024);
     expect(config.rateLimitEnabled).toBe(true);
@@ -83,4 +85,11 @@ describe("auth configuration", () => {
     expect(() => loadConfig({ RATE_LIMIT_REQUESTS: "0" })).toThrow();
     expect(() => loadConfig({ RATE_LIMIT_WINDOW_SECONDS: "0" })).toThrow();
   });
+});
+
+test("metadata cache configuration supports disabling and rejects invalid bounds", () => {
+  expect(loadConfig({ CACHE_MAX_BYTES: "0" }).cacheMaxBytes).toBe(0);
+  expect(loadConfig({ CACHE_TTL_SECONDS: "60" }).cacheTtlSeconds).toBe(60);
+  expect(() => loadConfig({ CACHE_MAX_BYTES: "-1" })).toThrow();
+  expect(() => loadConfig({ CACHE_TTL_SECONDS: "0" })).toThrow();
 });
