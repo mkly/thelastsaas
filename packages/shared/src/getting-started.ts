@@ -42,10 +42,17 @@ which to use. You can switch organizations later by asking your assistant.
 ## Make a reading list
 
 1. Ask "Create a reading list with a title and an author for each book."
-2. Ask "Add The Hobbit by J. R. R. Tolkien to my reading list."
+2. Ask "Add Infinite Jest by David Foster Wallace to my reading list."
 3. Ask "What's on my reading list?"
 
 You can also ask to find a book or change a detail.
+
+## Add a file
+
+Ask "Help me upload a file with my reading notes." Your assistant will help you
+choose a file and upload it to your organization.
+
+Then ask "Show me my files" to find it again.
 
 ## Set a reading reminder
 
@@ -67,6 +74,11 @@ account for my agent." A service account gives the agent its own identity
 and access. Your assistant will help you choose what it can do and provide
 a link to claim its access token.
 
+## View the audit log
+
+Ask "Show me the recent activity in my organization's audit log." You can see
+who made changes and when, including the reading list and file you added.
+
 Opening this guide doesn't change any data. Your assistant will carry out
 the steps you ask for. If you don't have permission for a step, it will
 explain what's available.
@@ -78,9 +90,10 @@ When inviting someone with specific access, include the requested permissions in
 the invitation. Do not wait for them to join before setting up their access.
 ${organizationInstructions[interfaceType]}
 
-Then start with the reading list. After it's created, offer to set up a reading
-reminder. After the reminder is set up, mention inviting someone or connecting
-an agent as optional next steps. Introduce one step at a time and let the
+Then start with the reading list. After it's created, offer to upload a file
+with reading notes, then set up a reading reminder. Mention inviting someone or
+connecting an agent as optional next steps, and offer to view the audit log to
+see the activity from the tutorial. Introduce one step at a time and let the
 person skip or stop. Ask for missing details before carrying out a step.
 Only create or change data when asked, not just because this guide was opened.
 `;
