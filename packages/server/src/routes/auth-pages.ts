@@ -151,10 +151,12 @@ authPagesRouter.get("/login", async (context) => {
     googleClientId && googleClientSecret
       ? `<a class="button secondary" href="${escapeHtml(googleHref)}">Continue with Google</a>`
       : "";
-  const magicLogin = `<a class="button${passwordAuthEnabled ? " ghost" : ""}" href="${escapeHtml(authPath("/auth/magic-link", { next }))}">Log in with a magic link</a>`;
-  const alternativeLogins = passwordAuthEnabled
-    ? `${googleLogin}${magicLogin}`
-    : `${magicLogin}${googleLogin}`;
+  const magicLogin = `<div class="card">
+    <form method="POST" action="${escapeHtml(authPath("/auth/magic-link", { next }))}">
+      <label>Email<br><input type="email" name="email" required autocomplete="email"></label><br><br>
+      <button type="submit">Send Magic Link</button>
+    </form>
+  </div>`;
 
   return context.html(
     htmlPage(
@@ -172,7 +174,8 @@ authPagesRouter.get("/login", async (context) => {
         : ""
     }
     <div class="stack" style="margin-block-start:1rem">
-      ${alternativeLogins}
+      ${magicLogin}
+      ${googleLogin}
     </div>
     ${
       passwordAuthEnabled
@@ -251,8 +254,7 @@ authPagesRouter.get("/signup", async (context) => {
       <p class="small muted" style="margin-block-start:1.25rem;text-align:center">Already have an account? <a href="${escapeHtml(authPath("/auth/login", { next }))}">Log in</a></p>`,
         {
           narrow: true,
-          description:
-            "Create your account.",
+          description: "Create your account.",
         },
       ),
     );

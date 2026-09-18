@@ -113,7 +113,7 @@ describe("browser auth pages", () => {
     expect(html).not.toContain('<input type="password"');
     expect(html).not.toContain("/auth/forgot-password");
     expect(html).toContain("Continue with Google");
-    expect(html).toContain("/auth/magic-link?next=%2Fauth%2Fdevice");
+    expect(html).toContain('action="/auth/magic-link?next=%2Fauth%2Fdevice"');
     const signupPage = await app.request(
       "http://localhost:3000/auth/signup?next=%2Fauth%2Fdevice&email=new%40example.com",
     );
@@ -127,7 +127,7 @@ describe("browser auth pages", () => {
     expect(signupHtml.indexOf("Email Me a Sign-Up Link")).toBeLessThan(
       signupHtml.indexOf("Continue with Google"),
     );
-    expect(html.indexOf("Log in with a magic link")).toBeLessThan(
+    expect(html.indexOf("Send Magic Link")).toBeLessThan(
       html.indexOf("Continue with Google"),
     );
     for (const path of ["forgot-password", "reset-password"]) {
