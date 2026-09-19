@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test, spyOn } from "bun:test";
 import { Command } from "commander";
 
 import { registerFiles, type FilesCommandDependencies } from "./files";
@@ -76,23 +76,34 @@ describe("files commands", () => {
     expect(outputs[0]?.human).toContain("reports/today.csv");
   });
 
-  test("uploads a Blob as multipart data without base64 buffering", async () => {
-    const calls: Array<{
-      param: { orgId: string };
-      form: { file: Blob; path?: string };
-    }> = [];
+  test("uploads raw bytes to the prepared URL then completes with organization auth", async () => {
+    const calls: unknown[] = [];
     const client = {
       v1: {
         orgs: {
           ":orgId": {
             files: {
-              $post: async (input: (typeof calls)[number]) => {
-                calls.push(input);
-                return {
-                  status: "ok",
-                  id: "file_2",
-                  path: "docs/greeting.txt",
-                };
+              uploads: {
+                $post: async (input: unknown) => {
+                  calls.push(input);
+                  return {
+                    upload_id: "upload_1",
+                    upload_url: "https://storage.example/upload",
+                    headers: { "Content-Type": "text/plain" },
+                  };
+                },
+                ":id": {
+                  complete: {
+                    $post: async (input: unknown) => {
+                      calls.push(input);
+                      return {
+                        status: "ok",
+                        id: "file_2",
+                        path: "docs/greeting.txt",
+                      };
+                    },
+                  },
+                },
               },
             },
           },
@@ -102,17 +113,39 @@ describe("files commands", () => {
     const { deps, outputs } = dependencies(client);
     const program = testProgram();
     registerFiles(program, deps);
-
-    await program.parseAsync(
-      ["files", "upload", "source.txt", "--path", "docs/greeting.txt"],
-      { from: "user" },
+    const transfer = spyOn(globalThis, "fetch").mockImplementation(
+      Object.assign(
+        async (url: unknown, options?: RequestInit) => {
+          expect(url).toBe("https://storage.example/upload");
+          expect(options?.method).toBe("PUT");
+          expect(options?.headers).toEqual({ "Content-Type": "text/plain" });
+          expect(options?.body).toBeInstanceOf(Blob);
+          expect(await (options!.body as Blob).text()).toBe("hello");
+          return new Response(null, { status: 200 });
+        },
+        { preconnect: fetch.preconnect },
+      ),
     );
-
-    expect(calls).toHaveLength(1);
-    expect(calls[0]?.param).toEqual({ orgId: "org_123" });
-    expect(calls[0]?.form.path).toBe("docs/greeting.txt");
-    expect(calls[0]?.form.file).toBeInstanceOf(Blob);
-    expect(await calls[0]?.form.file.text()).toBe("hello");
+    try {
+      await program.parseAsync(
+        ["files", "upload", "source.txt", "--path", "docs/greeting.txt"],
+        { from: "user" },
+      );
+    } finally {
+      transfer.mockRestore();
+    }
+    expect(calls).toEqual([
+      {
+        param: { orgId: "org_123" },
+        json: {
+          filename: "source.txt",
+          path: "docs/greeting.txt",
+          size_bytes: 5,
+          mime_type: "text/plain;charset=utf-8",
+        },
+      },
+      { param: { orgId: "org_123", id: "upload_1" } },
+    ]);
     expect(outputs[0]?.human).toBe("Uploaded 'docs/greeting.txt' (file_2)");
   });
 

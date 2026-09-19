@@ -81,4 +81,20 @@ export class LocalStorage implements Storage {
       if (!isMissingFile(error)) throw error;
     }
   }
+
+  async stat(key: string): Promise<{ size: number } | null> {
+    try {
+      const info = await stat(this.keyToPath(key));
+      return info.isFile() ? { size: info.size } : null;
+    } catch (error) {
+      if (isMissingFile(error)) return null;
+      throw error;
+    }
+  }
+
+  async promote(source: string, destination: string): Promise<void> {
+    const target = this.keyToPath(destination);
+    await mkdir(dirname(target), { recursive: true });
+    await rename(this.keyToPath(source), target);
+  }
 }

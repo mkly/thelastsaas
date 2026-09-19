@@ -1,3 +1,11 @@
+import { HTTPException } from "hono/http-exception";
+import {
+  createUpload,
+  prepareUpload,
+  getUpload,
+  completeUpload,
+  uploadMetadataSchema,
+} from "../../uploads";
 import {
   FileMissingError,
   LastSaasError,
@@ -77,6 +85,11 @@ async function withToolErrors(
   try {
     return await operation();
   } catch (error) {
+    if (error instanceof HTTPException)
+      return toolError(
+        error.status === 403 ? "PermissionDenied" : "UploadError",
+        error.message,
+      );
     if (error instanceof ToolFailure) {
       return toolError(error.code, error.message, error.details);
     }
@@ -233,6 +246,99 @@ const deliverySchema = {
 
 function registerFileTools(server: McpServer, context: McpToolContext): void {
   server.registerTool(
+    "files_upload_link",
+    {
+      description:
+        "Create a short-lived browser link for the user to choose and upload one file without sending file contents through the conversation. Prefer this for chat clients.",
+      inputSchema: z.object({}).strict(),
+    },
+    () =>
+      withToolErrors(async () => {
+        const { upload_id, browser_url, expires_at } = await createUpload(
+          context.services,
+          context.config,
+          requireOrganization(context),
+          context.userId,
+        );
+        return toolSuccess({ upload_id, browser_url, expires_at });
+      }),
+  );
+  server.registerTool(
+    "files_prepare_upload",
+    {
+      description:
+        "Prepare a direct binary upload. Use when you can transfer the local file with HTTP PUT outside the conversation. Send bytes to upload_url with headers, then call files_complete_upload. For a user-selected browser file, use files_upload_link instead.",
+      inputSchema: uploadMetadataSchema,
+    },
+    (input) =>
+      withToolErrors(async () => {
+        const session = await createUpload(
+          context.services,
+          context.config,
+          requireOrganization(context),
+          context.userId,
+        );
+        return toolSuccess(
+          await prepareUpload(
+            context.services,
+            context.config,
+            session.upload,
+            session.token,
+            input,
+          ),
+        );
+      }),
+  );
+  server.registerTool(
+    "files_complete_upload",
+    {
+      description:
+        "Verify and finish a prepared file upload after transferring the bytes.",
+      inputSchema: z.object({ upload_id: z.string().min(1) }),
+    },
+    ({ upload_id }) =>
+      withToolErrors(async () => {
+        const upload = await getUpload(context.services, upload_id, {
+          orgId: requireOrganization(context),
+          userId: context.userId,
+        });
+        return toolSuccess({
+          file: await completeUpload(context.services, upload),
+        });
+      }),
+  );
+  server.registerTool(
+    "files_upload_status",
+    {
+      description:
+        "Check whether an upload link has been used and the file is ready. Check when the user says they finished; avoid repeated polling.",
+      inputSchema: z.object({ upload_id: z.string().min(1) }),
+      annotations: { readOnlyHint: true },
+    },
+    ({ upload_id }) =>
+      withToolErrors(async () => {
+        const upload = await getUpload(
+          context.services,
+          upload_id,
+          {
+            orgId: requireOrganization(context),
+            userId: context.userId,
+          },
+          true,
+        );
+        return toolSuccess({
+          upload_id,
+          upload_status:
+            upload.status !== "complete" &&
+            upload.expiresAt.getTime() <= Date.now()
+              ? "expired"
+              : upload.status,
+          file_id: upload.status === "complete" ? upload.id : null,
+        });
+      }),
+  );
+
+  server.registerTool(
     "files_list",
     {
       description: "List organization files, optionally below a path prefix.",
@@ -283,7 +389,7 @@ function registerFileTools(server: McpServer, context: McpToolContext): void {
     "files_upload",
     {
       description:
-        "Upload base64 file content. Decoded content is limited by the server's MAX_UPLOAD_SIZE configuration.",
+        "Upload small base64 file content when a browser link or direct upload is unavailable. Prefer files_upload_link or files_prepare_upload to keep file bytes out of the conversation. Decoded content is limited by the server's MAX_UPLOAD_SIZE configuration.",
       inputSchema: z.object({
         filename: z.string().min(1),
         content_base64: z.string(),

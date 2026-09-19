@@ -1,4 +1,11 @@
 import {
+  createUpload,
+  prepareUpload,
+  getUpload,
+  completeUpload,
+  uploadMetadataSchema,
+} from "../uploads";
+import {
   FileMissingError,
   errorResponse,
   genId,
@@ -268,6 +275,77 @@ const writeFiles = requirePermission("write", () => "/files");
 const deleteFiles = requirePermission("delete", () => "/files");
 
 export const fileRouter = new Hono<AppEnvironment>()
+  .post("/uploads/link", writeFiles, async (context) => {
+    const { upload_id, browser_url, expires_at } = await createUpload(
+      context.get("services"),
+      context.get("config"),
+      context.get("orgId"),
+      context.get("userId"),
+    );
+    return context.json(
+      { status: "ok", upload_id, browser_url, expires_at },
+      201,
+    );
+  })
+  .post("/uploads", writeFiles, async (context) => {
+    const input = uploadMetadataSchema.safeParse(
+      await context.req.json().catch(() => null),
+    );
+    if (!input.success)
+      return context.json(
+        errorResponse("ValidationError", "Invalid upload metadata"),
+        400,
+      );
+    const services = context.get("services");
+    const config = context.get("config");
+    const session = await createUpload(
+      services,
+      config,
+      context.get("orgId"),
+      context.get("userId"),
+    );
+    return context.json(
+      {
+        status: "ok",
+        ...(await prepareUpload(
+          services,
+          config,
+          session.upload,
+          session.token,
+          input.data,
+        )),
+      },
+      201,
+    );
+  })
+  .get("/uploads/:id", writeFiles, async (context) => {
+    const upload = await getUpload(
+      context.get("services"),
+      context.req.param("id"),
+      { orgId: context.get("orgId"), userId: context.get("userId") },
+      true,
+    );
+    return context.json({
+      status: "ok",
+      upload_id: upload.id,
+      upload_status:
+        upload.status !== "complete" && upload.expiresAt.getTime() <= Date.now()
+          ? "expired"
+          : upload.status,
+      file_id: upload.status === "complete" ? upload.id : null,
+    });
+  })
+  .post("/uploads/:id/complete", writeFiles, async (context) => {
+    const services = context.get("services");
+    const upload = await getUpload(services, context.req.param("id"), {
+      orgId: context.get("orgId"),
+      userId: context.get("userId"),
+    });
+    return context.json({
+      status: "ok",
+      ...(await completeUpload(services, upload)),
+    });
+  })
   .post("/", writeFiles, async (context) => {
     const { prisma, storage } = context.get("services");
     const orgId = context.get("orgId");

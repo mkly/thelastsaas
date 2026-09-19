@@ -1,3 +1,4 @@
+import { uploadRouter } from "./routes/uploads";
 import { installRouter } from "./routes/install";
 import { Hono } from "hono";
 import { getCookie } from "hono/cookie";
@@ -78,6 +79,7 @@ export function createApp({
     services.auth.handler(context.req.raw),
   );
 
+  app.route("/uploads", uploadRouter);
   app.route("/auth", authPagesRouter);
   app.route("/", installRouter);
   app.route("/", downloadsRouter);

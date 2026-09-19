@@ -182,14 +182,36 @@ export function registerFiles(
           const options = globalOptions(command);
           const { client, orgId } = dependencies.getOrgClient(options);
           const remotePath = commandOptions.path ?? basename(localPath);
-          const response = await getOperationsApi(client).v1.orgs[
-            ":orgId"
-          ].files.$post({
-            param: { orgId },
-            form: {
-              file: dependencies.openFile(localPath),
-              path: remotePath,
-            },
+          const file = dependencies.openFile(localPath);
+          const api = getOperationsApi(client).v1.orgs[":orgId"].files;
+          const prepared = await dependencies.handleResponse<{
+            upload_id: string;
+            upload_url: string;
+            method: string;
+            headers: Record<string, string>;
+          }>(
+            await api.uploads.$post({
+              param: { orgId },
+              json: {
+                filename: basename(localPath),
+                path: remotePath,
+                size_bytes: file.size,
+                mime_type: file.type || "application/octet-stream",
+              },
+            }),
+          );
+          const transferred = await fetch(prepared.upload_url, {
+            method: "PUT",
+            headers: prepared.headers,
+            body: file,
+            redirect: "error",
+          });
+          if (!transferred.ok)
+            throw new CliError(
+              `File upload failed (HTTP ${transferred.status}). Request a new upload and try again.`,
+            );
+          const response = await api.uploads[":id"].complete.$post({
+            param: { orgId, id: prepared.upload_id },
           });
           const result = await dependencies.handleResponse<
             FileRecord & { status: "ok" }

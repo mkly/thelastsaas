@@ -11,6 +11,20 @@ type OrgParam = { orgId: string };
 type IdParam = OrgParam & { id: string };
 
 interface FileRoutes {
+  uploads: {
+    $post(input: {
+      param: OrgParam;
+      json: {
+        filename: string;
+        size_bytes: number;
+        mime_type: string;
+        path?: string;
+      };
+    }): Promise<Response>;
+    [":id"]: {
+      complete: { $post(input: { param: IdParam }): Promise<Response> };
+    };
+  };
   $get(input: {
     param: OrgParam;
     query: { prefix?: string };

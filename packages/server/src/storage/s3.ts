@@ -1,10 +1,14 @@
 import {
   DeleteObjectCommand,
   GetObjectCommand,
+  HeadObjectCommand,
+  PutObjectCommand,
+  CopyObjectCommand,
   S3Client,
   type S3ClientConfig,
 } from "@aws-sdk/client-s3";
 import { Upload } from "@aws-sdk/lib-storage";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { Readable } from "node:stream";
 
 import type { Storage, StorageInput } from "./interface";
@@ -38,6 +42,7 @@ export class S3Storage implements Storage {
     this.bucket = options.bucket;
 
     const clientConfig: S3ClientConfig = {
+      requestChecksumCalculation: "WHEN_REQUIRED",
       region: options.region ?? "us-east-1",
       forcePathStyle: options.forcePathStyle ?? false,
     };
@@ -84,5 +89,54 @@ export class S3Storage implements Storage {
     await this.client.send(
       new DeleteObjectCommand({ Bucket: this.bucket, Key: key }),
     );
+  }
+
+  async stat(key: string): Promise<{ size: number; etag?: string } | null> {
+    try {
+      const result = await this.client.send(
+        new HeadObjectCommand({ Bucket: this.bucket, Key: key }),
+      );
+      return { size: result.ContentLength ?? 0, etag: result.ETag };
+    } catch (error) {
+      if (isMissingObject(error)) return null;
+      throw error;
+    }
+  }
+
+  async promote(
+    source: string,
+    destination: string,
+    etag?: string,
+  ): Promise<void> {
+    await this.client.send(
+      new CopyObjectCommand({
+        Bucket: this.bucket,
+        Key: destination,
+        CopySource: `${this.bucket}/${source.split("/").map(encodeURIComponent).join("/")}`,
+        CopySourceIfMatch: etag,
+      }),
+    );
+  }
+
+  async presignUpload(
+    key: string,
+    size: number,
+    mimeType: string,
+    expiresIn: number,
+  ) {
+    const url = await getSignedUrl(
+      this.client,
+      new PutObjectCommand({
+        Bucket: this.bucket,
+        Key: key,
+        ContentLength: size,
+        ContentType: mimeType,
+      }),
+      {
+        expiresIn,
+        signableHeaders: new Set(["content-length", "content-type"]),
+      },
+    );
+    return { url, headers: { "Content-Type": mimeType } };
   }
 }

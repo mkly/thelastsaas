@@ -48,9 +48,17 @@ Casbin permissions plus row and field filters, while administrative tools
 require their corresponding management permissions. Tool failures are returned
 as structured MCP errors.
 
-File content is transferred as RFC 4648 base64 through `files_upload` and
-`files_download`. The decoded content is bounded by the server's
-`MAX_UPLOAD_SIZE` setting. Destructive tools such as `collections_delete`,
+Prefer `files_upload_link` for chat clients: it returns a browser link where the
+user selects and uploads one file without another login. The link expires after
+five minutes. After the user finishes, `files_upload_status` reports the file ID.
+Agents that can transfer bytes directly use `files_prepare_upload`, PUT the file
+to the returned URL with its headers, then call `files_complete_upload`.
+The CLI `files upload` handles that sequence automatically.
+
+`files_upload` remains available for small RFC 4648 base64 uploads when direct
+transfer or the browser is unavailable; do not automatically retry large files
+as base64. `files_download` still returns base64. All upload methods enforce
+`MAX_UPLOAD_SIZE`. See [upload storage setup](uploads.md) for S3 CORS requirements. Destructive tools such as `collections_delete`,
 `files_delete`, and `org_import` require `confirm: true`.
 
 ## Getting started
@@ -111,32 +119,32 @@ stable tool identifiers.
 | `members role-change`                      | `members_change_role`                                          |
 | `members remove`                           | `members_remove`                                               |
 
-| CLI command                             | MCP tool                                      |
-| --------------------------------------- | --------------------------------------------- |
-| `files list`                            | `files_list`                                  |
-| `files get`                             | `files_get`                                   |
-| `files upload`                          | `files_upload`                                |
-| `files download`                        | `files_download`                              |
-| `files delete`                          | `files_delete`                                |
-| `notifications list`                    | `notifications_list`                          |
-| `notifications read`                    | `notifications_read`                          |
-| `notifications unread`                  | `notifications_unread`                        |
-| `notifications delete`                  | `notifications_delete`                        |
-| `notifications queue`                   | `notifications_queue`                         |
-| `notifications schedules list`          | `notification_schedules_list`                 |
-| `notifications schedules once`          | `notification_schedules_create_once`          |
-| `notifications schedules recurring`     | `notification_schedules_create_recurring`     |
-| `notifications schedules cancel`        | `notification_schedules_cancel`               |
-| `notifications preferences show`        | `notification_preferences_show`               |
-| `notifications preferences set-default` | `notification_preferences_set` without `kind` |
-| `notifications preferences set-kind`    | `notification_preferences_set` with `kind`    |
-| `audit`                                 | `audit_log`                                   |
-| `orgs list`                             | `organizations_list`                          |
-| `orgs create`                           | `organizations_create`                        |
-| `orgs use`                              | `organizations_select`                        |
-| `stats`                                 | `stats`                                       |
-| `export`                                | `org_export`                                  |
-| `import`                                | `org_import`                                  |
+| CLI command                             | MCP tool                                                                       |
+| --------------------------------------- | ------------------------------------------------------------------------------ |
+| `files list`                            | `files_list`                                                                   |
+| `files get`                             | `files_get`                                                                    |
+| `files upload`                          | `files_prepare_upload`, `files_complete_upload` (or `files_upload` for base64) |
+| `files download`                        | `files_download`                                                               |
+| `files delete`                          | `files_delete`                                                                 |
+| `notifications list`                    | `notifications_list`                                                           |
+| `notifications read`                    | `notifications_read`                                                           |
+| `notifications unread`                  | `notifications_unread`                                                         |
+| `notifications delete`                  | `notifications_delete`                                                         |
+| `notifications queue`                   | `notifications_queue`                                                          |
+| `notifications schedules list`          | `notification_schedules_list`                                                  |
+| `notifications schedules once`          | `notification_schedules_create_once`                                           |
+| `notifications schedules recurring`     | `notification_schedules_create_recurring`                                      |
+| `notifications schedules cancel`        | `notification_schedules_cancel`                                                |
+| `notifications preferences show`        | `notification_preferences_show`                                                |
+| `notifications preferences set-default` | `notification_preferences_set` without `kind`                                  |
+| `notifications preferences set-kind`    | `notification_preferences_set` with `kind`                                     |
+| `audit`                                 | `audit_log`                                                                    |
+| `orgs list`                             | `organizations_list`                                                           |
+| `orgs create`                           | `organizations_create`                                                         |
+| `orgs use`                              | `organizations_select`                                                         |
+| `stats`                                 | `stats`                                                                        |
+| `export`                                | `org_export`                                                                   |
+| `import`                                | `org_import`                                                                   |
 
 The following commands deliberately do not have MCP tools:
 

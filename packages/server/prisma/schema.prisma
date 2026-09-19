@@ -581,3 +581,21 @@ model McpOrganization {
   @@id([userId, clientId])
   @@map("mcp_organization")
 }
+
+model FileUpload {
+  id String @id
+  orgId String
+  userId String
+  tokenHash String @unique
+  status String @default("pending")
+  filename String?
+  path String?
+  mimeType String?
+  sizeBytes Int?
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([expiresAt])
+  @@index([orgId, userId])
+  @@map("file_upload")
+}

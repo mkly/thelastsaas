@@ -233,7 +233,9 @@ saas --org <org-id> files download <file-id> --output ./report.pdf
 saas --org <org-id> files delete <file-id> --confirm
 \`\`\`
 
-Uploads are multipart and streamed. File paths are unique within an
+Uploads use a short-lived URL to transfer bytes directly to the configured
+storage backend, then verify and register the file. The CLI handles these steps
+automatically without base64 encoding. File paths are unique within an
 organization; use slash-separated prefixes to organize them. Downloads always
 require the user's session. Link a file to a collection record when its
 metadata belongs with structured data.

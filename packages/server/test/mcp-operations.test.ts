@@ -15,6 +15,10 @@ const EXPECTED_TOOLS = [
   "files_get",
   "files_list",
   "files_upload",
+  "files_upload_link",
+  "files_prepare_upload",
+  "files_complete_upload",
+  "files_upload_status",
   "notification_preferences_set",
   "notification_preferences_show",
   "notification_schedules_cancel",
@@ -135,9 +139,9 @@ describe("MCP operations tools", () => {
   test("registers every files, notifications, schedules, preferences, and system tool", async () => {
     const { client } = await connect(contextWith());
     const tools = await client.listTools();
-    expect(tools.tools.map((tool) => tool.name).sort()).toEqual([
-      ...EXPECTED_TOOLS,
-    ]);
+    expect(tools.tools.map((tool) => tool.name).sort()).toEqual(
+      [...EXPECTED_TOOLS].sort(),
+    );
   });
 
   test("returns file-list data for an authorized caller", async () => {

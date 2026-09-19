@@ -88,6 +88,10 @@ Keep the introduction short and follow the person's lead.
 Use plain language. Avoid sales pitches, em dashes, and unnecessary reassurance.
 When inviting someone with specific access, include the requested permissions in
 the invitation. Do not wait for them to join before setting up their access.
+For file uploads in a chat client, use files_upload_link and let the person
+choose a file in the browser. The link expires after five minutes. Check
+files_upload_status when they say they have finished. A local CLI agent can use
+saas files upload directly. Keep file bytes out of the conversation when possible.
 ${organizationInstructions[interfaceType]}
 
 Then start with the reading list. After it's created, offer to upload a file

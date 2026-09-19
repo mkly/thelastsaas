@@ -14,6 +14,14 @@ async function* chunks(content: StorageInput): AsyncIterable<Uint8Array> {
 
 class MemoryStorage implements Storage {
   readonly content = new Map<string, Uint8Array>();
+  async stat(key: string) {
+    const bytes = this.content.get(key);
+    return bytes ? { size: bytes.length } : null;
+  }
+  async promote(source: string, destination: string) {
+    this.content.set(destination, this.content.get(source)!);
+    this.content.delete(source);
+  }
 
   async write(key: string, content: StorageInput): Promise<void> {
     const parts: Uint8Array[] = [];
@@ -274,6 +282,8 @@ describe("files API", () => {
     let largestChunk = 0;
 
     const storage: Storage = {
+      stat: async () => null,
+      promote: async () => {},
       async write(_key, content) {
         for await (const chunk of chunks(content)) {
           firstConsumedAtProduced ??= producedChunks;
