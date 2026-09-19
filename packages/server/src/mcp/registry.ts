@@ -1,6 +1,7 @@
 import { API_VERSION } from "@lastsaas/shared";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { buildInfo } from "../build-info";
 
 import type { McpToolContext } from "./context";
 import { registerAccessTools } from "./tools/access";
@@ -16,9 +17,12 @@ const registerServerInfo: ToolRegistrar = (server, context) => {
     "server_info",
     {
       description:
-        "Return the Last SaaS API version and authenticated request identity.",
+        "Return the Last SaaS API version, build commit, build and process start times, and authenticated request identity. Use this to identify the deployed server revision.",
       outputSchema: {
         apiVersion: z.literal(API_VERSION),
+        commit: z.string().nullable(),
+        builtAt: z.string().nullable(),
+        startedAt: z.string(),
         orgId: z.string().nullable(),
         userId: z.string(),
       },
@@ -26,6 +30,7 @@ const registerServerInfo: ToolRegistrar = (server, context) => {
     async () => {
       const info = {
         apiVersion: API_VERSION,
+        ...buildInfo,
         orgId: context.orgId,
         userId: context.userId,
       };

@@ -3,6 +3,13 @@
 Last SaaS exposes its organization-scoped data, access-control, file,
 notification, and system operations as MCP tools over Streamable HTTP.
 
+Call `server_info` to identify the running server. It returns `commit` (the
+build's Git SHA), `builtAt` (UTC build time), and `startedAt` (UTC process start
+time), alongside the API version and request identity. Both server build
+commands embed the revision and build time; source runs report `null` for
+`commit` and `builtAt`. These fields identify a deployment; they do not trigger
+client tool refreshes.
+
 ## Connect ChatGPT or Claude
 
 Browser-based MCP clients connect through OAuth. They do not require the Last

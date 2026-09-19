@@ -5,6 +5,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import type { McpToolContext } from "../src/mcp/context";
 import { registerTools } from "../src/mcp/registry";
+import { buildInfo } from "../src/build-info";
 
 // Advertised tool schemas are serialized into every MCP client's model
 // context, so an oversized schema breaks clients before any call is made
@@ -14,8 +15,11 @@ const MAX_SCHEMA_CHARS = 10_000;
 describe("MCP tool schema size", () => {
   test("every advertised input schema stays small", async () => {
     const server = new McpServer({ name: "schema-size", version: "1.0.0" });
-    // Handlers are never invoked by tools/list, so a stub context suffices.
-    registerTools(server, {} as McpToolContext);
+    // Listing schemas and reading server_info require no backing services.
+    registerTools(server, {
+      orgId: null,
+      userId: "build-info-test",
+    } as McpToolContext);
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
@@ -30,6 +34,25 @@ describe("MCP tool schema size", () => {
           MAX_SCHEMA_CHARS,
         );
       }
+      const info = await client.callTool({
+        name: "server_info",
+        arguments: {},
+      });
+      expect(info.isError).not.toBe(true);
+      expect(info.structuredContent).toEqual({
+        apiVersion: "v1",
+        orgId: null,
+        userId: "build-info-test",
+        ...buildInfo,
+      });
+      expect(buildInfo.commit).toBeNull();
+      expect(buildInfo.builtAt).toBeNull();
+      expect(Date.parse(buildInfo.startedAt)).toBeLessThanOrEqual(Date.now());
+      const again = await client.callTool({
+        name: "server_info",
+        arguments: {},
+      });
+      expect(again.structuredContent).toEqual(info.structuredContent);
     } finally {
       await Promise.allSettled([client.close(), server.close()]);
     }
