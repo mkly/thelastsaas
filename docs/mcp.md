@@ -65,10 +65,15 @@ The CLI `files upload` handles that sequence automatically.
 `files_upload` is a last resort for small RFC 4648 base64 uploads, only when
 neither direct binary transfer nor a browser upload link can be used. Do not
 read or encode file bytes into the conversation when either is available, and
-do not automatically retry large files as base64. `files_download` still returns
-base64. All upload methods enforce
+do not automatically retry large files as base64. All upload methods enforce
 `MAX_UPLOAD_SIZE`. See [upload storage setup](uploads.md) for S3 CORS requirements. Destructive tools such as `collections_delete`,
 `files_delete`, and `org_import` require `confirm: true`.
+
+For downloads, use `files_download_link`: it checks read access and returns a
+five-minute URL for one file, with no extra login. Give the URL to the user or
+fetch the raw bytes outside the conversation. Links allow repeated downloads
+until expiry. The CLI `files download` handles this automatically. Base64
+`files_download` is a last resort for small files when a link cannot be used.
 
 ## Getting started
 
@@ -133,7 +138,7 @@ stable tool identifiers.
 | `files list`                            | `files_list`                                                                   |
 | `files get`                             | `files_get`                                                                    |
 | `files upload`                          | `files_prepare_upload`, `files_complete_upload` (or `files_upload` for base64) |
-| `files download`                        | `files_download`                                                               |
+| `files download`                        | `files_download_link` (base64 `files_download` as a last resort)               |
 | `files delete`                          | `files_delete`                                                                 |
 | `notifications list`                    | `notifications_list`                                                           |
 | `notifications read`                    | `notifications_read`                                                           |

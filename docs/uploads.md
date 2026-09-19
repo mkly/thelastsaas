@@ -64,3 +64,20 @@ their temporary objects. Each user can have at most 20 unexpired, unfinished
 uploads per organization. Expired links require a new upload session.
 
 The file-upload database migration is required on existing installations.
+
+## Download links
+
+MCP `files_download_link` and REST `POST /v1/orgs/:orgId/files/:id/download-link`
+return `file`, `download_url`, and `expires_at`. Creating a link requires current
+organization membership and read permission on `/files`. Links expire after
+five minutes, need no additional login, and permit retries until expiry.
+The CLI `saas files download` requests a link and streams the bytes directly.
+Base64 MCP `files_download` is a last resort when links cannot be used.
+
+S3 uses a presigned GET with an attachment filename. A normal browser download
+opens the URL directly and needs no additional bucket CORS rule. Issued S3 URLs
+remain usable until expiry even if the requesting user's permissions change.
+Local storage uses a signed link and rechecks membership and read permission
+when used. Both methods deliver attachments with the original filename and
+request no caching. Anyone holding a link can use it during its five-minute
+lifetime. No additional database migration is needed for download links.

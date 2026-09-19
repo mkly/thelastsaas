@@ -1,4 +1,5 @@
 import { HTTPException } from "hono/http-exception";
+import { createDownloadLink } from "../../file-downloads";
 import {
   createUpload,
   prepareUpload,
@@ -246,6 +247,27 @@ const deliverySchema = {
 
 function registerFileTools(server: McpServer, context: McpToolContext): void {
   server.registerTool(
+    "files_download_link",
+    {
+      description:
+        "Create a five-minute download link for one file, with no extra login. Prefer this for all downloads: give the link to the user or fetch its raw bytes outside the conversation. The link can be reused until it expires. Use files_download base64 only as a last resort when a link cannot be used.",
+      inputSchema: z.object({ id: z.string().min(1) }),
+      annotations: { readOnlyHint: true },
+    },
+    ({ id }) =>
+      withToolErrors(async () =>
+        toolSuccess(
+          await createDownloadLink(
+            context.services,
+            context.config,
+            requireOrganization(context),
+            context.userId,
+            id,
+          ),
+        ),
+      ),
+  );
+  server.registerTool(
     "files_upload_link",
     {
       description:
@@ -436,7 +458,7 @@ function registerFileTools(server: McpServer, context: McpToolContext): void {
     "files_download",
     {
       description:
-        "Download file content as base64. Returned decoded content is limited by the server's MAX_UPLOAD_SIZE configuration.",
+        "LAST RESORT ONLY: download small files as base64 only when a download link cannot be used. Prefer files_download_link and give the URL to the user or download the bytes outside the conversation. Base64 consumes conversation context. Returned decoded content is limited by the server's MAX_UPLOAD_SIZE configuration.",
       inputSchema: z.object({ id: z.string().min(1) }),
       annotations: { readOnlyHint: true },
     },

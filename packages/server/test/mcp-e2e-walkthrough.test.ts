@@ -24,6 +24,7 @@ const expectedTools = [
   "field_filter_set",
   "files_delete",
   "files_download",
+  "files_download_link",
   "files_get",
   "files_list",
   "files_upload",

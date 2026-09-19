@@ -39,6 +39,9 @@ interface FileRoutes {
     content: {
       $get(input: { param: IdParam }): Promise<Response>;
     };
+    "download-link": {
+      $post(input: { param: IdParam }): Promise<Response>;
+    };
   };
 }
 

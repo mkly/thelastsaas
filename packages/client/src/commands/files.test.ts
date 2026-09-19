@@ -161,7 +161,11 @@ describe("files commands", () => {
           ":orgId": {
             files: {
               ":id": {
-                content: { $get: async () => response },
+                "download-link": {
+                  $post: async () => ({
+                    download_url: "https://storage.example/file",
+                  }),
+                },
               },
             },
           },
@@ -172,9 +176,20 @@ describe("files commands", () => {
     const program = testProgram();
     registerFiles(program, deps);
 
-    await program.parseAsync(["files", "download", "file_3"], {
-      from: "user",
-    });
+    const transfer = spyOn(globalThis, "fetch").mockImplementation(
+      Object.assign(async () => response, { preconnect: fetch.preconnect }),
+    );
+    try {
+      await program.parseAsync(["files", "download", "file_3"], {
+        from: "user",
+      });
+      expect(transfer).toHaveBeenCalledWith("https://storage.example/file", {
+        redirect: "error",
+        credentials: "omit",
+      });
+    } finally {
+      transfer.mockRestore();
+    }
 
     expect(streams).toEqual([{ response, outputPath: "/tmp/notes.txt" }]);
     expect(outputs[0]?.human).toBe("Downloaded 'notes.txt' to /tmp/notes.txt");

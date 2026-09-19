@@ -139,4 +139,18 @@ export class S3Storage implements Storage {
     );
     return { url, headers: { "Content-Type": mimeType } };
   }
+
+  async presignDownload(key: string, disposition: string, expiresIn: number) {
+    return getSignedUrl(
+      this.client,
+      new GetObjectCommand({
+        Bucket: this.bucket,
+        Key: key,
+        ResponseContentDisposition: disposition,
+        ResponseContentType: "application/octet-stream",
+        ResponseCacheControl: "private, no-store",
+      }),
+      { expiresIn },
+    );
+  }
 }

@@ -1,3 +1,4 @@
+import { createDownloadLink } from "../file-downloads";
 import {
   createUpload,
   prepareUpload,
@@ -409,6 +410,18 @@ export const fileRouter = new Hono<AppEnvironment>()
       prefix,
     );
     return context.json({ status: "ok" as const, files });
+  })
+  .post("/:id/download-link", readFiles, async (context) => {
+    return context.json({
+      status: "ok",
+      ...(await createDownloadLink(
+        context.get("services"),
+        context.get("config"),
+        context.get("orgId"),
+        context.get("userId"),
+        context.req.param("id"),
+      )),
+    });
   })
   .get("/:id/content", readFiles, async (context) => {
     const { prisma, storage } = context.get("services");

@@ -4,6 +4,11 @@ export type StorageInput =
   ReadableStream<Uint8Array> | AsyncIterable<Uint8Array>;
 
 export interface Storage {
+  presignDownload?(
+    key: string,
+    disposition: string,
+    expiresIn: number,
+  ): Promise<string>;
   write(key: string, content: StorageInput): Promise<void>;
   read(key: string): Promise<ReadableStream<Uint8Array> | null>;
   delete(key: string): Promise<void>;

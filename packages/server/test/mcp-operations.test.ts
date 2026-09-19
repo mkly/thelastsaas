@@ -12,6 +12,7 @@ const EXPECTED_TOOLS = [
   "audit_log",
   "files_delete",
   "files_download",
+  "files_download_link",
   "files_get",
   "files_list",
   "files_upload",

@@ -1,4 +1,5 @@
 import { uploadRouter } from "./routes/uploads";
+import { fileDownloadsRouter } from "./routes/file-downloads";
 import { installRouter } from "./routes/install";
 import { Hono } from "hono";
 import { getCookie } from "hono/cookie";
@@ -80,6 +81,7 @@ export function createApp({
   );
 
   app.route("/uploads", uploadRouter);
+  app.route("/file-downloads", fileDownloadsRouter);
   app.route("/auth", authPagesRouter);
   app.route("/", installRouter);
   app.route("/", downloadsRouter);

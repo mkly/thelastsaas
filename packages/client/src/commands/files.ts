@@ -272,11 +272,20 @@ export function registerFiles(
           }
 
           const { client, orgId } = dependencies.getOrgClient(options);
-          const response = await getOperationsApi(client).v1.orgs[
+          const linkResponse = await getOperationsApi(client).v1.orgs[
             ":orgId"
-          ].files[":id"].content.$get({ param: { orgId, id } });
+          ].files[":id"]["download-link"].$post({ param: { orgId, id } });
+          const link = await dependencies.handleResponse<{
+            download_url: string;
+          }>(linkResponse);
+          const response = await fetch(link.download_url, {
+            redirect: "error",
+            credentials: "omit",
+          });
           if (!response.ok) {
-            await dependencies.handleResponse(response);
+            throw new CliError(
+              `File download failed (HTTP ${response.status}). Try again to request a new link.`,
+            );
           }
 
           if (commandOptions.stdout) {

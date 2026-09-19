@@ -94,6 +94,9 @@ files_upload_status when they say they have finished. A local CLI agent can use
 saas files upload directly. Use files_upload with base64 only as a last resort
 for small files when neither browser links nor direct binary uploads can be used.
 Do not read or encode file bytes into the conversation when either is available.
+For downloads, use files_download_link and give the person its five-minute URL.
+A CLI agent can use saas files download. Use base64 files_download only as a last
+resort when a link cannot be used.
 ${organizationInstructions[interfaceType]}
 
 Then start with the reading list. After it's created, offer to upload a file

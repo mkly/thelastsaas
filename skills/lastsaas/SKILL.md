@@ -235,8 +235,9 @@ saas --org <org-id> files delete <file-id> --confirm
 Uploads use a short-lived URL to transfer bytes directly to the configured
 storage backend, then verify and register the file. The CLI handles these steps
 automatically without base64 encoding. File paths are unique within an
-organization; use slash-separated prefixes to organize them. Downloads always
-require the user's session. Link a file to a collection record when its
+organization; use slash-separated prefixes to organize them. Downloads use the
+user's session to request a five-minute link, then stream raw bytes from storage
+without forwarding the session token. Link a file to a collection record when its
 metadata belongs with structured data.
 
 Notification delivery can be immediate, one-shot at a future timestamp, or
