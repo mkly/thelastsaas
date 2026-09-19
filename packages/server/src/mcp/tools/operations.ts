@@ -389,7 +389,7 @@ function registerFileTools(server: McpServer, context: McpToolContext): void {
     "files_upload",
     {
       description:
-        "Upload small base64 file content when a browser link or direct upload is unavailable. Prefer files_upload_link or files_prepare_upload to keep file bytes out of the conversation. Decoded content is limited by the server's MAX_UPLOAD_SIZE configuration.",
+        "LAST RESORT ONLY: upload small files as base64 only when neither a browser upload link nor a direct binary upload can be used. First use files_upload_link for a person uploading through their browser, or files_prepare_upload followed by HTTP PUT and files_complete_upload for an agent with file and HTTP access. Do not read or encode file bytes into the conversation when either method is available; base64 consumes conversation context. Decoded content is limited by the server's MAX_UPLOAD_SIZE configuration.",
       inputSchema: z.object({
         filename: z.string().min(1),
         content_base64: z.string(),

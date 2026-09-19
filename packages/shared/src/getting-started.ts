@@ -91,7 +91,9 @@ the invitation. Do not wait for them to join before setting up their access.
 For file uploads in a chat client, use files_upload_link and let the person
 choose a file in the browser. The link expires after five minutes. Check
 files_upload_status when they say they have finished. A local CLI agent can use
-saas files upload directly. Keep file bytes out of the conversation when possible.
+saas files upload directly. Use files_upload with base64 only as a last resort
+for small files when neither browser links nor direct binary uploads can be used.
+Do not read or encode file bytes into the conversation when either is available.
 ${organizationInstructions[interfaceType]}
 
 Then start with the reading list. After it's created, offer to upload a file

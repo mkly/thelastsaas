@@ -11,7 +11,8 @@ The upload is attributed to the user who requested the link.
   returns a PUT URL, headers, upload ID, and expiry.
 - MCP `files_complete_upload`: verify size and publish the uploaded file.
 - MCP `files_upload_status`: query the upload state and completed file ID.
-- MCP `files_upload`: base64 alternative for clients that need it.
+- MCP `files_upload`: last resort for small files, only when neither browser
+  links nor direct binary uploads can be used. Base64 consumes conversation context.
 - CLI `saas files upload <path>`: prepares, transfers raw bytes, and completes.
 
 REST equivalents under `/v1/orgs/:orgId/files`:

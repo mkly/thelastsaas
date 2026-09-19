@@ -62,9 +62,11 @@ Agents that can transfer bytes directly use `files_prepare_upload`, PUT the file
 to the returned URL with its headers, then call `files_complete_upload`.
 The CLI `files upload` handles that sequence automatically.
 
-`files_upload` remains available for small RFC 4648 base64 uploads when direct
-transfer or the browser is unavailable; do not automatically retry large files
-as base64. `files_download` still returns base64. All upload methods enforce
+`files_upload` is a last resort for small RFC 4648 base64 uploads, only when
+neither direct binary transfer nor a browser upload link can be used. Do not
+read or encode file bytes into the conversation when either is available, and
+do not automatically retry large files as base64. `files_download` still returns
+base64. All upload methods enforce
 `MAX_UPLOAD_SIZE`. See [upload storage setup](uploads.md) for S3 CORS requirements. Destructive tools such as `collections_delete`,
 `files_delete`, and `org_import` require `confirm: true`.
 
