@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { version as serverVersion } from "../package.json";
+import { version as cliVersion } from "../../client/package.json";
 import { createHash, randomBytes } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -304,6 +306,20 @@ describe("MCP end-to-end walkthrough", () => {
     });
     expect(removedEndpoint.status).toBe(404);
 
+    const initialized = await app.request(
+      endpoint,
+      mcpRequest(token, 0, "initialize", {
+        protocolVersion,
+        capabilities: {},
+        clientInfo: { name: "version-test", version: "1.0.0" },
+      }),
+    );
+    expect(initialized.status).toBe(200);
+    expect((await initialized.json()).result.serverInfo).toEqual({
+      name: "lastsaas",
+      version: serverVersion,
+    });
+
     const listed = await app.request(
       endpoint,
       mcpRequest(token, 1, "tools/list"),
@@ -322,7 +338,12 @@ describe("MCP end-to-end walkthrough", () => {
       "server_info",
       {},
     );
-    expect(serverInfo).toMatchObject({ orgId, userId });
+    expect(serverInfo).toMatchObject({
+      version: serverVersion,
+      bundledCliVersion: cliVersion,
+      orgId,
+      userId,
+    });
 
     const created = await callTool(
       app,

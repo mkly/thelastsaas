@@ -17,8 +17,10 @@ const registerServerInfo: ToolRegistrar = (server, context) => {
     "server_info",
     {
       description:
-        "Return the Last SaaS API version, build commit, build and process start times, and authenticated request identity. Use this to identify the deployed server revision.",
+        "Return the Last SaaS server, bundled CLI, and API versions, build commit, build and process start times, and authenticated request identity. Use this to identify the deployed server revision.",
       outputSchema: {
+        version: z.literal(buildInfo.version),
+        bundledCliVersion: z.literal(buildInfo.bundledCliVersion),
         apiVersion: z.literal(API_VERSION),
         commit: z.string().nullable(),
         builtAt: z.string().nullable(),

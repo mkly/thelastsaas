@@ -1,10 +1,10 @@
 import { requireMcpAuth } from "@better-auth/mcp";
 import { StreamableHTTPTransport } from "@hono/mcp";
-import { API_VERSION } from "@lastsaas/shared";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Hono, type Context } from "hono";
 
 import { MCP_ACCOUNT_CLAIM, MCP_TOOLS_SCOPE, mcpResourceUrl } from "../auth";
+import { buildInfo } from "../build-info";
 import type { AppEnvironment } from "../env";
 import {
   resolveMcpApiKeyPrincipal,
@@ -50,7 +50,10 @@ async function handleMcpRequest(
   userId: string,
   clientId?: string,
 ): Promise<Response> {
-  const server = new McpServer({ name: "lastsaas", version: API_VERSION });
+  const server = new McpServer({
+    name: "lastsaas",
+    version: buildInfo.version,
+  });
   const transport = new StreamableHTTPTransport({
     enableJsonResponse: true,
     sessionIdGenerator: undefined,

@@ -3,6 +3,13 @@
 Build, generation, and release scripts live here. Package runtime code belongs
 under `packages/`.
 
+The server and CLI have independent versions in `packages/server/package.json`
+and `packages/client/package.json`. Commit the relevant version change, then
+push `server-v<version>` or `cli-v<version>` to publish that component's binaries
+and checksums. Server releases include SQLite and PostgreSQL binaries and report
+the version of the CLI bundled for download. The API version is maintained
+separately in `packages/shared/src/index.ts`.
+
 ## Prisma database providers
 
 `packages/server/prisma/schema.prisma` is the only hand-edited Prisma schema
