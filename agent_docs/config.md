@@ -15,6 +15,8 @@ production.
 | `NODE_ENV`                   | `development`                             | `development`, `test`, or `production`                |
 | `PORT`                       | `8787`                                    | HTTP listen port                                      |
 | `DATABASE_URL`               | `file:./data/lastsaas.db`                 | SQLite file or PostgreSQL connection URL              |
+| `CACHE_MAX_BYTES`            | `33554432` (32 MiB)                     | Metadata cache budget; `0` disables caching           |
+| `CACHE_TTL_SECONDS`          | `3600` (one hour)                       | Metadata cache entry lifetime                        |
 | `BETTER_AUTH_SECRET`         | development-only value                    | BetterAuth signing secret; required in production     |
 | `BETTER_AUTH_URL`            | `http://localhost:$PORT`                  | Public origin; required in production                 |
 | `GOOGLE_CLIENT_ID`           | empty                                     | Optional Google OAuth client; pair with its secret    |
@@ -57,6 +59,25 @@ provider is fixed when it is generated, so a binary built with the default
 The CLI stores `server`, `session_token`, and optional default `org` in
 `~/.lastsaas/config.json`. `--org` overrides the saved organization for one
 command. Production should use HTTPS so BetterAuth can issue secure cookies.
+
+## Metadata cache
+
+MCP and CLI/API requests share an in-memory cache of collection definitions and
+organization permission rules. Records, query results, membership checks,
+active-organization selections, and row/field filters are read from the database.
+
+The cache retains at most 10,000 entries within `CACHE_MAX_BYTES`, evicting least
+recently used entries and skipping values larger than the budget. This budget
+estimates retained cache data, not total process memory. Entries expire after
+`CACHE_TTL_SECONDS`.
+
+Collection, schema, permission, and role changes invalidate affected entries
+after writes settle, including entries being loaded concurrently. Direct database
+edits become visible when entries expire.
+
+For multiple server processes sharing a database, set `CACHE_MAX_BYTES=0`:
+invalidation is local to each process, so another process could retain revoked
+permissions until expiry. No shared cache backend is implemented.
 
 ## Secret encryption
 
