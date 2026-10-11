@@ -1,4 +1,8 @@
-import { type Notification, type NotificationSchedule } from "@lastsaas/shared";
+import {
+  type Notification,
+  type NotificationSchedule,
+  type NotificationAudience,
+} from "@lastsaas/shared";
 import type { Command } from "commander";
 
 import { parseJson, withErrorHandling } from "../api-client";
@@ -80,7 +84,16 @@ function scheduleOutput(schedules: NotificationSchedule[]): string {
         schedule.kind === "recurring"
           ? schedule.recurrence
           : schedule.deliver_at;
-      return `  ${schedule.id.padEnd(24)} ${schedule.kind.padEnd(10)} ${schedule.enabled ? "enabled " : "disabled"} ${timing ?? "-"}  ${schedule.message}`;
+      const audience = schedule.audience ?? { kind: "self" };
+      const destination =
+        audience.kind === "users"
+          ? audience.users.join(", ")
+          : audience.kind === "roles"
+            ? `roles: ${audience.roles.join(", ")}`
+            : audience.kind === "all"
+              ? "everyone"
+              : "self";
+      return `  ${schedule.id.padEnd(24)} ${schedule.kind.padEnd(10)} ${schedule.enabled ? "enabled " : "disabled"} ${timing ?? "-"}  ${schedule.message}  (to ${destination})`;
     })
     .join("\n");
 }
@@ -103,7 +116,50 @@ function preferencePatch(options: { inApp?: string; email?: string }): {
   return patch;
 }
 
-interface DeliveryOptions {
+interface AudienceOptions {
+  to?: string[];
+  toRole?: string[];
+  toAll?: boolean;
+}
+
+function audienceBody(options: AudienceOptions): {
+  audience?: NotificationAudience;
+} {
+  const users = options.to ?? [];
+  const roles = options.toRole ?? [];
+  if (
+    Number(users.length > 0) +
+      Number(roles.length > 0) +
+      Number(Boolean(options.toAll)) >
+    1
+  ) {
+    throw new CliError("Choose one audience: --to, --to-role, or --to-all.");
+  }
+  if (users.length) return { audience: { kind: "users", users } };
+  if (roles.length) return { audience: { kind: "roles", roles } };
+  if (options.toAll) return { audience: { kind: "all" } };
+  return {};
+}
+
+function addAudienceOptions(command: Command): Command {
+  const collect = (value: string, previous: string[]) => [...previous, value];
+  return command
+    .option(
+      "--to <member>",
+      "Recipient user ID or email; repeat for multiple people",
+      collect,
+      [],
+    )
+    .option(
+      "--to-role <role>",
+      "Notify members of this role; repeat for multiple roles",
+      collect,
+      [],
+    )
+    .option("--to-all", "Notify all human organization members, including you");
+}
+
+interface DeliveryOptions extends AudienceOptions {
   message: string;
   type: string;
   data?: string;
@@ -117,6 +173,7 @@ function deliveryBody(
   dependencies: NotificationsCommandDependencies,
 ): Record<string, unknown> {
   return {
+    ...audienceBody(options),
     message: options.message,
     type: options.type,
     ...(options.data
@@ -131,7 +188,7 @@ function deliveryBody(
 }
 
 function addDeliveryOptions(command: Command): Command {
-  return command
+  return addAudienceOptions(command)
     .requiredOption("--message <text>", "Notification message")
     .option("--type <type>", "Notification type", "direct_notification")
     .option("--data <json>", "Notification payload as JSON")
@@ -229,9 +286,9 @@ export function registerNotifications(
       ),
     );
 
-  notifications
-    .command("queue")
+  addAudienceOptions(notifications.command("queue"))
     .description("Queue a notification for immediate delivery")
+    .option("--dedupe-key <key>", "Stable delivery deduplication key")
     .requiredOption("--subject <text>", "Email subject")
     .option("--message <text>", "In-app notification message")
     .option("--text <text>", "Plain-text email body")
@@ -243,7 +300,8 @@ export function registerNotifications(
     .action(
       withErrorHandling(
         async (
-          commandOptions: {
+          commandOptions: AudienceOptions & {
+            dedupeKey?: string;
             subject: string;
             message?: string;
             text?: string;
@@ -262,6 +320,10 @@ export function registerNotifications(
           ].notifications.queue.$post({
             param: { orgId },
             json: {
+              ...audienceBody(commandOptions),
+              ...(commandOptions.dedupeKey
+                ? { dedupe_key: commandOptions.dedupeKey }
+                : {}),
               subject: commandOptions.subject,
               type: commandOptions.type,
               ...(commandOptions.message
@@ -284,13 +346,18 @@ export function registerNotifications(
           });
           const result = await dependencies.handleResponse<{
             status: "ok";
-            id: string;
+            id: string | null;
+            ids: string[];
+            queued_count: number;
+            skipped_count: number;
             message: string;
           }>(response);
           dependencies.writeOutput(
             result,
             options,
-            `${result.message} (${result.id})`,
+            result.id
+              ? `${result.message} (${result.id})`
+              : `${result.message}: ${result.queued_count} queued, ${result.skipped_count} skipped`,
           );
         },
       ),

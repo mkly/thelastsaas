@@ -1,8 +1,19 @@
 import { describe, expect, test } from "bun:test";
+import { version } from "../package.json";
 
 import { createProgram, getGlobalOptions } from "./index";
 
 describe("CLI program", () => {
+  test("prints the CLI package version for --version", () => {
+    let output = "";
+    const program = createProgram([])
+      .exitOverride()
+      .configureOutput({ writeOut: (text) => (output += text) });
+
+    expect(() => program.parse(["bun", "saas", "--version"])).toThrow();
+    expect(output).toBe(`${version}\n`);
+  });
+
   test("registers command families from the registry", async () => {
     const program = createProgram([
       (root) => {

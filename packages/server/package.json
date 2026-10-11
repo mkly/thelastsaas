@@ -1,6 +1,6 @@
 {
   "name": "@lastsaas/server",
-  "version": "0.0.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "exports": {
@@ -12,25 +12,29 @@
     "prisma:generate": "prisma generate --schema prisma/schema.prisma",
     "prisma:generate:postgres": "bun ../../scripts/generate-postgres-schema.ts && prisma generate --schema prisma/schema.postgres.prisma",
     "prisma:push:postgres": "bun ../../scripts/generate-postgres-schema.ts && prisma db push --schema prisma/schema.postgres.prisma --skip-generate",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "secrets:rotate": "bun ../../scripts/rotate-secrets.ts"
   },
   "dependencies": {
     "@better-auth/api-key": "1.7.1",
     "@better-auth/mcp": "1.7.1",
     "@better-auth/oauth-provider": "1.7.1",
     "@hono/mcp": "^0.3.2",
+    "@hono/zod-validator": "0.9.1",
     "@lastsaas/shared": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@prisma/client": "^6.16.2",
     "better-auth": "1.7.1",
+    "bunqueue": "2.9.13",
     "busboy": "^1.6.0",
     "casbin": "^5.49.0",
     "croner": "^10.0.1",
+    "fast-json-stable-stringify": "2.1.0",
     "hono": "^4.9.8",
     "kysely": "^0.28.17",
     "luxon": "^3.7.2",
     "nodemailer": "^7.0.6",
-    "pg-boss": "^12.15.0",
+    "pg-boss": "12.37.1",
     "rate-limiter-flexible": "^11.2.0",
     "rrule": "^2.8.1",
     "zod": "^4.1.11"

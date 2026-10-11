@@ -11,8 +11,10 @@ import {
   FileMissingError,
   LastSaasError,
   NOTIFICATION_KINDS,
+  notificationAudienceSchema,
   genId,
   sanitizePathComponent,
+  secretBackupRequestSchema,
   type ExportData,
 } from "@lastsaas/shared";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -34,12 +36,16 @@ import {
   deleteNotification,
   getNotifications,
   markNotificationRead,
-  queueDirectNotification,
+  queueNotifications,
 } from "../../db/notifications";
 import { getStats } from "../../db/stats";
-import { InvalidRecurrenceError, parseRecurrence } from "../../lib/recurrence";
 import type { PermissionAction } from "../../middleware/permission";
-import { scheduleResponse } from "../../routes/notification-schedules";
+import {
+  createNotificationSchedule,
+  listNotificationSchedules,
+  cancelNotificationSchedule,
+  scheduleResponse,
+} from "../../db/notification-schedules";
 import { channelPatchSchema } from "../../routes/notifications";
 import { portableDataSchema } from "../../routes/system";
 import { requireOrganization, type McpToolContext } from "../context";
@@ -82,6 +88,7 @@ function toolError(
 
 async function withToolErrors(
   operation: () => Promise<CallToolResult>,
+  sensitive = false,
 ): Promise<CallToolResult> {
   try {
     return await operation();
@@ -108,7 +115,8 @@ async function withToolErrors(
     }
     // Route handlers surface an unexpected fault as a bare 500; mirror that
     // here rather than echoing internal error text back to the MCP client.
-    log.error("mcp", "tool execution failed", error);
+    if (sensitive) log.error("mcp", "Sensitive tool execution failed");
+    else log.error("mcp", "tool execution failed", error);
     return toolError("InternalError", "Tool execution failed");
   }
 }
@@ -237,6 +245,7 @@ async function readLimitedContent(
 }
 
 const deliverySchema = {
+  audience: notificationAudienceSchema.optional(),
   message: z.string().min(1),
   type: z.string().min(1).default("direct_notification"),
   data: z.record(z.string(), z.unknown()).optional(),
@@ -618,8 +627,10 @@ function registerNotificationTools(
   server.registerTool(
     "notifications_queue",
     {
-      description: "Queue a notification for immediate delivery.",
+      description:
+        "Queue notifications for self, selected organization members, all human members, or members of any selected role. Sending to others requires write permission for each destination.",
       inputSchema: z.object({
+        audience: notificationAudienceSchema.optional(),
         subject: z.string().min(1),
         message: z.string().min(1).optional(),
         text: z.string().min(1).optional(),
@@ -632,6 +643,7 @@ function registerNotificationTools(
       }),
     },
     ({
+      audience,
       subject,
       message,
       text,
@@ -643,12 +655,13 @@ function registerNotificationTools(
       dedupe_key,
     }) =>
       withToolErrors(async () => {
-        const id = await queueDirectNotification(
+        const result = await queueNotifications(
           context.services.prisma,
           context.services.notificationQueue,
           requireOrganization(context),
           context.userId,
           {
+            audience,
             subject,
             type,
             ...(message ? { message } : {}),
@@ -660,10 +673,13 @@ function registerNotificationTools(
             ...(dedupe_key ? { dedupeKey: dedupe_key } : {}),
           },
         );
-        await audit(context, "queue_notification", "notification", id, {
+        await audit(context, "queue_notification", "notification", result.id, {
           subject,
+          audience: audience ?? { kind: "self" },
+          recipient_count: result.recipient_count,
+          notification_ids: result.ids,
         });
-        return toolSuccess({ id, message: "Notification queued" });
+        return toolSuccess({ ...result, message: "Notification queued" });
       }),
   );
 
@@ -675,14 +691,11 @@ function registerNotificationTools(
     },
     () =>
       withToolErrors(async () => {
-        const schedules =
-          await context.services.prisma.notificationSchedule.findMany({
-            where: {
-              orgId: requireOrganization(context),
-              userId: context.userId,
-            },
-            orderBy: { createdAt: "desc" },
-          });
+        const schedules = await listNotificationSchedules(
+          context.services.prisma,
+          requireOrganization(context),
+          context.userId,
+        );
         return toolSuccess({ schedules: schedules.map(scheduleResponse) });
       }),
   );
@@ -690,7 +703,8 @@ function registerNotificationTools(
   server.registerTool(
     "notification_schedules_create_once",
     {
-      description: "Create a one-shot notification schedule.",
+      description:
+        "Create a one-shot notification schedule for an audience. Selected users are fixed; all and roles resolve current human membership at delivery.",
       inputSchema: z.object({
         ...deliverySchema,
         deliver_at: z.string().datetime({ offset: true }),
@@ -698,31 +712,22 @@ function registerNotificationTools(
     },
     (input) =>
       withToolErrors(async () => {
-        const schedule =
-          await context.services.prisma.notificationSchedule.create({
-            data: {
-              id: genId(),
-              orgId: requireOrganization(context),
-              userId: context.userId,
-              dedupeKey: input.dedupe_key ?? genId(),
-              type: input.type,
-              message: input.message,
-              ...(input.data
-                ? { data: input.data as Prisma.InputJsonObject }
-                : {}),
-              inApp: input.in_app ?? true,
-              channel: input.channel ?? "console",
-              deliverAt: new Date(input.deliver_at),
-            },
-          });
+        const response = scheduleResponse(
+          await createNotificationSchedule(
+            context.services.prisma,
+            requireOrganization(context),
+            context.userId,
+            input,
+          ),
+        );
         await audit(
           context,
           "create_notification_schedule",
           "notification_schedule",
-          schedule.id,
-          { type: input.type },
+          response.id,
+          { type: input.type, audience: response.audience },
         );
-        return toolSuccess({ schedule: scheduleResponse(schedule) });
+        return toolSuccess({ schedule: response });
       }),
   );
 
@@ -730,7 +735,7 @@ function registerNotificationTools(
     "notification_schedules_create_recurring",
     {
       description:
-        "Create a recurring notification schedule using RFC 5545 DTSTART/RRULE/EXDATE content.",
+        "Create a recurring notification schedule for an audience using RFC 5545 DTSTART/RRULE/EXDATE content. All and roles resolve current human membership at each delivery; destination permissions are rechecked.",
       inputSchema: z.object({
         ...deliverySchema,
         recurrence: z.string().min(1),
@@ -738,43 +743,22 @@ function registerNotificationTools(
     },
     (input) =>
       withToolErrors(async () => {
-        let nextOccurrenceAt: Date | undefined;
-        try {
-          const recurrence = parseRecurrence(input.recurrence);
-          nextOccurrenceAt =
-            recurrence.rule.after(new Date(0), true) ?? undefined;
-        } catch (error) {
-          if (error instanceof InvalidRecurrenceError) {
-            throw new ToolFailure("InvalidRequest", error.message);
-          }
-          throw error;
-        }
-        const schedule =
-          await context.services.prisma.notificationSchedule.create({
-            data: {
-              id: genId(),
-              orgId: requireOrganization(context),
-              userId: context.userId,
-              dedupeKey: input.dedupe_key ?? genId(),
-              type: input.type,
-              message: input.message,
-              ...(input.data
-                ? { data: input.data as Prisma.InputJsonObject }
-                : {}),
-              inApp: input.in_app ?? true,
-              channel: input.channel ?? "console",
-              recurrence: input.recurrence,
-              nextOccurrenceAt,
-            },
-          });
+        const response = scheduleResponse(
+          await createNotificationSchedule(
+            context.services.prisma,
+            requireOrganization(context),
+            context.userId,
+            input,
+          ),
+        );
         await audit(
           context,
           "create_notification_schedule",
           "notification_schedule",
-          schedule.id,
-          { type: input.type },
+          response.id,
+          { type: input.type, audience: response.audience },
         );
-        return toolSuccess({ schedule: scheduleResponse(schedule) });
+        return toolSuccess({ schedule: response });
       }),
   );
 
@@ -787,16 +771,12 @@ function registerNotificationTools(
     },
     ({ id }) =>
       withToolErrors(async () => {
-        const result =
-          await context.services.prisma.notificationSchedule.updateMany({
-            where: {
-              id,
-              orgId: requireOrganization(context),
-              userId: context.userId,
-              status: "scheduled",
-            },
-            data: { status: "cancelled", lockedAt: null },
-          });
+        const result = await cancelNotificationSchedule(
+          context.services.prisma,
+          requireOrganization(context),
+          context.userId,
+          id,
+        );
         if (result.count === 0) {
           throw new ToolFailure(
             "NotFound",
@@ -918,19 +898,27 @@ function registerSystemTools(server: McpServer, context: McpToolContext): void {
   server.registerTool(
     "org_export",
     {
-      description: "Export a portable organization dump.",
+      description:
+        "Export a portable organization dump; encrypted secrets require explicit opt-in and matching configured keys.",
+      inputSchema: secretBackupRequestSchema,
       annotations: { readOnlyHint: true },
     },
-    () =>
+    ({ include_encrypted_secrets }) =>
       withToolErrors(async () => {
         await requireToolPermission(context, "manage", "/system/export");
         const data = await exportData(
           context.services.prisma,
           requireOrganization(context),
+          {
+            includeEncryptedSecrets: include_encrypted_secrets,
+            keyring: context.config.secretKeyring,
+          },
         );
-        await audit(context, "export_data", "system", null);
+        await audit(context, "export_data", "system", null, {
+          encrypted_secrets: include_encrypted_secrets,
+        });
         return toolSuccess({ ...data });
-      }),
+      }, true),
   );
 
   server.registerTool(
@@ -955,22 +943,20 @@ function registerSystemTools(server: McpServer, context: McpToolContext): void {
         await requireToolPermission(context, "manage", "/system/import");
         const parsed = portableDataSchema.safeParse(data);
         if (!parsed.success) {
-          throw new ToolFailure(
-            "InvalidRequest",
-            parsed.error.issues.map((issue) => issue.message).join("; "),
-          );
+          throw new ToolFailure("InvalidRequest", "Invalid portable data");
         }
         const { status: _status, ...portableData } = parsed.data;
         const result = await importData(
           context.services.prisma,
           requireOrganization(context),
           portableData as ExportData,
+          { keyring: context.config.secretKeyring },
         );
         await audit(context, "import_data", "system", null, {
           ...result,
         } as Prisma.InputJsonObject);
         return toolSuccess({ ...result });
-      }),
+      }, true),
   );
 }
 

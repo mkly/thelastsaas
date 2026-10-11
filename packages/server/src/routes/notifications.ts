@@ -1,5 +1,10 @@
-import { NOTIFICATION_KINDS } from "@lastsaas/shared";
-import { Hono } from "hono";
+import {
+  NOTIFICATION_KINDS,
+  notificationAudienceSchema,
+  LastSaasError,
+  PermissionDeniedError,
+} from "@lastsaas/shared";
+import { Hono, type Context } from "hono";
 import { z } from "zod";
 
 import {
@@ -10,9 +15,22 @@ import {
   deleteNotification,
   getNotifications,
   markNotificationRead,
-  queueDirectNotification,
+  queueNotifications,
 } from "../db/notifications";
 import type { AppEnvironment } from "../env";
+
+export function notificationError(
+  context: Context<AppEnvironment>,
+  error: unknown,
+): Response {
+  if (error instanceof PermissionDeniedError) {
+    return context.json(error.toResponse(), 403);
+  }
+  if (error instanceof LastSaasError) {
+    return context.json(error.toResponse(), 400);
+  }
+  throw error;
+}
 
 export const channelPatchSchema = z
   .object({
@@ -37,6 +55,7 @@ const preferencesPatchSchema = z
   );
 
 const queueSchema = z.object({
+  audience: notificationAudienceSchema.optional(),
   type: z.string().min(1).optional(),
   message: z.string().min(1).optional(),
   subject: z.string().min(1),
@@ -115,28 +134,42 @@ export const notificationRouter = new Hono<AppEnvironment>()
       );
     }
     const { prisma, notificationQueue } = context.get("services");
-    const id = await queueDirectNotification(
-      prisma,
-      notificationQueue,
-      context.get("orgId"),
-      context.get("userId"),
+    let result;
+    try {
+      result = await queueNotifications(
+        prisma,
+        notificationQueue,
+        context.get("orgId"),
+        context.get("userId"),
+        {
+          audience: body.audience,
+          subject: body.subject,
+          ...(body.type ? { type: body.type } : {}),
+          ...(body.message ? { message: body.message } : {}),
+          ...(body.text ? { text: body.text } : {}),
+          ...(body.html ? { html: body.html } : {}),
+          ...(body.data ? { data: body.data } : {}),
+          ...(body.in_app !== undefined ? { inApp: body.in_app } : {}),
+          ...(body.channel ? { channel: body.channel } : {}),
+          ...(body.dedupe_key ? { dedupeKey: body.dedupe_key } : {}),
+        },
+      );
+    } catch (error) {
+      return notificationError(context, error);
+    }
+    await context.get("audit")(
+      "queue_notification",
+      "notification",
+      result.id,
       {
         subject: body.subject,
-        ...(body.type ? { type: body.type } : {}),
-        ...(body.message ? { message: body.message } : {}),
-        ...(body.text ? { text: body.text } : {}),
-        ...(body.html ? { html: body.html } : {}),
-        ...(body.data ? { data: body.data } : {}),
-        ...(body.in_app !== undefined ? { inApp: body.in_app } : {}),
-        ...(body.channel ? { channel: body.channel } : {}),
-        ...(body.dedupe_key ? { dedupeKey: body.dedupe_key } : {}),
+        audience: body.audience ?? { kind: "self" },
+        recipient_count: result.recipient_count,
+        notification_ids: result.ids,
       },
     );
-    await context.get("audit")("queue_notification", "notification", id, {
-      subject: body.subject,
-    });
     return context.json(
-      { status: "ok" as const, id, message: "Notification queued" },
+      { status: "ok" as const, ...result, message: "Notification queued" },
       201,
     );
   })

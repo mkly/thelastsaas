@@ -8,6 +8,11 @@ import { registerOrganizationCommands } from "./commands/orgs";
 import { registerRecords } from "./commands/records";
 import { registerGettingStarted } from "./commands/getting-started";
 import { registerSkills } from "./commands/skills";
+import { registerSecrets } from "./commands/secrets";
+import { registerQueues } from "./commands/queues";
+import { registerTransactions } from "./commands/transactions";
+import { registerTriggers } from "./commands/triggers";
+import { registerSchedules } from "./commands/schedules";
 
 export type CommandRegistrar = (program: Command) => void;
 
@@ -21,4 +26,9 @@ export const commandRegistrars: readonly CommandRegistrar[] = [
   registerSkills,
   registerGettingStarted,
   registerOperationsCommands,
+  registerSecrets,
+  registerQueues,
+  registerTransactions,
+  registerTriggers,
+  registerSchedules,
 ];

@@ -8,6 +8,9 @@ export const ErrorCode = {
   FieldPermissionDenied: "FieldPermissionDeniedError",
   InvalidQuery: "InvalidQueryError",
   Unauthorized: "Unauthorized",
+  AutomationNotFound: "AutomationNotFoundError",
+  AutomationConflict: "AutomationConflictError",
+  AutomationUnavailable: "AutomationUnavailableError",
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
@@ -95,5 +98,22 @@ export class InvalidQueryError extends LastSaasError {
 export class UnauthorizedError extends LastSaasError {
   constructor(message = "Authentication required") {
     super(ErrorCode.Unauthorized, message);
+  }
+}
+
+/** Foreign IDs and missing resources intentionally share the same response. */
+export class AutomationNotFoundError extends LastSaasError {
+  constructor() {
+    super(ErrorCode.AutomationNotFound, "Resource not found");
+  }
+}
+export class AutomationConflictError extends LastSaasError {
+  constructor(message = "Operation conflicts with current resource state") {
+    super(ErrorCode.AutomationConflict, message);
+  }
+}
+export class AutomationUnavailableError extends LastSaasError {
+  constructor(message = "Feature is unavailable") {
+    super(ErrorCode.AutomationUnavailable, message);
   }
 }

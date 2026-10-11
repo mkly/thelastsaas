@@ -1,10 +1,11 @@
+import { errorKind } from "./lib/transport";
+import { errorResponse } from "@lastsaas/shared";
 import { uploadRouter } from "./routes/uploads";
 import { fileDownloadsRouter } from "./routes/file-downloads";
 import { installRouter } from "./routes/install";
 import { Hono } from "hono";
 import { getCookie } from "hono/cookie";
 import { HTTPException } from "hono/http-exception";
-import { logger } from "hono/logger";
 
 import type { AppConfig } from "./config";
 import type { AppEnvironment } from "./env";
@@ -14,7 +15,7 @@ import {
   createAuthMiddleware,
 } from "./middleware/auth";
 import { createApiRateLimitMiddleware } from "./middleware/rate-limit";
-import { domainRouters } from "./routes";
+import { apiRouter } from "./routes";
 import { assetsRouter } from "./routes/assets";
 import { authPagesRouter } from "./routes/auth-pages";
 import { downloadsRouter } from "./routes/downloads";
@@ -38,21 +39,30 @@ export function createApp({
 }: CreateAppOptions): Hono<AppEnvironment> {
   const app = new Hono<AppEnvironment>();
 
-  if (logRequests) {
-    app.use(
-      "*",
-      logger((line, ...rest) => log.info("http", line, ...rest)),
-    );
-  }
-
-  /* Hono's default handler prints the error without any request context.
-     HTTPExceptions are deliberate responses, not faults — pass them through. */
+  app.use("/v1/*", async (context, next) => {
+    context.header("Cache-Control", "no-store");
+    await next();
+  });
+  if (logRequests)
+    app.use("*", async (context, next) => {
+      await next();
+      log.info(
+        "http",
+        `${context.req.method} ${context.req.routePath} ${context.res.status}`,
+      );
+    });
   app.onError((error, context) => {
-    if (error instanceof HTTPException) return error.getResponse();
+    if (error instanceof HTTPException) {
+      if (error.status === 400)
+        return context.json(
+          errorResponse("SchemaValidationError", "Malformed request"),
+          400,
+        );
+      return error.getResponse();
+    }
     log.error(
       "http",
-      `unhandled error on ${context.req.method} ${context.req.path}`,
-      error,
+      `${context.req.method} ${context.req.routePath}: ${errorKind(error)}`,
     );
     return context.text("Internal Server Error", 500);
   });
@@ -110,11 +120,7 @@ export function createApp({
     }),
   );
 
-  for (const { basePath, router } of domainRouters) {
-    app.route(basePath, router);
-  }
-
-  return app;
+  return app.route("/", apiRouter);
 }
 
-export type ApiType = ReturnType<typeof createApp>;
+export type ApiType = typeof apiRouter;

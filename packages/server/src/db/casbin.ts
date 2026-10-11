@@ -81,7 +81,7 @@ export function roleSubject(orgId: string, role: string): string {
   return `org:${orgId}:user:${role}`;
 }
 
-export function getOrgRules(prisma: PrismaClient, orgId: string) {
+export function getOrgRules(prisma: Prisma.TransactionClient, orgId: string) {
   return cachedMetadata(prisma, policyCacheKey(orgId), async () => {
     return prisma.casbinRule.findMany({
       where: { orgId, ptype: { in: ["p", "g"] } },
@@ -92,7 +92,7 @@ export function getOrgRules(prisma: PrismaClient, orgId: string) {
 }
 
 export async function createOrgEnforcer(
-  prisma: PrismaClient,
+  prisma: Prisma.TransactionClient,
   orgId: string,
 ): Promise<Enforcer> {
   const model = newModel();
@@ -117,7 +117,7 @@ export async function createOrgEnforcer(
 }
 
 export async function hasPermission(
-  prisma: PrismaClient,
+  prisma: Prisma.TransactionClient,
   orgId: string,
   subject: string,
   resource: string,

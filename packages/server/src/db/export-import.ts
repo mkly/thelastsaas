@@ -1,23 +1,42 @@
-import { decodeGrantOptions } from "./grant-options";
 import {
-  CollectionExistsError,
+  decodeGrantOptions,
+  encodeGrantOptions,
+  validateGrantOptions,
+} from "./grant-options";
+import {
+  exportAutomation,
+  importAutomation,
+  validateAutomation,
+} from "./portable-automation";
+import { exportSecrets, importSecrets } from "./portable-secrets";
+import { portableDataSchema } from "./portable-data";
+import { queryProvider } from "./provider";
+import {
+  collectionCacheKey,
+  policyCacheKey,
+  invalidateMetadata,
+} from "./cache";
+import {
+  SchemaValidationError,
+  validateSchema,
   genId,
+  storedNotificationAudience,
   isPlainObject,
   type ExportData,
+  type SecretKeyring,
   type ImportResult,
   type Schema,
   type Where,
 } from "@lastsaas/shared";
 import { Prisma, type PrismaClient } from "@prisma/client";
 
-import { addPolicy, assignRole, roleSubject } from "./casbin";
-import {
-  createCollection,
-  getCollection,
-  validateCollectionRecordData,
-} from "./collections";
-import { setFieldFilter } from "./fieldFilters";
-import { setRowFilter } from "./rowFilters";
+import { roleSubject } from "./casbin";
+import { validateCollectionRecordData } from "./collections";
+
+export interface SecretBackupOptions {
+  includeEncryptedSecrets?: boolean;
+  keyring?: SecretKeyring | null;
+}
 
 const ROLE_SUBJECT = "role:";
 const USER_SUBJECT = "user:";
@@ -70,9 +89,10 @@ async function availableId(
   return (await exists(preferred)) ? genId() : preferred;
 }
 
-export async function exportData(
-  prisma: PrismaClient,
+async function exportInTransaction(
+  prisma: Prisma.TransactionClient,
   orgId: string,
+  options: SecretBackupOptions,
 ): Promise<ExportData> {
   const [collections, files, rules, rowFilters, fieldFilters, schedules] =
     await Promise.all([
@@ -149,6 +169,16 @@ export async function exportData(
 
   return {
     version: 1,
+    ...(options.includeEncryptedSecrets
+      ? {
+          encrypted_secrets: await exportSecrets(
+            prisma,
+            orgId,
+            options.keyring ?? null,
+          ),
+        }
+      : {}),
+    ...(await exportAutomation(prisma, orgId)),
     collections: collections.map((collection) => ({
       name: collection.name,
       schema: asSchema(collection.schema),
@@ -191,6 +221,7 @@ export async function exportData(
     notification_schedules: schedules.map((schedule) => ({
       id: schedule.id,
       user_id: schedule.userId,
+      audience: storedNotificationAudience(schedule.audience),
       dedupe_key: schedule.dedupeKey,
       type: schedule.type,
       message: schedule.message,
@@ -208,260 +239,291 @@ export async function exportData(
   };
 }
 
+export async function exportData(
+  prisma: PrismaClient,
+  orgId: string,
+  options: SecretBackupOptions = {},
+): Promise<ExportData> {
+  return prisma.$transaction((db) => exportInTransaction(db, orgId, options), {
+    timeout: 60_000,
+  });
+}
+
 export async function importData(
   prisma: PrismaClient,
   orgId: string,
-  data: ExportData,
+  input: ExportData,
+  options: Pick<SecretBackupOptions, "keyring"> = {},
 ): Promise<ImportResult> {
-  let importedCollections = 0;
-  let importedRecords = 0;
-  let importedFiles = 0;
-  let importedPolicies = 0;
-  let importedRoleAssignments = 0;
-  let importedRowFilters = 0;
-  let importedFieldFilters = 0;
-  let importedSchedules = 0;
-  let skippedRecords = 0;
+  // The DB entry point validates too: MCP and direct callers must get exactly
+  // the same atomic boundary as HTTP imports.
+  const parsed = portableDataSchema.safeParse(input);
+  if (!parsed.success)
+    throw new SchemaValidationError(["Invalid portable data"]);
+  const { status: _status, ...data } = parsed.data as ExportData & {
+    status?: "ok";
+  };
+  for (const c of data.collections) {
+    const errors = validateSchema(c.schema);
+    if (errors.length) throw new SchemaValidationError(errors);
+  }
+  validateAutomation(data, queryProvider(prisma));
+  const result = await prisma.$transaction(
+    (db) => importInTransaction(db, orgId, data, options.keyring ?? null),
+    { timeout: 60_000 },
+  );
+  await invalidateMetadata(
+    prisma,
+    policyCacheKey(orgId),
+    ...data.collections.map((c) => collectionCacheKey(orgId, c.name)),
+  );
+  return result;
+}
+
+async function importInTransaction(
+  prisma: Prisma.TransactionClient,
+  orgId: string,
+  data: ExportData,
+  keyring: SecretKeyring | null,
+): Promise<ImportResult> {
+  const importedSecrets = await importSecrets(
+    prisma,
+    orgId,
+    data.encrypted_secrets ?? [],
+    keyring,
+  );
+  let importedRecords = 0,
+    skippedRecords = 0,
+    importedFiles = 0,
+    importedPolicies = 0,
+    importedRoleAssignments = 0,
+    importedRowFilters = 0,
+    importedFieldFilters = 0,
+    importedSchedules = 0;
   const warnings: string[] = [];
   const collectionIds = new Map<string, string>();
   const recordIds = new Map<string, string>();
-
-  for (const collectionData of data.collections) {
-    try {
-      await createCollection(
-        prisma,
-        orgId,
-        null,
-        collectionData.name,
-        collectionData.schema,
-        collectionData.description,
+  for (const c of data.collections) {
+    let collection = await prisma.collection.findUnique({
+      where: { orgId_name: { orgId, name: c.name } },
+    });
+    if (!collection)
+      collection = await prisma.collection.create({
+        data: {
+          id: genId(),
+          orgId,
+          name: c.name,
+          schema: jsonObject(c.schema),
+          description: c.description,
+        },
+      });
+    else if (JSON.stringify(collection.schema) !== JSON.stringify(c.schema))
+      warnings.push(
+        `Collection '${c.name}' exists with a different schema; using the existing schema`,
       );
-    } catch (error) {
-      if (!(error instanceof CollectionExistsError)) throw error;
-      const existing = await getCollection(prisma, orgId, collectionData.name);
+    collectionIds.set(c.name, collection.id);
+    for (const r of c.records) {
       if (
-        JSON.stringify(asSchema(existing.schema)) !==
-        JSON.stringify(collectionData.schema)
+        validateCollectionRecordData(r.data, asSchema(collection.schema)).length
       ) {
-        warnings.push(
-          `Collection '${collectionData.name}' exists with a different schema; using the existing schema`,
-        );
-      }
-    }
-
-    const collection = await getCollection(prisma, orgId, collectionData.name);
-    const schema = asSchema(collection.schema);
-    collectionIds.set(collectionData.name, collection.id);
-    importedCollections += 1;
-
-    for (const record of collectionData.records) {
-      if (validateCollectionRecordData(record.data, schema).length > 0) {
-        skippedRecords += 1;
+        skippedRecords++;
         continue;
       }
-      const id = await availableId(record.id, async (candidate) =>
-        Boolean(
-          await prisma.record.findUnique({
-            where: { id: candidate },
-            select: { id: true },
-          }),
-        ),
+      const id = await availableId(r.id, (id) =>
+        prisma.record
+          .findUnique({ where: { id }, select: { id: true } })
+          .then(Boolean),
       );
       await prisma.record.create({
         data: {
           id,
           orgId,
           collectionId: collection.id,
-          data: jsonObject(record.data),
-          createdBy: record.created_by || "import",
-          createdAt: new Date(record.created_at),
-          updatedAt: new Date(record.updated_at),
+          data: jsonObject(r.data),
+          createdBy: r.created_by || "import",
+          createdAt: new Date(r.created_at),
+          updatedAt: new Date(r.updated_at),
         },
       });
-      recordIds.set(record.id, id);
-      importedRecords += 1;
+      recordIds.set(r.id, id);
+      importedRecords++;
     }
   }
-
-  for (const filter of data.row_filters) {
-    const collectionId = collectionIds.get(filter.collection);
+  const automation = await importAutomation(prisma, orgId, data, collectionIds);
+  for (const f of data.row_filters) {
+    const collectionId = collectionIds.get(f.collection);
     if (!collectionId) {
       warnings.push(
-        `Skipped row filter for missing collection '${filter.collection}'`,
+        `Skipped row filter for missing collection '${f.collection}'`,
       );
       continue;
     }
-    await setRowFilter(
-      prisma,
-      orgId,
-      collectionId,
-      filter.role,
-      filter.action,
-      filter.condition,
-    );
-    importedRowFilters += 1;
+    const key = { orgId, collectionId, role: f.role, action: f.action };
+    await prisma.rowFilter.upsert({
+      where: { orgId_collectionId_role_action: key },
+      create: { id: genId(), ...key, condition: jsonObject(f.condition) },
+      update: { condition: jsonObject(f.condition) },
+    });
+    importedRowFilters++;
   }
-
-  for (const filter of data.field_filters) {
-    const collectionId = collectionIds.get(filter.collection);
+  for (const f of data.field_filters) {
+    const collectionId = collectionIds.get(f.collection);
     if (!collectionId) {
       warnings.push(
-        `Skipped field filter for missing collection '${filter.collection}'`,
+        `Skipped field filter for missing collection '${f.collection}'`,
       );
       continue;
     }
-    await setFieldFilter(
-      prisma,
-      orgId,
-      collectionId,
-      filter.role,
-      filter.action,
-      filter.readable_fields,
-      filter.writable_fields,
-    );
-    importedFieldFilters += 1;
+    const key = { orgId, collectionId, role: f.role, action: f.action };
+    await prisma.fieldFilter.upsert({
+      where: { orgId_collectionId_role_action: key },
+      create: {
+        id: genId(),
+        ...key,
+        readableFields: f.readable_fields,
+        writableFields: f.writable_fields,
+      },
+      update: {
+        readableFields: f.readable_fields,
+        writableFields: f.writable_fields,
+      },
+    });
+    importedFieldFilters++;
   }
-
-  for (const policy of data.policies) {
-    const subject = expandSubject(policy.subject, orgId);
+  // IDs may collide when cloning to another organization. Remap per-resource
+  // policy paths using the actual imported IDs, before writing policy rows.
+  for (const p of data.policies) {
+    const subject = expandSubject(p.subject, orgId);
     if (!subject) {
-      warnings.push(`Skipped policy with invalid subject '${policy.subject}'`);
+      warnings.push(`Skipped policy with invalid subject '${p.subject}'`);
+      continue;
+    }
+    await validateGrantOptions(prisma, orgId, p.resource, p.action, {
+      where: p.where,
+      fields: p.fields,
+    });
+    const rule = {
+      orgId,
+      ptype: "p",
+      v0: subject,
+      v1: automation.resourceIds.get(p.resource) ?? p.resource,
+      v2: p.action,
+      v3: encodeGrantOptions({ where: p.where, fields: p.fields }),
+    };
+    if (!(await prisma.casbinRule.findFirst({ where: rule }))) {
+      await prisma.casbinRule.create({ data: rule });
+      importedPolicies++;
+    }
+  }
+  for (const a of data.role_assignments) {
+    const rule = {
+      orgId,
+      ptype: "g",
+      v0: a.user_id,
+      v1: roleSubject(orgId, a.role),
+      v2: null,
+    };
+    if (!(await prisma.casbinRule.findFirst({ where: rule }))) {
+      await prisma.casbinRule.create({ data: rule });
+      importedRoleAssignments++;
+    }
+  }
+  for (const f of data.files) {
+    if (await prisma.file.findFirst({ where: { orgId, path: f.path } })) {
+      warnings.push(`Skipped duplicate file path '${f.path}'`);
+      continue;
+    }
+    const collectionId = f.collection
+      ? (collectionIds.get(f.collection) ?? null)
+      : null;
+    const recordId = f.record_id ? (recordIds.get(f.record_id) ?? null) : null;
+    if (f.collection && !collectionId)
+      warnings.push(
+        `Imported file '${f.path}' without missing collection '${f.collection}'`,
+      );
+    if (f.record_id && !recordId)
+      warnings.push(
+        `Imported file '${f.path}' without missing record '${f.record_id}'`,
+      );
+    const id = await availableId(f.id, (id) =>
+      prisma.file
+        .findUnique({ where: { id }, select: { id: true } })
+        .then(Boolean),
+    );
+    await prisma.file.create({
+      data: {
+        id,
+        orgId,
+        path: f.path,
+        filename: f.filename,
+        mimeType: f.mime_type,
+        sizeBytes: f.size_bytes,
+        collectionId,
+        recordId,
+        uploadedBy: f.uploaded_by,
+        createdAt: new Date(f.created_at),
+        updatedAt: new Date(f.updated_at),
+      },
+    });
+    importedFiles++;
+  }
+  for (const s of data.notification_schedules) {
+    if (
+      !(await prisma.user.findUnique({
+        where: { id: s.user_id },
+        select: { id: true },
+      }))
+    ) {
+      warnings.push(
+        `Skipped notification schedule '${s.dedupe_key}' for missing user '${s.user_id}'`,
+      );
       continue;
     }
     if (
-      await addPolicy(prisma, orgId, subject, policy.resource, policy.action, {
-        where: policy.where,
-        fields: policy.fields,
+      await prisma.notificationSchedule.findUnique({
+        where: { orgId_dedupeKey: { orgId, dedupeKey: s.dedupe_key } },
       })
     ) {
-      importedPolicies += 1;
-    }
-  }
-
-  for (const assignment of data.role_assignments) {
-    if (await assignRole(prisma, orgId, assignment.user_id, assignment.role)) {
-      importedRoleAssignments += 1;
-    }
-  }
-
-  for (const file of data.files) {
-    const collectionId = file.collection
-      ? (collectionIds.get(file.collection) ?? null)
-      : null;
-    const recordId = file.record_id
-      ? (recordIds.get(file.record_id) ?? null)
-      : null;
-    if (file.collection && !collectionId) {
       warnings.push(
-        `Imported file '${file.path}' without missing collection '${file.collection}'`,
-      );
-    }
-    if (file.record_id && !recordId) {
-      warnings.push(
-        `Imported file '${file.path}' without missing record '${file.record_id}'`,
-      );
-    }
-    const id = await availableId(file.id, async (candidate) =>
-      Boolean(
-        await prisma.file.findUnique({
-          where: { id: candidate },
-          select: { id: true },
-        }),
-      ),
-    );
-    try {
-      await prisma.file.create({
-        data: {
-          id,
-          orgId,
-          path: file.path,
-          filename: file.filename,
-          mimeType: file.mime_type,
-          sizeBytes: file.size_bytes,
-          collectionId,
-          recordId,
-          uploadedBy: file.uploaded_by,
-          createdAt: new Date(file.created_at),
-          updatedAt: new Date(file.updated_at),
-        },
-      });
-      importedFiles += 1;
-    } catch (error) {
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === "P2002"
-      ) {
-        warnings.push(`Skipped duplicate file path '${file.path}'`);
-        continue;
-      }
-      throw error;
-    }
-  }
-
-  for (const schedule of data.notification_schedules) {
-    const user = await prisma.user.findUnique({
-      where: { id: schedule.user_id },
-      select: { id: true },
-    });
-    if (!user) {
-      warnings.push(
-        `Skipped notification schedule '${schedule.dedupe_key}' for missing user '${schedule.user_id}'`,
+        `Skipped duplicate notification schedule '${s.dedupe_key}'`,
       );
       continue;
     }
-    const id = await availableId(schedule.id, async (candidate) =>
-      Boolean(
-        await prisma.notificationSchedule.findUnique({
-          where: { id: candidate },
-          select: { id: true },
-        }),
-      ),
+    const id = await availableId(s.id, (id) =>
+      prisma.notificationSchedule
+        .findUnique({ where: { id }, select: { id: true } })
+        .then(Boolean),
     );
-    try {
-      await prisma.notificationSchedule.create({
-        data: {
-          id,
-          orgId,
-          userId: schedule.user_id,
-          dedupeKey: schedule.dedupe_key,
-          type: schedule.type,
-          message: schedule.message,
-          data:
-            schedule.data === null
-              ? Prisma.JsonNull
-              : jsonObject(schedule.data),
-          inApp: schedule.in_app,
-          channel: schedule.channel,
-          deliverAt: schedule.deliver_at ? new Date(schedule.deliver_at) : null,
-          recurrence: schedule.recurrence,
-          nextOccurrenceAt: schedule.next_occurrence_at
-            ? new Date(schedule.next_occurrence_at)
-            : null,
-          status: schedule.status,
-          lastEnqueuedAt: schedule.last_enqueued_at
-            ? new Date(schedule.last_enqueued_at)
-            : null,
-          createdAt: new Date(schedule.created_at),
-          updatedAt: new Date(schedule.updated_at),
-        },
-      });
-      importedSchedules += 1;
-    } catch (error) {
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === "P2002"
-      ) {
-        warnings.push(
-          `Skipped duplicate notification schedule '${schedule.dedupe_key}'`,
-        );
-        continue;
-      }
-      throw error;
-    }
+    await prisma.notificationSchedule.create({
+      data: {
+        id,
+        orgId,
+        userId: s.user_id,
+        audience: storedNotificationAudience(
+          s.audience,
+        ) as Prisma.InputJsonObject,
+        dedupeKey: s.dedupe_key,
+        type: s.type,
+        message: s.message,
+        data: s.data === null ? Prisma.JsonNull : jsonObject(s.data),
+        inApp: s.in_app,
+        channel: s.channel,
+        deliverAt: s.deliver_at && new Date(s.deliver_at),
+        recurrence: s.recurrence,
+        nextOccurrenceAt:
+          s.next_occurrence_at && new Date(s.next_occurrence_at),
+        status: "paused",
+        lockedAt: null,
+        lastEnqueuedAt: s.last_enqueued_at && new Date(s.last_enqueued_at),
+        createdAt: new Date(s.created_at),
+        updatedAt: new Date(s.updated_at),
+      },
+    });
+    importedSchedules++;
   }
-
-  const result: ImportResult = {
-    imported_collections: importedCollections,
+  return {
+    ...(data.encrypted_secrets ? { imported_secrets: importedSecrets } : {}),
+    imported_collections: data.collections.length,
     imported_records: importedRecords,
     imported_files: importedFiles,
     imported_policies: importedPolicies,
@@ -469,8 +531,8 @@ export async function importData(
     imported_row_filters: importedRowFilters,
     imported_field_filters: importedFieldFilters,
     imported_notification_schedules: importedSchedules,
+    ...automation.counts,
+    ...(skippedRecords ? { skipped_records: skippedRecords } : {}),
+    ...(warnings.length ? { warnings } : {}),
   };
-  if (skippedRecords > 0) result.skipped_records = skippedRecords;
-  if (warnings.length > 0) result.warnings = warnings;
-  return result;
 }

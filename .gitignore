@@ -6,6 +6,7 @@ node_modules/
 dist/
 coverage/
 .crabbox/
+.dev-knowledge.md
 data/
 *.db
 *.db-shm

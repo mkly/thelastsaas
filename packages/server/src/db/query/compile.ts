@@ -39,6 +39,8 @@ export type FieldAllowlist = (
 ) => boolean;
 
 export interface CompileOptions {
+  /** Queue predicates address JSON payload fields, including names such as id. */
+  payloadOnly?: boolean;
   /** Predicate injected by policy code and ANDed with the caller's predicate. */
   extraWhere?: Where | null;
   /** Field-filter hook. The compiler throws when this returns false. */
@@ -93,6 +95,8 @@ function validateFieldReference(
   reference = fieldName,
 ): void {
   validateField(fieldName, schema);
+  if (options.payloadOnly && !Object.hasOwn(schema, fieldName))
+    throw new InvalidQueryError(`Unknown payload field '${fieldName}'`);
   if (options.isFieldAllowed?.(fieldName, { kind, reference }) === false) {
     throw new InvalidQueryError(
       `Field '${fieldName}' is not allowed in ${kind.replaceAll("_", " ")}`,
@@ -102,8 +106,12 @@ function validateFieldReference(
 
 const NUMERIC_TYPES = new Set(["number", "integer", "float"]);
 
-function fieldType(fieldName: string, schema: Schema): string | undefined {
-  if (Object.hasOwn(RECORD_METADATA_TYPES, fieldName)) {
+function fieldType(
+  fieldName: string,
+  schema: Schema,
+  payloadOnly = false,
+): string | undefined {
+  if (!payloadOnly && Object.hasOwn(RECORD_METADATA_TYPES, fieldName)) {
     return RECORD_METADATA_TYPES[fieldName];
   }
   const definition = schema[fieldName];
@@ -120,8 +128,12 @@ function isNumericField(fieldName: string, schema: Schema): boolean {
 // ---------------------------------------------------------------------------
 
 /** Extract a JSON field or return a validated native metadata column. */
-export function extractField(field: string, provider: DbProvider): SqlFragment {
-  return Object.hasOwn(RECORD_METADATA_TYPES, field)
+export function extractField(
+  field: string,
+  provider: DbProvider,
+  payloadOnly = false,
+): SqlFragment {
+  return !payloadOnly && Object.hasOwn(RECORD_METADATA_TYPES, field)
     ? sql.ref(field)
     : queryAdapter(provider).extract(field);
 }
@@ -137,9 +149,10 @@ function comparisonExpr(
   field: string,
   schema: Schema,
   provider: DbProvider,
+  payloadOnly = false,
 ): SqlFragment {
-  const expression = extractField(field, provider);
-  const type = fieldType(field, schema);
+  const expression = extractField(field, provider, payloadOnly);
+  const type = fieldType(field, schema, payloadOnly);
   const adapter = queryAdapter(provider);
   if (type === "boolean") return adapter.boolean(expression);
   if (type && NUMERIC_TYPES.has(type)) return adapter.numeric(expression);
@@ -211,11 +224,12 @@ function compileEquality(
   schema: Schema,
   provider: DbProvider,
   preserveUnknown = false,
+  payloadOnly = false,
 ): SqlFragment {
-  const type = fieldType(field, schema);
+  const type = fieldType(field, schema, payloadOnly);
   validateOperand(field, type, value, "equality");
   if (
-    !Object.hasOwn(RECORD_METADATA_TYPES, field) &&
+    (payloadOnly || !Object.hasOwn(RECORD_METADATA_TYPES, field)) &&
     type !== "json" &&
     value !== null
   ) {
@@ -225,7 +239,7 @@ function compileEquality(
       preserveUnknown,
     );
   }
-  return sql`${comparisonExpr(field, schema, provider)} = ${comparisonParam(value, provider)}`;
+  return sql`${comparisonExpr(field, schema, provider, payloadOnly)} = ${comparisonParam(value, provider)}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -298,12 +312,9 @@ export function compileWhere(
   // so it is exempt from the caller's field allowlist: a row filter keyed on a
   // field the requester may not read must still narrow the result set instead
   // of failing the whole query.
-  const injected = compileOptionalNode(
-    options.extraWhere,
-    schema,
-    provider,
-    {},
-  );
+  const injected = compileOptionalNode(options.extraWhere, schema, provider, {
+    payloadOnly: options.payloadOnly,
+  });
   return andFragments(requested, injected);
 }
 
@@ -449,7 +460,7 @@ function compileLeaf(
             compileOccursBetween(
               fieldName,
               value,
-              fieldType(fieldName, schema),
+              fieldType(fieldName, schema, options.payloadOnly),
             ),
           );
           continue;
@@ -461,6 +472,7 @@ function compileLeaf(
           schema,
           provider,
           options.preserveUnknown,
+          options.payloadOnly,
         );
         clauses.push(compiled);
       }
@@ -471,6 +483,7 @@ function compileLeaf(
         schema,
         provider,
         options.preserveUnknown,
+        options.payloadOnly,
       );
       clauses.push(compiled);
     }
@@ -517,16 +530,36 @@ function compileFilterOp(
   schema: Schema,
   provider: DbProvider,
   preserveUnknown = false,
+  payloadOnly = false,
 ): SqlFragment {
-  validateOperatorValue(field, fieldType(field, schema), operator, value);
-  const extract = extractField(field, provider);
-  const comparison = comparisonExpr(field, schema, provider);
+  validateOperatorValue(
+    field,
+    fieldType(field, schema, payloadOnly),
+    operator,
+    value,
+  );
+  const extract = extractField(field, provider, payloadOnly);
+  const comparison = comparisonExpr(field, schema, provider, payloadOnly);
 
   switch (operator) {
     case "eq":
-      return compileEquality(field, value, schema, provider, preserveUnknown);
+      return compileEquality(
+        field,
+        value,
+        schema,
+        provider,
+        preserveUnknown,
+        payloadOnly,
+      );
     case "not": {
-      const equal = compileEquality(field, value, schema, provider, true);
+      const equal = compileEquality(
+        field,
+        value,
+        schema,
+        provider,
+        true,
+        payloadOnly,
+      );
       return sql`NOT (${equal})`;
     }
     case "gt":
@@ -546,7 +579,7 @@ function compileFilterOp(
       return queryAdapter(provider).contains(
         extract,
         value,
-        fieldType(field, schema),
+        fieldType(field, schema, payloadOnly),
       );
     }
     case "in": {

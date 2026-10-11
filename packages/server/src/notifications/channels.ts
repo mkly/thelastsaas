@@ -189,4 +189,34 @@ export class NotificationDispatcher {
     }
     return delivered;
   }
+
+  channelNames(): string[] {
+    return [...this.channels.keys()];
+  }
+
+  /** Return names only; callers persist progress in notification-domain state.
+   * Transport errors may contain message content and never enter durable logs. */
+  async sendChannels(
+    message: NotificationMessage,
+    requestedChannels?: readonly string[],
+  ): Promise<{ succeeded: string[]; failed: string[] }> {
+    const names = [...new Set(requestedChannels ?? this.channelNames())];
+    const results = await Promise.allSettled(
+      names.map(async (name) => {
+        const channel = this.channels.get(name);
+        return channel ? channel.send(message) : false;
+      }),
+    );
+    const succeeded: string[] = [];
+    const failed: string[] = [];
+    for (const [index, result] of results.entries()) {
+      const name = names[index]!;
+      if (result.status === "fulfilled" && result.value) succeeded.push(name);
+      else {
+        failed.push(name);
+        log.error("notifications", `channel ${name} delivery failed`);
+      }
+    }
+    return { succeeded, failed };
+  }
 }

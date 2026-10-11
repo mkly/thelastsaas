@@ -1,4 +1,5 @@
-import { sql, queryBuilder, queryRows, executeStatement } from "./query/kysely";
+import { isDeepStrictEqual } from "node:util";
+import { sql, queryBuilder, queryRows } from "./query/kysely";
 import {
   InvalidQueryError,
   RecordNotFoundError,
@@ -8,13 +9,21 @@ import {
   genId,
   isPlainObject,
   type AggregateRequest,
+  type JsonObject,
+  type RecordMutationEvent,
   type Schema,
   type Where,
 } from "@lastsaas/shared";
 import { Prisma, type PrismaClient } from "@prisma/client";
 
 import { queryProvider } from "./provider";
-import { getCollection, validateCollectionRecordData } from "./collections";
+import {
+  getCollection,
+  getCollectionInTransaction,
+  validateCollectionRecordData,
+} from "./collections";
+import { withUnitOfWork, type UnitOfWork } from "./unit-of-work";
+import { publishRecordMutation } from "./record-mutations";
 import {
   assertWritableFields,
   filterReadableData,
@@ -166,6 +175,24 @@ function serializedQueryRecord(
   };
 }
 
+/** Full snapshots stay internal; public responses keep their field projection. */
+function createMutation(
+  row: { id: string; data: Prisma.JsonValue; createdAt: Date },
+  collection: string,
+): RecordMutationEvent {
+  const after = dataObject(row.data) as JsonObject;
+  return {
+    mutation_id: genId(),
+    record_id: row.id,
+    collection,
+    event: "create",
+    occurred_at: row.createdAt.toISOString(),
+    before: null,
+    after,
+    changed_fields: Object.keys(after).sort(),
+  };
+}
+
 export async function insertRecord(
   prisma: PrismaClient,
   orgId: string,
@@ -175,25 +202,57 @@ export async function insertRecord(
   fieldFilter?: ResolvedFieldFilter | null,
   grants?: RecordGrants,
 ) {
-  const provider = queryProvider(prisma);
-  const collection = await getCollection(prisma, orgId, collectionName);
+  return withUnitOfWork(
+    { prisma, provider: queryProvider(prisma) },
+    async (context) => {
+      const { record } = await insertRecordInTransaction(
+        context,
+        orgId,
+        collectionName,
+        data,
+        createdBy,
+        fieldFilter,
+        grants,
+      );
+      return record;
+    },
+  );
+}
+
+/** Join the caller's transaction; failures must propagate to its owner. */
+export async function insertRecordInTransaction(
+  context: UnitOfWork,
+  orgId: string,
+  collectionName: string,
+  data: Record<string, unknown>,
+  createdBy = "system",
+  fieldFilter?: ResolvedFieldFilter | null,
+  grants?: RecordGrants,
+) {
+  const { db, provider } = context;
+  const collection = await getCollectionInTransaction(
+    db,
+    orgId,
+    collectionName,
+  );
   assertWritableFields(data, fieldFilter);
-  const normalized = validatedData(data, schemaFromCollection(collection));
+  const schema = schemaFromCollection(collection);
+  const normalized = validatedData(data, schema);
   const now = new Date();
   const id = genId();
   if (grants) {
     const matches = await evaluateGrants(
-      prisma,
+      db,
       grants,
       { id, data: normalized, createdBy, createdAt: now, updatedAt: now },
-      schemaFromCollection(collection),
+      schema,
       provider,
     );
     fieldFilter = grantFieldFilter(
       assertGrantedWrite(grants, matches, matches, Object.keys(data)),
     );
   }
-  const row = await prisma.record.create({
+  const row = await db.record.create({
     data: {
       id,
       orgId,
@@ -204,7 +263,15 @@ export async function insertRecord(
       updatedAt: now,
     },
   });
-  return serializedRecord(row, collectionName, fieldFilter);
+  const mutation = createMutation(row, collectionName);
+  await publishRecordMutation(context, orgId, mutation, {
+    before: null,
+    after: row,
+  });
+  return {
+    record: serializedRecord(row, collectionName, fieldFilter),
+    mutation,
+  };
 }
 
 export async function insertRecords(
@@ -216,12 +283,44 @@ export async function insertRecords(
   fieldFilter?: ResolvedFieldFilter | null,
   grants?: RecordGrants,
 ) {
-  const provider = queryProvider(prisma);
-  const collection = await getCollection(prisma, orgId, collectionName);
+  return withUnitOfWork(
+    { prisma, provider: queryProvider(prisma) },
+    async (context) => {
+      const { result } = await insertRecordsInTransaction(
+        context,
+        orgId,
+        collectionName,
+        records,
+        createdBy,
+        fieldFilter,
+        grants,
+      );
+      return result;
+    },
+    // Unbounded batches would otherwise hit Prisma's 5s interactive default.
+    { timeout: 30_000 },
+  );
+}
+
+/** Partial schema validation is preserved; persistence failures are never swallowed. */
+export async function insertRecordsInTransaction(
+  context: UnitOfWork,
+  orgId: string,
+  collectionName: string,
+  records: Record<string, unknown>[],
+  createdBy = "system",
+  fieldFilter?: ResolvedFieldFilter | null,
+  grants?: RecordGrants,
+) {
+  const { db, provider } = context;
+  const collection = await getCollectionInTransaction(
+    db,
+    orgId,
+    collectionName,
+  );
   const schema = schemaFromCollection(collection);
-  const ids: string[] = [];
   const errors: Array<{ index: number; errors: string[] }> = [];
-  const creates: Prisma.PrismaPromise<unknown>[] = [];
+  const creates: Prisma.RecordCreateManyInput[] = [];
 
   for (const data of records) assertWritableFields(data, fieldFilter);
 
@@ -232,7 +331,7 @@ export async function insertRecords(
       const now = new Date();
       if (grants) {
         const matches = await evaluateGrants(
-          prisma,
+          db,
           grants,
           { id, data: normalized, createdBy, createdAt: now, updatedAt: now },
           schema,
@@ -240,32 +339,39 @@ export async function insertRecords(
         );
         assertGrantedWrite(grants, matches, matches, Object.keys(data));
       }
-      ids.push(id);
-      creates.push(
-        prisma.record.create({
-          data: {
-            id,
-            orgId,
-            collectionId: collection.id,
-            data: jsonObject(normalized),
-            createdBy,
-            createdAt: now,
-            updatedAt: now,
-          },
-        }),
-      );
+      creates.push({
+        id,
+        orgId,
+        collectionId: collection.id,
+        data: jsonObject(normalized),
+        createdBy,
+        createdAt: now,
+        updatedAt: now,
+      });
     } catch (error) {
       if (!(error instanceof SchemaValidationError)) throw error;
       errors.push({ index, errors: error.errors });
     }
   }
 
-  // One transaction makes every accepted record in the request atomic.
-  if (creates.length > 0) await prisma.$transaction(creates);
+  const mutations: RecordMutationEvent[] = [];
+  // The supplied context owns atomicity; never open a nested transaction.
+  for (const data of creates) {
+    const row = await db.record.create({ data });
+    const mutation = createMutation(row, collectionName);
+    await publishRecordMutation(context, orgId, mutation, {
+      before: null,
+      after: row,
+    });
+    mutations.push(mutation);
+  }
   return {
-    inserted: ids.length,
-    ids,
-    ...(errors.length === 0 ? {} : { errors }),
+    result: {
+      inserted: mutations.length,
+      ids: mutations.map((mutation) => mutation.record_id),
+      ...(errors.length === 0 ? {} : { errors }),
+    },
+    mutations,
   };
 }
 
@@ -337,103 +443,141 @@ export async function updateRecord(
   fieldFilter?: ResolvedFieldFilter | null,
   grants?: RecordGrants,
 ) {
-  const provider = queryProvider(prisma);
-  const collection = await getCollection(prisma, orgId, collectionName);
+  return withUnitOfWork(
+    { prisma, provider: queryProvider(prisma) },
+    async (context) => {
+      const { record } = await updateRecordInTransaction(
+        context,
+        orgId,
+        collectionName,
+        recordId,
+        data,
+        rowFilter,
+        fieldFilter,
+        grants,
+      );
+      return record;
+    },
+  );
+}
+
+/** Join the caller's transaction, retaining the snapshot used to authorize CAS. */
+export async function updateRecordInTransaction(
+  context: UnitOfWork,
+  orgId: string,
+  collectionName: string,
+  recordId: string,
+  data: Record<string, unknown>,
+  rowFilter?: Where | null,
+  fieldFilter?: ResolvedFieldFilter | null,
+  grants?: RecordGrants,
+) {
+  const { db, provider } = context;
+  const collection = await getCollectionInTransaction(
+    db,
+    orgId,
+    collectionName,
+  );
   assertWritableFields(data, fieldFilter);
   const schema = schemaFromCollection(collection);
-  if (grants) {
-    return prisma.$transaction(async (tx) => {
-      const existing = await tx.record.findFirst({
-        where: { id: recordId, orgId, collectionId: collection.id },
-      });
-      if (!existing) throw new RecordNotFoundError(recordId);
-      const before = await evaluateGrants(
-        tx,
-        grants,
-        existing,
-        schema,
-        provider,
-      );
-      if (!before.some(Boolean)) throw new RecordNotFoundError(recordId);
-      const normalized = validatedData(
-        { ...dataObject(existing.data), ...data },
-        schema,
-      );
-      const updatedAt = new Date();
-      const after = await evaluateGrants(
-        tx,
-        grants,
-        { ...existing, data: normalized, updatedAt },
-        schema,
-        provider,
-      );
-      const applicable = assertGrantedWrite(
-        grants,
-        before,
-        after,
-        Object.keys(data),
-      );
-      const updated = await tx.record.updateMany({
-        where: {
-          id: recordId,
-          orgId,
-          collectionId: collection.id,
-          data: { equals: existing.data as Prisma.InputJsonValue },
-          createdBy: existing.createdBy,
-          createdAt: existing.createdAt,
-          updatedAt: existing.updatedAt,
-        },
-        data: { data: jsonObject(normalized), updatedAt },
-      });
-      if (updated.count !== 1)
-        throw new PermissionDeniedError(
-          "Record changed during update; retry the request",
-        );
-      return serializedRecord(
-        { ...existing, data: normalized as Prisma.JsonObject, updatedAt },
-        collectionName,
-        grantFieldFilter(applicable),
-      );
-    });
-  }
-  let existing: { data: Prisma.JsonValue } | null;
-  if (rowFilter) {
+  let existing;
+  if (rowFilter && !grants) {
     const compiled = compileWhere(undefined, schema, provider, {
       extraWhere: rowFilter,
     });
     rejectDeferredFilters(compiled.postFilters);
     const scoped = applyOrgScope(orgId, collection.id, compiled.expression);
-    const rows = await queryRows<{ data: string | Prisma.JsonObject }>(
-      prisma,
+    const rows = await queryRows<QueryRow>(
+      db,
       provider,
-      sql`SELECT data FROM records WHERE id = ${recordId} AND ${scoped}`,
+      sql`SELECT id, data, created_by, created_at, updated_at FROM records WHERE id = ${recordId} AND ${scoped}`,
     );
-    const filtered = rows[0];
-    existing = filtered
+    const row = rows[0];
+    existing = row
       ? {
-          data:
-            typeof filtered.data === "string"
-              ? (JSON.parse(filtered.data) as Prisma.JsonObject)
-              : filtered.data,
+          id: row.id,
+          data: queryRecordData(row) as Prisma.JsonObject,
+          createdBy: row.created_by,
+          createdAt: new Date(row.created_at),
+          updatedAt: new Date(row.updated_at),
         }
       : null;
   } else {
-    existing = await prisma.record.findFirst({
+    existing = await db.record.findFirst({
       where: { id: recordId, orgId, collectionId: collection.id },
-      select: { data: true },
     });
   }
   if (!existing) throw new RecordNotFoundError(recordId);
-
+  const before = grants
+    ? await evaluateGrants(db, grants, existing, schema, provider)
+    : undefined;
+  if (before && !before.some(Boolean)) throw new RecordNotFoundError(recordId);
   const normalized = validatedData(
     { ...dataObject(existing.data), ...data },
     schema,
   );
-  const row = await prisma.record.update({
-    where: { id: recordId },
-    data: { data: jsonObject(normalized), updatedAt: new Date() },
+  const updatedAt = new Date();
+  if (grants && before) {
+    const after = await evaluateGrants(
+      db,
+      grants,
+      { ...existing, data: normalized, updatedAt },
+      schema,
+      provider,
+    );
+    fieldFilter = grantFieldFilter(
+      assertGrantedWrite(grants, before, after, Object.keys(data)),
+    );
+  }
+  const updated = await db.record.updateMany({
+    where: {
+      id: recordId,
+      orgId,
+      collectionId: collection.id,
+      data: { equals: existing.data as Prisma.InputJsonValue },
+      createdBy: existing.createdBy,
+      createdAt: existing.createdAt,
+      updatedAt: existing.updatedAt,
+    },
+    data: { data: jsonObject(normalized), updatedAt },
   });
-  return serializedRecord(row, collectionName, fieldFilter);
+  if (updated.count !== 1)
+    throw new PermissionDeniedError(
+      "Record changed during update; retry the request",
+    );
+  const previous = dataObject(existing.data) as JsonObject;
+  const after = normalized as JsonObject;
+  const changedFields = [
+    ...new Set([...Object.keys(previous), ...Object.keys(after)]),
+  ]
+    .filter((field) => !isDeepStrictEqual(previous[field], after[field]))
+    .sort();
+  const mutation: RecordMutationEvent | null =
+    changedFields.length === 0
+      ? null
+      : {
+          mutation_id: genId(),
+          record_id: recordId,
+          collection: collectionName,
+          event: "update",
+          occurred_at: updatedAt.toISOString(),
+          before: previous,
+          after,
+          changed_fields: changedFields,
+        };
+  if (mutation)
+    await publishRecordMutation(context, orgId, mutation, {
+      before: existing,
+      after: { ...existing, data: after, updatedAt },
+    });
+  return {
+    record: serializedRecord(
+      { ...existing, data: after, updatedAt },
+      collectionName,
+      fieldFilter,
+    ),
+    mutation,
+  };
 }
 
 export async function deleteRecord(
@@ -444,44 +588,84 @@ export async function deleteRecord(
   rowFilter?: Where | null,
   grants?: RecordGrants,
 ): Promise<void> {
-  const provider = queryProvider(prisma);
-  const collection = await getCollection(prisma, orgId, collectionName);
-  if (grants) {
-    const compiled = compileWhere(
-      grantWhere(grants),
-      schemaFromCollection(collection),
-      provider,
-    );
-    rejectDeferredFilters(compiled.postFilters);
-    const scoped = applyOrgScope(orgId, collection.id, compiled.expression);
-    const deleted = await executeStatement(
-      prisma,
-      provider,
-      sql`DELETE FROM records WHERE id = ${recordId} AND ${scoped}`,
-    );
-    if (!deleted) throw new RecordNotFoundError(recordId);
-    return;
-  }
-  if (rowFilter) {
-    const compiled = compileWhere(
-      undefined,
-      schemaFromCollection(collection),
-      provider,
-      { extraWhere: rowFilter },
-    );
-    rejectDeferredFilters(compiled.postFilters);
-    const scoped = applyOrgScope(orgId, collection.id, compiled.expression);
-    const rows = await queryRows<{ id: string }>(
-      prisma,
-      provider,
-      sql`SELECT id FROM records WHERE id = ${recordId} AND ${scoped}`,
-    );
-    if (rows.length === 0) throw new RecordNotFoundError(recordId);
-  }
-  const result = await prisma.record.deleteMany({
-    where: { id: recordId, orgId, collectionId: collection.id },
+  await withUnitOfWork({ prisma, provider: queryProvider(prisma) }, (context) =>
+    deleteRecordInTransaction(
+      context,
+      orgId,
+      collectionName,
+      recordId,
+      rowFilter,
+      grants,
+    ),
+  );
+}
+
+/** DELETE RETURNING authorizes and captures the deleted snapshot atomically. */
+export async function deleteRecordInTransaction(
+  context: UnitOfWork,
+  orgId: string,
+  collectionName: string,
+  recordId: string,
+  rowFilter?: Where | null,
+  grants?: RecordGrants,
+) {
+  const { db, provider } = context;
+  const collection = await getCollectionInTransaction(
+    db,
+    orgId,
+    collectionName,
+  );
+  const compiled = compileWhere(
+    grants ? grantWhere(grants) : undefined,
+    schemaFromCollection(collection),
+    provider,
+    grants ? undefined : { extraWhere: rowFilter },
+  );
+  rejectDeferredFilters(compiled.postFilters);
+  const scoped = applyOrgScope(orgId, collection.id, compiled.expression);
+  const rows = await queryRows<QueryRow>(
+    db,
+    provider,
+    sql`DELETE FROM records WHERE id = ${recordId} AND ${scoped} RETURNING id, data, created_by, created_at, updated_at`,
+  );
+  const row = rows[0];
+  if (!row) throw new RecordNotFoundError(recordId);
+  const before = queryRecordData(row) as JsonObject;
+  const mutation: RecordMutationEvent = {
+    mutation_id: genId(),
+    record_id: row.id,
+    collection: collectionName,
+    event: "delete",
+    occurred_at: new Date().toISOString(),
+    before,
+    after: null,
+    changed_fields: Object.keys(before).sort(),
+  };
+  await publishRecordMutation(context, orgId, mutation, {
+    before: {
+      id: row.id,
+      data: before,
+      createdBy: row.created_by,
+      createdAt: new Date(row.created_at),
+      updatedAt: new Date(row.updated_at),
+    },
+    after: null,
   });
-  if (result.count === 0) throw new RecordNotFoundError(recordId);
+  return {
+    mutation,
+    // Internal authorization snapshot for transaction response replay. Capture
+    // the exact deleted row, including metadata used by row conditions.
+    snapshot: serializedRecord(
+      {
+        id: row.id,
+        data: before,
+        createdBy: row.created_by,
+        createdAt: new Date(row.created_at),
+        updatedAt: new Date(row.updated_at),
+      },
+      collectionName,
+    ),
+  };
 }
 
 export async function queryRecords(

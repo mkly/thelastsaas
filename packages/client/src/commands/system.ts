@@ -119,17 +119,30 @@ export function registerSystemCommands(
     .description("Export a portable organization dump")
     .option("-o, --output <path>", "Write the dump to a file")
     .option("--force", "Overwrite an existing output file")
+    .option(
+      "--include-encrypted-secrets",
+      "Include encrypted secrets (back up server keys separately)",
+    )
     .action(
       withErrorHandling(
         async (
-          commandOptions: { output?: string; force?: boolean },
+          commandOptions: {
+            output?: string;
+            force?: boolean;
+            includeEncryptedSecrets?: boolean;
+          },
           command: Command,
         ) => {
           const options = globalOptions(command);
           const { client, orgId } = dependencies.getOrgClient(options);
           const response = await getOperationsApi(client).v1.orgs[
             ":orgId"
-          ].export.$post({ param: { orgId } });
+          ].export.$post({
+            param: { orgId },
+            ...(commandOptions.includeEncryptedSecrets
+              ? { query: { include_encrypted_secrets: "true" as const } }
+              : {}),
+          });
           const result = await dependencies.handleResponse(response);
           if (!commandOptions.output) {
             dependencies.writeOutput(result, { json: true });

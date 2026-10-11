@@ -1,11 +1,12 @@
 # Model Context Protocol (MCP)
 
 Last SaaS exposes its organization-scoped data, access-control, file,
-notification, and system operations as MCP tools over Streamable HTTP.
+notification, queue, automation, secret, and system operations as MCP tools over Streamable HTTP.
 
-Call `server_info` to identify the running server. It returns `commit` (the
-build's Git SHA), `builtAt` (UTC build time), and `startedAt` (UTC process start
-time), alongside the API version and request identity. Both server build
+Call `server_info` to identify the running server. It returns `version` (the
+server version), `bundledCliVersion` (the CLI available for download), `commit`
+(the build's Git SHA), `builtAt` (UTC build time), and `startedAt` (UTC process
+start time), alongside the API version and request identity. Both server build
 commands embed the revision and build time; source runs report `null` for
 `commit` and `builtAt`. These fields identify a deployment; they do not trigger
 client tool refreshes.
@@ -160,6 +161,11 @@ stable tool identifiers.
 | `export`                                | `org_export`                                                                   |
 | `import`                                | `org_import`                                                                   |
 
+Notification queue and schedule creation tools accept an optional `audience`:
+`self` (default), `users` with IDs or emails, `all`, or `roles` with existing role
+names. Team sends use the same Casbin destination permissions as REST and CLI.
+See [notifications](notifications.md) for payloads and delivery behavior.
+
 The following commands deliberately do not have MCP tools:
 
 - `login` and `logout` manage the CLI's local session. MCP clients authenticate
@@ -244,3 +250,74 @@ older versions do not interpret that metadata.
 reading list, include `[{"resource":"/collections/reading_list","action":"read"}]`.
 The grants are applied when the recipient accepts; no existing account is needed
 to send the invitation. `invitations_list` includes the pending grants.
+
+## Durable queues and automation
+
+Tools use the current selected organization and the same membership, payload
+whole-queue grants and native claim checks as REST. Organization-bound API keys use
+`x-api-key` and cannot switch organizations. Human OAuth clients use the browser
+flow above. Manage authority does not grant queue payload read or secret reveal.
+
+| CLI (`saas` prefix)                            | MCP tool                                                                                                            |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| queues create/list/show/update/delete          | queues_create / queues_list / queues_show / queues_update / queues_delete                                           |
+| queues subscriptions create/list/update/delete | queues_subscriptions_create / queues_subscriptions_list / queues_subscriptions_update / queues_subscriptions_delete |
+| queues enqueue/claim/ack/nack/extend           | queues_enqueue / queues_claim / queues_ack / queues_nack / queues_extend                                            |
+| queues cancel/redrive                          | queues_cancel / queues_redrive                                                                                      |
+| schedules create/list/show/update/delete       | schedules_create / schedules_list / schedules_show / schedules_update / schedules_delete                            |
+| schedules pause/resume                         | schedules_update with enabled false/true                                                                            |
+| triggers create/list/show/update/delete        | triggers_create / triggers_list / triggers_show / triggers_update / triggers_delete                                 |
+| triggers pause/resume                          | triggers_update with enabled false/true                                                                             |
+| transactions execute                           | transactions_execute                                                                                                |
+| secrets create/list/show/replace/delete/reveal | secrets_create / secrets_list / secrets_show / secrets_replace / secrets_delete / secrets_reveal                    |
+
+Queue tools select `queue`, subscription tools add `subscription`, and settlement
+and attempts use `delivery`. Schedule/trigger tools select `id`; secrets use
+`name`. DTO fields are snake_case. Lists accept limit/cursor and return
+items/next_cursor. Creation/update take the shared strict DTO; unknown keys are
+rejected even where the MCP advertised schema is compact.
+
+```json
+{
+  "queue": "jobs",
+  "entries": [
+    {
+      "payload": { "job_id": "job-42", "title": "Index report" },
+      "idempotency_key": "job-42"
+    }
+  ]
+}
+```
+
+Send that to `queues_enqueue`. Then `queues_claim` takes
+`{"queue":"jobs","subscription":"indexing","limit":1}`. Process the returned
+payload before `queues_ack` with `{queue,delivery,token}`. Claim alone returns
+lease tokens; never copy them into logs or automatically ack. Nack accepts
+`delay_seconds` and optional safe `error`, extend takes `lease_seconds` from now.
+At-least-once delivery requires idempotent external effects. Revoked grants or
+expired leases prevent settlement. Cancel/redrive need queue manage; redrive
+only accepts dead deliveries. These tools take selectors without `confirm`;
+queue/subscription deletion also takes only selectors. CLI deletion requires
+`--confirm`.
+
+Schedule timing is `{kind:"once",at}` or `{kind:"recurring",recurrence}` with
+DTSTART;TZID; triggers use explicitly tagged before/after/literal/metadata
+mappings. See [worker ACLs and examples](queues.md) and
+[atomic producers and transactions](automation.md). Subscription broadcast,
+shared worker consumption, schema restrictions, retry and restore rules apply
+equally to MCP. There is no `queues_metrics` or `secrets_rotate` tool.
+
+Secret create/replace accept `{name,value}`; reveal is an explicit empty-value
+request `{name}` requiring read on `/secrets/<name>/value`. Ordinary secret tools
+return only metadata. Responses use no-store; avoid placing secret values in
+transcripts. Encrypted exports require `org_export` with
+`include_encrypted_secrets: true`; key rotation is server-local operator tooling.
+See [secret backup and rotation](secrets-backup.md).
+
+`permissions_grant`/`permissions_revoke` also accept inline `where`/`fields` on a
+concrete `/queues/<name>` for read/create/update/write. Queue predicates use
+payload fields and current principal substitutions; collection metadata such as
+`created_by` is not queue payload metadata. Options are rejected on subscription
+gates, wildcards and manage/delete. Claims intersect read/update row conditions
+and return only readable fields. Grants remain additive, so broad grants can
+supersede restrictions; revoke the exact conditional grant including options.

@@ -26,6 +26,119 @@ function dependencies(client: Record<string, unknown>) {
 }
 
 describe("notification commands", () => {
+  test("queue and both schedule commands send team audiences", async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const post = async (input: Record<string, unknown>) => {
+      calls.push(input);
+      return {
+        status: "ok",
+        id: null,
+        ids: ["a", "b"],
+        queued_count: 2,
+        skipped_count: 1,
+        message: "Notification queued",
+      };
+    };
+    const { deps, outputs } = dependencies({
+      v1: {
+        orgs: {
+          ":orgId": {
+            notifications: {
+              queue: { $post: post },
+              schedules: { $post: post },
+            },
+          },
+        },
+      },
+    });
+    const commands = [
+      [
+        "queue",
+        "--subject",
+        "Team",
+        "--to",
+        "alice@example.com",
+        "--to",
+        "user_b",
+        "--dedupe-key",
+        "request-1",
+      ],
+      [
+        "schedules",
+        "once",
+        "--at",
+        "2026-10-11T09:00:00Z",
+        "--message",
+        "All hands",
+        "--to-all",
+      ],
+      [
+        "schedules",
+        "recurring",
+        "--recurrence",
+        "DTSTART;TZID=UTC:20261011T090000\nRRULE:FREQ=DAILY",
+        "--message",
+        "Standup",
+        "--to-role",
+        "engineering",
+        "--to-role",
+        "support",
+      ],
+    ];
+    for (const command of commands) {
+      const program = testProgram();
+      registerNotifications(program, deps);
+      await program.parseAsync(["notifications", ...command], { from: "user" });
+    }
+    expect(
+      calls.map((call) => (call.json as Record<string, unknown>).audience),
+    ).toEqual([
+      { kind: "users", users: ["alice@example.com", "user_b"] },
+      { kind: "all" },
+      { kind: "roles", roles: ["engineering", "support"] },
+    ]);
+    expect((calls[0]!.json as Record<string, unknown>).dedupe_key).toBe(
+      "request-1",
+    );
+    expect(outputs[0]?.human).toBe("Notification queued: 2 queued, 1 skipped");
+  });
+
+  test("mixed audience selectors fail before sending a request", async () => {
+    let requested = false;
+    const { deps } = dependencies({
+      v1: {
+        orgs: {
+          ":orgId": {
+            notifications: {
+              queue: {
+                $post: async () => {
+                  requested = true;
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    const program = testProgram();
+    registerNotifications(program, deps);
+    await expect(
+      program.parseAsync(
+        [
+          "notifications",
+          "queue",
+          "--subject",
+          "Team",
+          "--to",
+          "user_a",
+          "--to-all",
+        ],
+        { from: "user" },
+      ),
+    ).rejects.toThrow("Choose one audience");
+    expect(requested).toBe(false);
+  });
+
   test("lists unread notifications and marks one read", async () => {
     const listCalls: unknown[] = [];
     const readCalls: unknown[] = [];

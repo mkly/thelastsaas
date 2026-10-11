@@ -1,21 +1,35 @@
+import { postgresJobSchema } from "../jobs";
+import { InvalidQueryError, PermissionDeniedError } from "@lastsaas/shared";
 import { Prisma, type PrismaClient } from "@prisma/client";
 import { Cron } from "croner";
 
 import type { AppConfig } from "../config";
 import { databaseProvider } from "../config";
+import type { DbProvider } from "../db/query/adapters/types";
+import {
+  resolveNotificationAudience,
+  type NotificationRecipient,
+} from "../db/notification-audiences";
+import { queryProvider } from "../db/provider";
+import { withUnitOfWork } from "../db/unit-of-work";
+import { notificationDeliveryInput } from "../db/notifications";
 import { parseRecurrence } from "../lib/recurrence";
 import { log } from "../logger";
 import { deriveNotificationSubject } from "../notifications/channels";
 import type { NotificationQueue } from "../notifications/queue";
+import { maintainQueues } from "../queues/maintenance";
+import { createScheduleMaterializer } from "../schedules/materialize";
+import {
+  lockOccurrenceSource,
+  nextScheduleOccurrence,
+  retryScheduleContention,
+} from "../schedules/occurrences";
 
 const SQLITE_POLL_PATTERN = "*/10 * * * * *";
 const POSTGRES_POLL_PATTERN = "* * * * *";
 const POSTGRES_QUEUE = "lastsaas-background";
 const DEFAULT_BATCH_SIZE = 25;
 const PROCESSING_STALE_AFTER_MS = 5 * 60_000;
-const RECURRENCE_CHUNK_DAYS = 731;
-const MAX_OCCURRENCES_PER_POLL = 500;
-const DAY_MS = 24 * 60 * 60_000;
 
 function dataObject(value: Prisma.JsonValue | null): object | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -42,6 +56,7 @@ interface ScheduleRow {
   id: string;
   orgId: string;
   userId: string;
+  audience: Prisma.JsonValue | null;
   type: string;
   message: string;
   data: Prisma.JsonValue | null;
@@ -51,14 +66,13 @@ interface ScheduleRow {
   recurrence: string | null;
   nextOccurrenceAt: Date | null;
   lastEnqueuedAt: Date | null;
-  user: { email: string };
 }
 
 export class NotificationScheduleProcessor {
   constructor(
     private readonly prisma: PrismaClient,
     private readonly queue: NotificationQueue,
-    private readonly maxOccurrencesPerPoll = MAX_OCCURRENCES_PER_POLL,
+    private readonly provider: DbProvider = queryProvider(prisma),
   ) {}
 
   async processDue(
@@ -95,170 +109,141 @@ export class NotificationScheduleProcessor {
         { createdAt: "asc" },
       ],
       take: batchSize,
-      select: {
-        id: true,
-        orgId: true,
-        userId: true,
-        type: true,
-        message: true,
-        data: true,
-        inApp: true,
-        channel: true,
-        deliverAt: true,
-        recurrence: true,
-        nextOccurrenceAt: true,
-        lastEnqueuedAt: true,
-        user: { select: { email: true } },
-      },
+      select: { id: true },
     });
 
     let materialized = 0;
     for (const row of rows) {
-      materialized += await this.processRow(row, now);
+      materialized += await this.processRow(row.id, now);
     }
     return materialized;
   }
 
-  private async processRow(row: ScheduleRow, now: Date): Promise<number> {
-    const claimed = await this.prisma.notificationSchedule.updateMany({
-      where: {
-        id: row.id,
-        status: "scheduled",
-        lockedAt: null,
-        recurrence: row.recurrence,
-        ...(row.recurrence !== null
-          ? { nextOccurrenceAt: row.nextOccurrenceAt }
-          : { deliverAt: row.deliverAt }),
-      },
-      data: { status: "processing", lockedAt: now },
-    });
-    if (claimed.count === 0) return 0;
-
-    try {
-      return row.recurrence !== null
-        ? await this.processRecurringRow(row, row.recurrence, now)
-        : await this.processOneShotRow(row);
-    } catch (error) {
-      await this.prisma.notificationSchedule.updateMany({
-        where: { id: row.id, status: "processing", lockedAt: now },
-        data: { status: "scheduled", lockedAt: null },
-      });
-      throw error;
-    }
-  }
-
-  private async processOneShotRow(row: ScheduleRow): Promise<number> {
-    if (!row.deliverAt) return 0;
-
-    await this.enqueueOccurrence(row, row.deliverAt);
-    await this.prisma.notificationSchedule.update({
-      where: { id: row.id },
-      data: {
-        status: "sent",
-        lockedAt: null,
-        lastEnqueuedAt: row.deliverAt,
-      },
-    });
-    return 1;
-  }
-
-  private async processRecurringRow(
-    row: ScheduleRow,
-    recurrence: string,
-    now: Date,
-  ): Promise<number> {
-    const parsed = parseRecurrence(recurrence);
-    const firstUnprocessed =
-      row.nextOccurrenceAt ??
-      parsed.rule.after(
-        row.lastEnqueuedAt ?? parsed.startsAt,
-        row.lastEnqueuedAt === null,
+  private async processRow(id: string, now: Date): Promise<number> {
+    let materialized = 0;
+    {
+      const outcome = await retryScheduleContention(() =>
+        withUnitOfWork(
+          { prisma: this.prisma, provider: this.provider },
+          async (unit) => {
+            await lockOccurrenceSource(unit, "notification_schedules", id);
+            // A competing worker or cancellation may have changed this cursor.
+            const row = await unit.db.notificationSchedule.findUnique({
+              where: { id },
+            });
+            if (!row || row.status !== "scheduled" || row.lockedAt)
+              return false;
+            const parsed = row.recurrence
+              ? parseRecurrence(row.recurrence)
+              : null;
+            const occurrence = parsed
+              ? (row.nextOccurrenceAt ??
+                parsed.rule.after(
+                  row.lastEnqueuedAt ?? parsed.startsAt,
+                  row.lastEnqueuedAt === null,
+                ))
+              : row.deliverAt;
+            if (!occurrence || occurrence > now) {
+              if (row.recurrence)
+                await unit.db.notificationSchedule.update({
+                  where: { id },
+                  data: {
+                    nextOccurrenceAt: occurrence,
+                    status: occurrence ? "scheduled" : "sent",
+                  },
+                });
+              return false;
+            }
+            let recipients: NotificationRecipient[];
+            try {
+              // Self schedules also lose authority when their owner leaves the org.
+              const member = await unit.db.member.findUnique({
+                where: {
+                  organizationId_userId: {
+                    organizationId: row.orgId,
+                    userId: row.userId,
+                  },
+                },
+              });
+              if (!member) throw new PermissionDeniedError();
+              ({ recipients } = await resolveNotificationAudience(
+                unit.db,
+                row.orgId,
+                row.userId,
+                row.audience,
+                { atDelivery: true },
+              ));
+            } catch (error) {
+              if (!(
+                error instanceof PermissionDeniedError ||
+                error instanceof InvalidQueryError
+              ))
+                throw error;
+              await unit.db.notificationSchedule.update({
+                where: { id },
+                data: {
+                  status: "cancelled",
+                  lockedAt: null,
+                },
+              });
+              log.info(
+                "scheduler",
+                `Cancelled notification schedule ${id}: authority or audience invalid`,
+              );
+              return false;
+            }
+            const next = row.recurrence
+              ? nextScheduleOccurrence(row.recurrence, now)
+              : null;
+            await this.enqueueOccurrence(row, occurrence, unit.db, recipients);
+            await unit.db.notificationSchedule.update({
+              where: { id },
+              data: {
+                status: next ? "scheduled" : "sent",
+                lockedAt: null,
+                lastEnqueuedAt: occurrence,
+                nextOccurrenceAt: next,
+              },
+            });
+            return true;
+          },
+          { maxWait: 5000, timeout: 30_000 },
+        ),
       );
-
-    if (!firstUnprocessed || firstUnprocessed > now) {
-      await this.finishRecurringClaim(
-        row.id,
-        row.lastEnqueuedAt,
-        firstUnprocessed,
-      );
-      return 0;
+      if (outcome) materialized++;
     }
-
-    // Bound each expansion by both window and occurrence count: a dense rule
-    // (hourly or finer) with a long backlog would otherwise blow past the
-    // recurrence expansion limits and wedge every poll. Either bound leaves the
-    // persisted cursor on the first unprocessed occurrence, so the backlog
-    // drains one chunk per poll.
-    const chunkEnd = new Date(
-      Math.min(
-        now.getTime(),
-        firstUnprocessed.getTime() + RECURRENCE_CHUNK_DAYS * DAY_MS,
-      ),
-    );
-    const occurrences = parsed.rule.between(
-      firstUnprocessed,
-      chunkEnd,
-      true,
-      (_, count) => count < this.maxOccurrencesPerPoll,
-    );
-
-    for (const occurrence of occurrences) {
-      await this.enqueueOccurrence(row, occurrence);
-    }
-
-    const lastEnqueued = occurrences.at(-1);
-    const cursorFrom =
-      lastEnqueued && occurrences.length >= this.maxOccurrencesPerPoll
-        ? lastEnqueued
-        : chunkEnd;
-    const nextOccurrence = parsed.rule.after(cursorFrom, false);
-    await this.finishRecurringClaim(
-      row.id,
-      lastEnqueued ?? row.lastEnqueuedAt,
-      nextOccurrence,
-    );
-    return occurrences.length;
-  }
-
-  private async finishRecurringClaim(
-    id: string,
-    lastEnqueuedAt: Date | null,
-    nextOccurrenceAt: Date | null,
-  ): Promise<void> {
-    await this.prisma.notificationSchedule.update({
-      where: { id },
-      data: {
-        status: nextOccurrenceAt ? "scheduled" : "sent",
-        lockedAt: null,
-        lastEnqueuedAt,
-        nextOccurrenceAt,
-      },
-    });
+    return materialized;
   }
 
   private async enqueueOccurrence(
     row: ScheduleRow,
     occurrenceAt: Date,
+    transaction: Prisma.TransactionClient,
+    recipients: NotificationRecipient[],
   ): Promise<void> {
     const data = dataObject(row.data);
     const deliveryChannels = channels(row.channel);
-    await this.queue.enqueue({
-      orgId: row.orgId,
-      userId: row.userId,
-      scheduleId: row.id,
-      occurrenceAt,
-      type: row.type,
-      message: row.message,
-      ...(data ? { data } : {}),
-      inApp: row.inApp,
-      dedupeKey: `notification-schedule:${row.id}:${occurrenceAt.toISOString()}`,
-      delivery: {
-        to: row.user.email,
-        subject: deriveNotificationSubject(row.message),
-        text: row.message,
-        ...(deliveryChannels ? { channels: deliveryChannels } : {}),
-      },
-    });
+    for (const recipient of recipients) {
+      const input = notificationDeliveryInput(
+        row.orgId,
+        row.userId,
+        recipient,
+        {
+          type: row.type,
+          message: row.message,
+          subject: deriveNotificationSubject(row.message),
+          ...(data ? { data } : {}),
+          inApp: row.inApp,
+          ...(deliveryChannels ? { channel: deliveryChannels.join(",") } : {}),
+          dedupeKey: `notification-schedule:${row.id}:${occurrenceAt.toISOString()}`,
+        },
+      );
+      if (input)
+        await this.queue.enqueue(
+          { ...input, scheduleId: row.id, occurrenceAt },
+          transaction,
+        );
+    }
   }
 }
 
@@ -266,21 +251,38 @@ abstract class BaseBackgroundScheduler implements BackgroundScheduler {
   abstract readonly name: "sqlite" | "pg-boss";
 
   private readonly schedules: NotificationScheduleProcessor;
+  private readonly prisma: PrismaClient;
+  private readonly materializer: ReturnType<typeof createScheduleMaterializer>;
 
   constructor(
     prisma: PrismaClient,
     protected readonly queue: NotificationQueue,
+    provider: DbProvider = "sqlite",
   ) {
-    this.schedules = new NotificationScheduleProcessor(prisma, queue);
+    this.schedules = new NotificationScheduleProcessor(prisma, queue, provider);
+    this.prisma = prisma;
+    this.materializer = createScheduleMaterializer(prisma, provider);
   }
 
   abstract start(): Promise<void>;
   abstract stop(): Promise<void>;
 
   async flushOnce(now = new Date()): Promise<number> {
+    await this.prisma.transactionRequest.deleteMany({
+      where: { expiresAt: { lte: now } },
+    });
+    await maintainQueues(this.prisma, now);
+    // A failed queue producer must not stall independent notification delivery.
+    // Log fixed metadata only: persistence diagnostics may contain payload values.
+    const general = await this.materializer
+      .materialize(now.toISOString())
+      .catch(() => {
+        log.error(`scheduler:${this.name}`, "schedule materialization failed");
+        return { enqueued: 0 };
+      });
     const materialized = await this.schedules.processDue(now);
     await this.queue.processDue(now);
-    return materialized;
+    return materialized + general.enqueued;
   }
 
   protected logError(error: unknown): void {
@@ -319,14 +321,17 @@ export class PgBossBackgroundScheduler extends BaseBackgroundScheduler {
     queue: NotificationQueue,
     private readonly databaseUrl: string,
   ) {
-    super(prisma, queue);
+    super(prisma, queue, "postgresql");
   }
 
   async start(): Promise<void> {
     if (this.boss) return;
 
     const { PgBoss } = await import("pg-boss");
-    const boss = new PgBoss({ connectionString: this.databaseUrl });
+    const boss = new PgBoss({
+      connectionString: this.databaseUrl,
+      schema: postgresJobSchema(this.databaseUrl),
+    });
     boss.on("error", (error: Error) => this.logError(error));
     await boss.start();
     try {

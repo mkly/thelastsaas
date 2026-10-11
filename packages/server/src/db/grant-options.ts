@@ -1,7 +1,8 @@
+import stringify from "fast-json-stable-stringify";
 import { InvalidQueryError, type Where, type Schema } from "@lastsaas/shared";
-import type { PrismaClient } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 import { z } from "zod";
-import { getCollection } from "./collections";
+import { getCollectionInTransaction } from "./collections";
 import { compileWhere, substitute } from "./query/compile";
 import { whereSchema } from "./query/validation";
 
@@ -19,16 +20,6 @@ export interface GrantOptions {
 }
 
 // Stable serialization makes equivalent option objects safe to list/revoke.
-function canonical(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonical);
-  if (value && typeof value === "object")
-    return Object.fromEntries(
-      Object.entries(value)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([k, v]) => [k, canonical(v)]),
-    );
-  return value;
-}
 export function encodeGrantOptions(options: GrantOptions = {}): string | null {
   const normalized = {
     ...(options.where === undefined ? {} : { where: options.where }),
@@ -36,9 +27,7 @@ export function encodeGrantOptions(options: GrantOptions = {}): string | null {
       ? {}
       : { fields: [...new Set(options.fields)].sort() }),
   };
-  return Object.keys(normalized).length
-    ? JSON.stringify(canonical(normalized))
-    : null;
+  return Object.keys(normalized).length ? stringify(normalized) : null;
 }
 export function decodeGrantOptions(
   value: string | null | undefined,
@@ -53,7 +42,7 @@ export function decodeGrantOptions(
   };
 }
 export async function validateGrantOptions(
-  prisma: PrismaClient,
+  prisma: Prisma.TransactionClient,
   orgId: string,
   resource: string,
   action: string,
@@ -65,13 +54,13 @@ export async function validateGrantOptions(
     !["read", "write", "create", "update", "delete"].includes(action)
   )
     throw new InvalidQueryError(
-      "where and fields require a specific collection and a read, create, update, write, or delete action",
+      "where and fields require a specific collection action; queues use whole-queue permissions",
     );
   if (action === "delete" && options.fields !== undefined)
     throw new InvalidQueryError(
       "Delete applies to a whole record; fields is not supported",
     );
-  const collection = await getCollection(
+  const collection = await getCollectionInTransaction(
     prisma,
     orgId,
     resource.slice("/collections/".length),
@@ -89,7 +78,9 @@ export async function validateGrantOptions(
       userEmail: "validation@example.com",
       orgId,
     });
-    const compiled = compileWhere(resolved, schema, "sqlite");
+    const compiled = compileWhere(resolved, schema, "sqlite", {
+      payloadOnly: false,
+    });
     if (compiled.postFilters.length)
       throw new InvalidQueryError(
         "Deferred recurrence conditions are not supported in permission grants",

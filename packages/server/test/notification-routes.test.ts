@@ -64,6 +64,7 @@ describe("notification routes", () => {
           data: { invitation_id: "invitation_1" },
           read: false,
           created_at: "2026-08-18T20:00:00.000Z",
+          created_by: null,
         },
       ],
     });
@@ -111,14 +112,18 @@ describe("notification routes", () => {
 
   test("queues a delivery for the current user", async () => {
     const enqueue = mock().mockResolvedValue("notification_1");
-    const app = createRouterApp({
-      prisma: {
-        user: {
-          findUnique: mock().mockResolvedValue({ email: "user@example.com" }),
-        },
+    const prisma = {
+      $transaction: (operation: (transaction: unknown) => unknown) =>
+        operation(prisma),
+      user: {
+        findUnique: mock().mockResolvedValue({
+          id: "user_1",
+          email: "user@example.com",
+          notificationPreferences: null,
+        }),
       },
-      notificationQueue: { enqueue },
-    });
+    };
+    const app = createRouterApp({ prisma, notificationQueue: { enqueue } });
 
     const response = await app.request("/v1/orgs/org_1/notifications/queue", {
       method: "POST",
@@ -140,7 +145,7 @@ describe("notification routes", () => {
         userId: "user_1",
         type: "build_alert",
         inApp: false,
-        dedupeKey: "build:42",
+        dedupeKey: JSON.stringify(["direct", "user_1", "build:42"]),
         delivery: expect.objectContaining({
           to: "user@example.com",
           subject: "Build finished",
@@ -148,6 +153,7 @@ describe("notification routes", () => {
           channels: ["email"],
         }),
       }),
+      prisma,
     );
   });
 

@@ -116,7 +116,8 @@ workflow may be added in the future.
 ## Backend contract tests
 
 The same integration tests exercise records, filters, counts, aggregation,
-permissions, writes, schema restrictions, and recurrence expansion on both
+permissions, writes, schema restrictions, recurrence expansion, and team
+notification fanout and scheduling on both
 backends:
 
 ```sh

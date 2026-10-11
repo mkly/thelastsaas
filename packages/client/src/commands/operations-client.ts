@@ -97,7 +97,10 @@ interface SystemRoutes {
     }): Promise<Response>;
   };
   export: {
-    $post(input: { param: OrgParam }): Promise<Response>;
+    $post(input: {
+      param: OrgParam;
+      query?: { include_encrypted_secrets: "true" };
+    }): Promise<Response>;
   };
   import: {
     $post(input: {

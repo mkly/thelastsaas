@@ -7,7 +7,7 @@ PostgreSQL(preferred).
 
 ## Local development
 
-Requires [Bun](https://bun.sh) 1.2 or later. From the repository root:
+Requires [Bun](https://bun.sh) 1.4 or later. From the repository root:
 
 ```sh
 bun install
@@ -59,7 +59,21 @@ bun run format:check
 ```
 
 Use `bun run test:shared`, `bun run test:server`, or `bun run test:client`
-to run one package's tests. Use `bun run format` to apply formatting.
+to run one package's tests. These test commands require Bun 1.4 or later and
+run files across the available CPU cores with a fresh global and module registry
+per file. Tests within a file remain sequential so they can share fixtures, and
+each test retains a bounded 30-second timeout to accommodate worker contention.
+Override the worker count with `bun run test --parallel=4` (or `--parallel=1`
+for a serial isolated run); the same option works with the package test commands.
+See [Bun's parallel test documentation](https://bun.sh/docs/test/parallel).
+Use `bun run format` to apply formatting.
+
+The regular suite uses temporary SQLite fixtures. Run PostgreSQL checks with the
+dedicated runners below, which generate the PostgreSQL client and keep files
+sharing a database schema sequential. Do not set their fixture URL variables
+(`QUERY_TEST_DATABASE_URL`, `QUEUE_TEST_DATABASE_URL`,
+`SCHEDULE_TEST_DATABASE_URL`, or `TRANSACTION_TEST_DATABASE_URL`) when running
+the parallel SQLite suite.
 
 ## Working with the CLI
 
@@ -74,6 +88,9 @@ dist/saas login --server http://localhost:8787
 ```
 
 See the [CLI command reference](agent_docs/lastsaas-cli-commands.md).
+See [notifications](docs/notifications.md) for team audiences and destination permissions.
+See [durable queue workers](docs/queues.md), [application automation](docs/automation.md),
+and [secret backup and rotation](docs/secrets-backup.md) for operator workflows.
 The embedded operator guide is available through `dist/saas skills`.
 
 ## Database development

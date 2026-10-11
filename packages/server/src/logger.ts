@@ -44,9 +44,8 @@ function write(
   if (LEVEL_RANK[level] < threshold) return;
   const prefix = underJournald ? `<${SYSLOG_PRIORITY[level]}>` : "";
   const line = `${prefix}[${scope}] ${message}`;
-  const emit = LEVEL_RANK[level] >= LEVEL_RANK.warn
-    ? console.error
-    : console.log;
+  const emit =
+    LEVEL_RANK[level] >= LEVEL_RANK.warn ? console.error : console.log;
   if (detail === undefined) emit(line);
   else emit(line, detail);
 }

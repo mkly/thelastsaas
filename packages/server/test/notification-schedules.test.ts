@@ -100,7 +100,7 @@ describe("notification schedule routes", () => {
     expect(create).not.toHaveBeenCalled();
     expect(await response.json()).toMatchObject({
       status: "error",
-      error: "InvalidRequest",
+      error: "InvalidQueryError",
     });
   });
 
@@ -127,7 +127,7 @@ describe("notification schedule routes", () => {
         id: "schedule_1",
         orgId: "org_123",
         userId: "user_123",
-        status: "scheduled",
+        status: { in: ["scheduled", "processing", "paused"] },
       },
       data: { status: "cancelled", lockedAt: null },
     });

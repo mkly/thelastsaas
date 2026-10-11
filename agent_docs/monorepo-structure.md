@@ -20,6 +20,11 @@ packages/
 │       ├── app.ts                    Hono composition and ApiType
 │       ├── auth.ts                   BetterAuth and rolling sessions
 │       ├── config.ts                 Environment parsing and storage creation
+│       ├── queues/                    Enqueue, claim, settlement, grants, maintenance
+│       ├── schedules/                 Producer CRUD and durable occurrences
+│       ├── triggers/                  Mapped publication inside record writes
+│       ├── transactions/              Bounded atomic operations and idempotency
+│       ├── secrets/                   Encryption, metadata/reveal, operator rotation
 │       ├── services.ts               Prisma, SQLite, auth, queue, scheduler
 │       ├── db/                        Collection, record, filter, audit, and export logic
 │       ├── lib/recurrence.ts          Timezone-aware bounded expansion
@@ -41,3 +46,12 @@ packages/
 The server exports `ApiType` from the fully chained Hono application. The client
 imports it as a type-only dependency, preserving end-to-end request and response
 inference without bundling server runtime code.
+
+Automation DTOs and validators live in shared `automation.ts`, `queue.ts`,
+`schedules.ts`, `triggers.ts`, `transactions.ts` and `secrets.ts`. Routes and MCP
+tools invoke domain services. CLI `queue-deliveries.ts` handles worker commands;
+`schedules.ts`, `triggers.ts`, `transactions.ts` and `secrets.ts` handle the other
+families. Registration is in client `src/commands.ts` and server `src/app.ts` /
+`src/mcp/registry.ts`. `scripts/rotate-secrets.ts` is local operator tooling.
+After editing `skills/lastsaas/SKILL.md`, run `bun run embed:skill` in the host
+worktree; never hand-edit client `skill.generated.ts`.

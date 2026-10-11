@@ -19,6 +19,7 @@ import {
   createBackgroundScheduler,
   type BackgroundScheduler,
 } from "./scheduler";
+import { jobsFor } from "./jobs";
 import type { Storage } from "./storage/interface";
 
 export interface AppServices {
@@ -71,6 +72,16 @@ export async function createServices(
     sendAuthEmail ??
       createAuthEmailSender(notificationServices.notifications, config),
   );
+  // OAuth initialization seeds database resources asynchronously. Finish it
+  // before exposing services: callers may replace auth or immediately close
+  // Prisma, which otherwise races the outstanding resource insert.
+  try {
+    await auth.$context;
+  } catch (error) {
+    await prisma.$disconnect();
+    database?.close();
+    throw error;
+  }
   const scheduler = createBackgroundScheduler(
     prisma,
     notificationServices.notificationQueue,
@@ -90,6 +101,7 @@ export async function createServices(
 
 export async function closeServices(services: AppServices): Promise<void> {
   await services.scheduler.stop();
+  await jobsFor(services.prisma)?.close();
   await services.cache.clear();
   services.database?.close();
   await services.prisma.$disconnect();

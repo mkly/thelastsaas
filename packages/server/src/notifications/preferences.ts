@@ -103,8 +103,29 @@ export function mergeNotificationPreferences(
 
 export function resolveNotificationChannels(
   value: unknown,
-  kind: NotificationKind,
+  kind: string,
 ): NotificationChannelPreferences {
   const preferences = normalizeNotificationPreferences(value);
-  return preferences.by_kind[kind] ?? preferences.default;
+  return preferences.by_kind[kind as NotificationKind] ?? preferences.default;
+}
+
+// A recipient's opt-outs narrow a delivery someone else chose for them.
+// `muted` means nothing the recipient wants is left to deliver.
+export function applyRecipientPreferences(
+  value: unknown,
+  kind: string,
+  delivery: { inApp: boolean; channels?: string[] },
+): { inApp: boolean; channels?: string[]; muted: boolean } {
+  const preferences = resolveNotificationChannels(value, kind);
+  const inApp = delivery.inApp && preferences.in_app;
+  const channels = preferences.email
+    ? delivery.channels
+    : (delivery.channels ?? ["console"]).filter(
+        (channel) => channel !== "email",
+      );
+  return {
+    inApp,
+    ...(channels ? { channels } : {}),
+    muted: !inApp && (!preferences.email || channels?.length === 0),
+  };
 }

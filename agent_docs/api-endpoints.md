@@ -2,8 +2,8 @@
 
 Organization membership discovery and creation use the account-scoped
 `/v1/orgs` route. All organization data routes are explicitly scoped through
-`/v1/orgs/:orgId`. They require a Better Auth session cookie or the bearer
-session issued by the RFC 8628 device authorization flow.
+`/v1/orgs/:orgId`. They accept a BetterAuth session cookie, bearer session from device login,
+or an organization-bound service-account API token on `x-api-key`.
 
 Organization membership alone grants no data access. Admins receive wildcard
 authority when the organization is created. Other members need explicit
@@ -65,6 +65,54 @@ GET    /v1/orgs/:orgId/files/:id                  read
 GET    /v1/orgs/:orgId/files/:id/content          read
 DELETE /v1/orgs/:orgId/files/:id                  delete
 
+# Secrets. Metadata uses `/secrets` paths; reveal is a separate grant on
+# `/secrets/:name/value`. Responses never include values except reveal and all
+# secret and MCP responses carry `Cache-Control: no-store`.
+POST   /v1/orgs/:orgId/secrets                    /secrets:write
+GET    /v1/orgs/:orgId/secrets?limit=&cursor=      filters by /secrets/:name:read
+GET    /v1/orgs/:orgId/secrets/:name               /secrets/:name:read
+PATCH  /v1/orgs/:orgId/secrets/:name               /secrets/:name:manage
+DELETE /v1/orgs/:orgId/secrets/:name               /secrets/:name:delete
+POST   /v1/orgs/:orgId/secrets/:name/reveal        /secrets/:name/value:read
+
+# Queues: configuration, subscriptions, and inspection. Payload inspection
+# (entries, deliveries, attempts) uses current `/queues/:name:read` grants with
+# whole-queue grants; config grants alone do not reveal payloads.
+# Queue responses carry `Cache-Control: no-store`.
+POST   /v1/orgs/:orgId/queues                     /queues:write
+GET    /v1/orgs/:orgId/queues?limit=&cursor=       filters by /queues/:name:read
+GET    /v1/orgs/:orgId/queues/:name                /queues/:name:read
+PATCH  /v1/orgs/:orgId/queues/:name                /queues/:name:manage
+DELETE /v1/orgs/:orgId/queues/:name                /queues/:name:delete
+POST   /v1/orgs/:orgId/queues/:name/subscriptions  /queues/:name:manage
+GET    /v1/orgs/:orgId/queues/:name/subscriptions  /queues/:name:manage
+PATCH  /v1/orgs/:orgId/queues/:name/subscriptions/:subscription   manage
+DELETE /v1/orgs/:orgId/queues/:name/subscriptions/:subscription   manage
+GET    /v1/orgs/:orgId/queues/:name/entries?limit=&cursor=&where=<json>       read
+GET    /v1/orgs/:orgId/queues/:name/deliveries?limit=&cursor=&subscription=&state=  read
+
+# Queue production and lease settlement (current membership/grants required)
+POST   /v1/orgs/:orgId/queues/:name/entries         create on queue
+POST   /v1/orgs/:orgId/queues/:name/subscriptions/:subscription/claim  read+update on queue AND update on subscription
+POST   /v1/orgs/:orgId/queues/:name/deliveries/:id/ack     same consumer gates + owned unexpired token
+POST   /v1/orgs/:orgId/queues/:name/deliveries/:id/nack    same
+POST   /v1/orgs/:orgId/queues/:name/deliveries/:id/extend  same
+POST   /v1/orgs/:orgId/queues/:name/deliveries/:id/cancel  queue:manage
+POST   /v1/orgs/:orgId/queues/:name/deliveries/:id/redrive queue:manage, dead only
+
+# Schedules and triggers (creator authority rechecked on edit and execution)
+POST   /v1/orgs/:orgId/schedules       /schedules:write + destination create
+GET    /v1/orgs/:orgId/schedules       filters by /schedules/:id:read
+GET    /v1/orgs/:orgId/schedules/:id   read
+PATCH  /v1/orgs/:orgId/schedules/:id   update
+DELETE /v1/orgs/:orgId/schedules/:id   delete
+POST   /v1/orgs/:orgId/triggers        /triggers:write + source read + destination create
+GET    /v1/orgs/:orgId/triggers        filters by /triggers/:id:read
+GET    /v1/orgs/:orgId/triggers/:id    read
+PATCH  /v1/orgs/:orgId/triggers/:id    update
+DELETE /v1/orgs/:orgId/triggers/:id    delete
+POST   /v1/orgs/:orgId/transactions   each operation's record/queue gates
+
 # Casbin policies and data filters
 GET    /v1/orgs/:orgId/permissions
 POST   /v1/orgs/:orgId/permissions/policies
@@ -103,6 +151,9 @@ GET    /v1/orgs/:orgId/notifications?unread=true
 GET    /v1/orgs/:orgId/notifications/preferences
 PATCH  /v1/orgs/:orgId/notifications/preferences
 POST   /v1/orgs/:orgId/notifications/queue
+GET    /v1/orgs/:orgId/notifications/schedules
+POST   /v1/orgs/:orgId/notifications/schedules
+DELETE /v1/orgs/:orgId/notifications/schedules/:id
 PATCH  /v1/orgs/:orgId/notifications/:id
 DELETE /v1/orgs/:orgId/notifications/:id
 
@@ -118,6 +169,36 @@ Record query bodies accept `where`, `order_by`, `limit`, and `offset`.
 contain a bounded pair of ISO timestamps. Aggregate bodies accept `where`,
 `group_by`, `metrics`, `having`, `order_by`, `limit`, and `offset`.
 
+Notification queue and schedule bodies accept optional `audience`:
+`{"kind":"self"}` (default), `{"kind":"users","users":["id-or-email"]}`,
+`{"kind":"all"}`, or `{"kind":"roles","roles":["existing-role"]}`.
+Team destinations require Casbin `write` on each recipient's user path or one
+of their role paths under `/notifications`; `/notifications/*` covers all.
+Schedule listing and cancellation belong to the creator; delivered notifications
+belong to each recipient. Queue responses return `ids` and counts; `id` is
+`null` for fanouts. Schedule `recipient` is `null` for team audiences. See
+[notifications](../docs/notifications.md).
+
 Uploads use `multipart/form-data` with one file and an optional relative `path`
 field. Download responses stream bytes. Every response other than a download
 is JSON with `status: "ok"` or `status: "error"`.
+
+Organization exports omit secrets by default. Opt in using
+`POST /v1/orgs/:orgId/export?include_encrypted_secrets=true`. Imports accept the
+optional `encrypted_secrets` array only with matching configured keys, and
+re-encrypt for the destination identity and active key. See
+[encrypted secret backup and restore](../docs/secrets-backup.md).
+
+Enqueue bodies are `{entries:[{payload,available_at?,idempotency_key?}]}` with
+1..100 entries. Claim takes `{limit?,lease_seconds?}` and returns
+`{status:"ok",claims,has_more}`. Ack takes `{token}`, nack
+`{token,delay_seconds?,error?}`, extend `{token,lease_seconds}`; cancel/redrive
+require `{}`. Lists use `{status:"ok",items,next_cursor}`. Stale/settled leases
+and conflicting idempotency keys return 409. See [queue examples and ACLs](../docs/queues.md).
+
+Schedule creation uses `{queue,payload,timing,enabled?}`, where timing is
+`{kind:"once",at}` or `{kind:"recurring",recurrence}`. Trigger creation uses
+`{collection,queue,events,watched_fields?,where?,mapping,enabled?}`. Pause/resume
+are PATCH `{enabled:false/true}`. Transaction bodies contain 1..25 `operations`
+and optional `idempotency_key`, bounded to 1 MiB. See [automation examples](../docs/automation.md).
+Secret key rotation is local operator tooling, with no REST route.

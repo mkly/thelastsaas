@@ -1,4 +1,6 @@
 import { z } from "zod";
+import type { SecretKeyring } from "@lastsaas/shared";
+import { loadSecretKeyring } from "./secrets/keyring";
 
 import type { Storage } from "./storage/interface";
 
@@ -45,6 +47,7 @@ const environmentSchema = z.object({
 });
 
 export interface AppConfig {
+  secretKeyring: SecretKeyring | null;
   port: number;
   databaseUrl: string;
   betterAuthSecret: string;
@@ -91,6 +94,7 @@ export function databaseProvider(databaseUrl: string): DatabaseProvider {
 export function loadConfig(
   environment: Record<string, string | undefined> = process.env,
 ): AppConfig {
+  const secretKeyring = loadSecretKeyring(environment);
   const parsed = environmentSchema.parse(environment);
   if (
     Boolean(parsed.GOOGLE_CLIENT_ID) !== Boolean(parsed.GOOGLE_CLIENT_SECRET)
@@ -107,6 +111,7 @@ export function loadConfig(
   }
 
   return {
+    secretKeyring,
     port: parsed.PORT,
     databaseUrl: parsed.DATABASE_URL,
     betterAuthSecret:

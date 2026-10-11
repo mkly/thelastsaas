@@ -1,10 +1,12 @@
+import { errorResponse } from "@lastsaas/shared";
+import { bodyLimit } from "hono/body-limit";
 import { requireMcpAuth } from "@better-auth/mcp";
 import { StreamableHTTPTransport } from "@hono/mcp";
-import { API_VERSION } from "@lastsaas/shared";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Hono, type Context } from "hono";
 
 import { MCP_ACCOUNT_CLAIM, MCP_TOOLS_SCOPE, mcpResourceUrl } from "../auth";
+import { buildInfo } from "../build-info";
 import type { AppEnvironment } from "../env";
 import {
   resolveMcpApiKeyPrincipal,
@@ -50,7 +52,10 @@ async function handleMcpRequest(
   userId: string,
   clientId?: string,
 ): Promise<Response> {
-  const server = new McpServer({ name: "lastsaas", version: API_VERSION });
+  const server = new McpServer({
+    name: "lastsaas",
+    version: buildInfo.version,
+  });
   const transport = new StreamableHTTPTransport({
     enableJsonResponse: true,
     sessionIdGenerator: undefined,
@@ -72,9 +77,20 @@ async function handleMcpRequest(
   }
 }
 
-export const mcpRouter = new Hono<AppEnvironment>().post(
-  "/",
-  async (context) => {
+// Bound all JSON-RPC envelopes; individual tools validate their parsed payload limits.
+export const mcpRouter = new Hono<AppEnvironment>()
+  .use(
+    "*",
+    bodyLimit({
+      maxSize: 16 * 1024 * 1024,
+      onError: (c) =>
+        c.json(
+          errorResponse("RequestTooLarge", "MCP request exceeds 16 MiB"),
+          413,
+        ),
+    }),
+  )
+  .post("/", async (context) => {
     const services = context.get("services");
     const apiKeyPrincipal = await resolveMcpApiKeyPrincipal(
       services,
@@ -126,5 +142,4 @@ export const mcpRouter = new Hono<AppEnvironment>().post(
     );
 
     return protectedHandler(context.req.raw);
-  },
-);
+  });

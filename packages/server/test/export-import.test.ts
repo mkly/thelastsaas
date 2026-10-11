@@ -5,6 +5,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { createQueueEnqueueService } from "../src/queues/enqueue";
+import { exportData, importData } from "../src/db/export-import";
 import { roleSubject } from "../src/db/casbin";
 import type { AppEnvironment } from "../src/env";
 import { systemRouter } from "../src/routes/system";
@@ -67,6 +69,7 @@ function canonicalize(data: ExportData): ExportData {
   });
   data.notification_schedules.forEach((schedule) => {
     schedule.id = `schedule:${schedule.dedupe_key}`;
+    schedule.status = "paused";
   });
   return data;
 }
@@ -266,6 +269,10 @@ describe("organization export and import", () => {
         "role_assignments",
         "row_filters",
         "version",
+        "queues",
+        "queue_subscriptions",
+        "queue_schedules",
+        "collection_triggers",
       ].sort(),
     );
 
@@ -364,5 +371,173 @@ describe("organization export and import", () => {
 
     expect(response.status).toBe(400);
     expect(await prisma.collection.count({ where: { orgId } })).toBe(0);
+  });
+});
+
+async function automationFixture() {
+  const services = await createExportServices();
+  const db = services.prisma;
+  const now = new Date("2026-10-01T00:00:00.000Z");
+  await db.organization.createMany({
+    data: [
+      { id: "source", name: "Source", slug: "automation-source" },
+      {
+        id: "destination",
+        name: "Destination",
+        slug: "automation-destination",
+      },
+    ],
+  });
+  await db.user.create({
+    data: { id: "producer", name: "Producer", email: "automation@example.com" },
+  });
+  await db.collection.create({
+    data: {
+      id: "source-collection",
+      orgId: "source",
+      name: "jobs",
+      schema: { title: "string" },
+    },
+  });
+  await db.queue.create({
+    data: {
+      id: "source-queue",
+      orgId: "source",
+      name: "work",
+      schema: { title: "string" },
+      schemaVersion: 2,
+    },
+  });
+  await db.queueSubscription.create({
+    data: {
+      id: "source-subscription",
+      queueId: "source-queue",
+      name: "workers",
+      maxAttempts: 5,
+    },
+  });
+  await db.member.createMany({
+    data: [
+      { id: "source-member", organizationId: "source", userId: "producer" },
+      {
+        id: "destination-member",
+        organizationId: "destination",
+        userId: "producer",
+      },
+    ],
+  });
+  await db.casbinRule.create({
+    data: {
+      orgId: "source",
+      ptype: "p",
+      v0: "producer",
+      v1: "/queues/work",
+      v2: "create",
+    },
+  });
+  await createQueueEnqueueService(db).enqueue(
+    {
+      orgId: "source",
+      userId: "producer",
+      userEmail: "automation@example.com",
+    },
+    "work",
+    {
+      entries: [
+        {
+          payload: { title: "Ship" },
+          idempotency_key: "job-1",
+          available_at: now.toISOString(),
+        },
+      ],
+    },
+  );
+  await db.queueSchedule.create({
+    data: {
+      id: "source-schedule",
+      orgId: "source",
+      createdBy: "producer",
+      queueId: "source-queue",
+      payload: { title: "Ship" },
+      deliverAt: now,
+      cursorAt: now,
+      nextOccurrenceAt: now,
+    },
+  });
+  await db.collectionTrigger.create({
+    data: {
+      id: "source-trigger",
+      orgId: "source",
+      createdBy: "producer",
+      collectionId: "source-collection",
+      queueId: "source-queue",
+      events: ["create", "update"],
+      watchedFields: ["title"],
+      where: { title: { contains: "Ship" } },
+      mapping: { title: { kind: "after", field: "title" } },
+    },
+  });
+  await db.casbinRule.createMany({
+    data: [
+      {
+        orgId: "source",
+        ptype: "p",
+        v0: "producer",
+        v1: "/schedules/source-schedule",
+        v2: "update",
+      },
+      {
+        orgId: "source",
+        ptype: "p",
+        v0: "producer",
+        v1: "/triggers/source-trigger",
+        v2: "update",
+      },
+      {
+        orgId: "source",
+        ptype: "p",
+        v0: "producer",
+        v1: "/queues/work",
+        v2: "read",
+      },
+    ],
+  });
+  return { services, db, dump: await exportData(db, "source") };
+}
+
+describe("automation configuration portability", () => {
+  test("round trips queue settings and restores paused producers with remapped references", async () => {
+    const { db, dump } = await automationFixture();
+    const result = await importData(db, "destination", dump);
+    expect(result).toMatchObject({
+      imported_queues: 1,
+      imported_queue_subscriptions: 1,
+      imported_queue_schedules: 1,
+      imported_collection_triggers: 1,
+    });
+    const queue = await db.queue.findFirstOrThrow({
+      where: { orgId: "destination" },
+      include: { subscriptions: true },
+    });
+    expect(queue.schema).toEqual({ title: "string" });
+    expect(queue.subscriptions[0]!.maxAttempts).toBe(5);
+    const schedule = await db.queueSchedule.findFirstOrThrow({
+      where: { orgId: "destination" },
+    });
+    const trigger = await db.collectionTrigger.findFirstOrThrow({
+      where: { orgId: "destination" },
+    });
+    expect(schedule.queueId).toBe(queue.id);
+    expect(trigger.queueId).toBe(queue.id);
+    expect(schedule.status).toBe("paused");
+    expect(trigger.status).toBe("paused");
+  });
+  test("rolls back an import when a producer cannot be restored", async () => {
+    const { db, dump } = await automationFixture();
+    dump.queue_schedules![0]!.created_by = "missing-user";
+    await expect(importData(db, "destination", dump)).rejects.toThrow(
+      "Backup producer user is unavailable",
+    );
+    expect(await db.queue.count({ where: { orgId: "destination" } })).toBe(0);
   });
 });

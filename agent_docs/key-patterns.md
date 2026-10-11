@@ -56,3 +56,30 @@ Domain failures extend `LastSaasError` and serialize through `errorResponse`.
 Malformed request bodies return 400, missing resources return 404, and denied
 fields or policies return 403. CLI handlers convert failed responses to
 `CliError` so command exit codes remain nonzero and predictable.
+
+## Queues and transactional producers
+
+Queue payloads reject unknown fields and reuse collection field types, including
+omitted/null values; there is no `required` schema modifier. Schema changes
+require zero retained entries. Inline queue grants use concrete payload resources
+and read/create/update/write, never subscription/config gates. Claim and settlement require whole-queue read/update and the subscription update
+gate. Authorized workers receive full payloads. Collection filters still apply.
+
+Keep outer transaction ownership in services. Pass `{db,provider}` through record
+mutation, enqueue, trigger publication and occurrence materialization; do not
+open nested transactions or infer a provider from the transaction client.
+Queue enqueue idempotency expires with retained entries; transaction idempotency
+is scoped to organization+principal for seven days. Native claim tokens are returned only by claim and excluded from logs/audit/export.
+Processing is at least once: external effects require consumer idempotency.
+
+Schedules and triggers recheck their creator at execution. Authority/schema
+invalidation pauses the producer with a safe reason; persistence failures roll
+back publication with the source write/cursor. Imports restore configuration and pause producers. Secret metadata never includes values; reveal has a separate child
+resource. See [contracts](../docs/queues-design.md), [workers](../docs/queues.md)
+and [automation](../docs/automation.md).
+
+REST routes attach shared Zod validators through `@hono/zod-validator`; the chained
+`apiRouter` supplies `ApiType` to Hono clients. Do not handwrite client API shapes.
+`lib/transport.ts` shares validation diagnostics and domain error envelopes across
+REST and MCP. Validation reports paths and issue codes without submitted values;
+logs use route templates and error types. Hono body limits bound transport ingress.

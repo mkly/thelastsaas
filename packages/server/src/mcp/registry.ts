@@ -9,6 +9,12 @@ import { registerDataTools } from "./tools/data";
 import { registerGettingStarted } from "./tools/getting-started";
 import { registerOrganizationTools } from "./tools/organizations";
 import { registerOperationsTools } from "./tools/operations";
+import { registerQueueDeliveryTools } from "./tools/queue-deliveries";
+import { registerQueueTools } from "./tools/queues";
+import { registerSecretTools } from "./tools/secrets";
+import { registerTransactionTools } from "./tools/transactions";
+import { registerScheduleTools } from "./tools/schedules";
+import { registerTriggerTools } from "./tools/triggers";
 
 type ToolRegistrar = (server: McpServer, context: McpToolContext) => void;
 
@@ -17,8 +23,10 @@ const registerServerInfo: ToolRegistrar = (server, context) => {
     "server_info",
     {
       description:
-        "Return the Last SaaS API version, build commit, build and process start times, and authenticated request identity. Use this to identify the deployed server revision.",
+        "Return the Last SaaS server, bundled CLI, and API versions, build commit, build and process start times, and authenticated request identity. Use this to identify the deployed server revision.",
       outputSchema: {
+        version: z.literal(buildInfo.version),
+        bundledCliVersion: z.literal(buildInfo.bundledCliVersion),
         apiVersion: z.literal(API_VERSION),
         commit: z.string().nullable(),
         builtAt: z.string().nullable(),
@@ -49,6 +57,12 @@ const toolRegistrars: readonly ToolRegistrar[] = [
   registerDataTools,
   registerAccessTools,
   registerOperationsTools,
+  registerSecretTools,
+  registerQueueTools,
+  registerQueueDeliveryTools,
+  registerTransactionTools,
+  registerTriggerTools,
+  registerScheduleTools,
 ];
 
 export function registerTools(

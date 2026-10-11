@@ -3,7 +3,7 @@
 Global options may precede a command family:
 
 ```text
-saas [--org <org-id>] [--json] <command>
+saas [--org <org-id>] [--json] [--token <api-token>] <command>
 ```
 
 ```text
@@ -63,11 +63,17 @@ saas permissions cancel-invite --id <invitation-id>
 
 # Notifications
 saas notifications list [--unread]
-saas notifications queue --subject <text> [--message <text>] [--data <json>]
+saas notifications queue --subject <text> [--message <text>] [--data <json>] [--channel <name>] [--dedupe-key <key>]
+saas notifications schedules once --at <iso-time> --message <text>
+saas notifications schedules recurring --recurrence <content> --message <text>
+saas notifications schedules list
+saas notifications schedules cancel <id>
 saas notifications read <id>
 saas notifications unread <id>
 saas notifications delete <id>
 saas notifications preferences show
+saas notifications preferences set-default [--in-app <on/off>] [--email <on/off>]
+saas notifications preferences set-kind <kind> [--in-app <on/off>] [--email <on/off>]
 
 # Files
 saas files list [--prefix <path-prefix>]
@@ -76,11 +82,62 @@ saas files get <id>
 saas files download <id> [--output <path>]
 saas files delete <id> --confirm
 
+# Secrets (ordinary output contains metadata only)
+saas secrets create <name> (--file <path> | --stdin)
+saas secrets list [--limit <n>] [--cursor <cursor>]
+saas secrets show <name>
+saas secrets replace <name> (--file <path> | --stdin)
+saas secrets delete <name> --confirm
+saas secrets reveal <name>
+
+# Queues (configuration and inspection; one page per list, continue with --cursor)
+saas queues create <queue> (--schema <json> | --schema-file <path>) [--enabled on|off]
+saas queues update <queue> [--schema <json> | --schema-file <path>] [--enabled on|off]
+saas queues list [--limit <n>] [--cursor <cursor>]
+saas queues show <queue>
+saas queues delete <queue> --confirm
+saas queues subscriptions create <queue> <subscription> [--enabled on|off] [--max-attempts <n>] [--lease-seconds <n>] [--retry-delay-seconds <n>] [--retention-days <n>]
+saas queues subscriptions update <queue> <subscription> [--enabled on|off] [--max-attempts <n>] [--lease-seconds <n>] [--retry-delay-seconds <n>] [--retention-days <n>]
+saas queues subscriptions list <queue> [--limit <n>] [--cursor <cursor>]
+saas queues subscriptions delete <queue> <subscription> --confirm
+saas queues entries <queue> [--where <json>] [--limit <n>] [--cursor <cursor>]
+saas queues deliveries <queue> [--subscription <name>] [--state <state>] [--limit <n>] [--cursor <cursor>]
+
+# Queue publication and workers (claim prints tokens; no automatic ack)
+saas queues enqueue <queue> (--payload <json> | --payload-file <path>) [--available-at <UTC>] [--idempotency-key <key>]
+saas queues claim <queue> <subscription> [--limit <n>]
+saas queues ack <queue> <delivery> --lease-token <token>
+saas queues nack <queue> <delivery> --lease-token <token> [--error <safe-text>]
+saas queues extend <queue> <delivery> --lease-token <token>
+saas queues cancel <queue> <delivery>
+saas queues redrive <queue> <dead-delivery>
+
+# General schedules (payload-file may replace payload)
+saas schedules create --queue <name> --payload <json> (--at <UTC> | --recurrence <content>) [--timezone <zone>] [--enabled on|off]
+saas schedules update <id> [--queue <name>] [--payload <json> | --payload-file <path>] [--at <UTC> | --recurrence <content>] [--timezone <zone>] [--enabled on|off]
+saas schedules list [--limit <n>] [--cursor <cursor>]
+saas schedules show <id>
+saas schedules pause <id>
+saas schedules resume <id>
+saas schedules delete <id> --confirm
+
+# Collection triggers
+saas triggers create --collection <name> --queue <name> --events <list> --mapping-file <file> [--watch-fields <list>] [--where <json> | --where-file <file>] [--enabled on|off]
+saas triggers update <id> [--collection <name>] [--queue <name>] [--events <list>] [--mapping-file <file>] [--watch-fields <list>] [--where <json> | --where-file <file>] [--enabled on|off]
+saas triggers list [--limit <n>] [--cursor <cursor>]
+saas triggers show <id>
+saas triggers pause <id>
+saas triggers resume <id>
+saas triggers delete <id> --confirm
+
 # Organization inspection and portability
 saas stats
 saas audit-log
 saas export --output <file>
-saas import --input <file>
+saas import <file>
+
+# Atomic transactions
+saas transactions execute (--input <file> | --stdin) [--idempotency-key <key>]
 
 # Bundled agent guide
 saas skills print
@@ -90,6 +147,39 @@ saas skills install [--directory <skill-root>]
 `saas whoami` reports the authenticated user's name, email address, and user ID.
 It does not require a selected organization; when one is selected, it also reports
 the organization and the user's role.
+
+Secret input is UTF-8, bounded to 64 KiB, and preserves all whitespace, including
+trailing newlines. Supply exactly one of `--file` or piped `--stdin`; values are
+not command-line arguments. Only `secrets reveal` prints a value (exactly, with no
+added trailing newline), or returns it
+in the `secret.value` JSON field with `--json`. Metadata read on `/secrets/<name>`
+does not grant reveal; reveal requires read on `/secrets/<name>/value`.
+`key_version` identifies the server encryption key version, not an API token.
+Server keys must be configured for writes and reveals. See [config](config.md).
+
+Queue creation requires `write` on `/queues`; configuration and subscription
+commands require `manage` on `/queues/<name>`, and `queues delete` requires
+`delete`. `entries` and `deliveries` require whole-queue `read`; `manage` alone does not grant payload access. Schema edits
+require zero retained entries, and new subscriptions receive only future entries.
+Subscription defaults are 3 attempts, a 60-second lease, 30-second retry delay, and 7-day retention.
+
+Transaction input is a UTF-8 JSON request object with an `operations` array and
+optional `idempotency_key`. Raw input and the submitted request are bounded to
+1 MiB; the array contains 1..25 `record.create`, `record.update`, `record.delete`,
+or `queue.enqueue` operations using literal IDs and payloads. The CLI submits
+one request, performs no automatic retries or result interpolation, and prints
+the response with results in input order. Each operation requires its existing
+permissions; all operations commit together or roll back together.
+`--idempotency-key` may supply an absent key or match the input key; conflicting
+keys are rejected. Keys are scoped to organization and principal and retained
+for seven days. See [transaction DTOs](../docs/queues-design.md#transactions).
+
+Notification queue and schedule creation commands accept one audience selector:
+repeat `--to <id-or-email>`, repeat `--to-role <existing-role>`, or `--to-all`.
+No selector targets self. Team sends require `write` on each resolved recipient's
+`/notifications/users/<id>` or one of their `/notifications/roles/<role>`
+destinations; `/notifications/*` covers everyone. See
+[notification behavior](../docs/notifications.md) for resolution and delivery.
 
 `skill` aliases `skills`; `path` aliases `skills install`. The default install
 location is `~/.lastsaas/skills/lastsaas/SKILL.md`.
@@ -104,3 +194,17 @@ Optional `--permissions` accepts an array of grants (`resource`, `action`, and
 optional `where`/`fields`). Grants are saved on the invitation and applied when
 it is accepted. Setting grants requires permission to manage permissions.
 `permissions invitations --json` includes the pending grants.
+
+`saas export --include-encrypted-secrets --output <file>` opts into an encrypted
+secret backup. Restore with `saas import <file>` after configuring the source
+key versions on the destination. Back up keys separately; see
+[encrypted secret backup and restore](../docs/secrets-backup.md).
+
+Authentication precedence is global `--token`, then `SAAS_API_TOKEN`, then the
+stored human session. API tokens use `x-api-key`; human sessions use bearer.
+Delivery `--lease-token` is separate. Process claim payloads before explicit ack;
+make side effects idempotent and never log claim tokens. Current grants are
+checked again on settlement. See [workers](../docs/queues.md) and
+[automation](../docs/automation.md) for ACLs, retry, trigger publication and restore.
+Encryption-key rotation is a server-local command, not `saas secrets rotate`;
+see [operator rotation](../docs/secrets-backup.md#rotate-server-encryption-keys).

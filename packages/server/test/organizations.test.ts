@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { createApp } from "../src/app";
 import { loadConfig } from "../src/config";
 import { closeServices, createServices } from "../src/services";
-import { verifyTestUser } from "./auth-helpers";
+import { seedTestSession, verifyTestUser } from "./auth-helpers";
 import { testMigrationSql } from "./test-migrations";
 const cleanups: Array<() => Promise<void>> = [];
 
@@ -14,7 +14,7 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0)) await cleanup();
 });
 
-async function createHarness() {
+async function createHarness(realSignup = false) {
   const directory = mkdtempSync(join(tmpdir(), "lastsaas-organizations-"));
   const config = loadConfig({
     NODE_ENV: "test",
@@ -29,45 +29,37 @@ async function createHarness() {
     rmSync(directory, { recursive: true, force: true });
   });
 
-  await app.request("http://localhost/auth/signup", {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      name: "Organization User",
-      email: "org-user@example.com",
-      password: "organization-password",
-    }),
-  });
-  await verifyTestUser(services, "org-user@example.com");
-  const login = await app.request("http://localhost/auth/login", {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      email: "org-user@example.com",
-      password: "organization-password",
-    }),
-  });
-  const cookie = login.headers.get("set-cookie")?.split(";")[0];
-  if (!cookie) throw new Error("Expected login cookie");
-  const user = await services.prisma.user.findUnique({
-    where: { email: "org-user@example.com" },
-  });
-  if (!user) throw new Error("Expected signed-up user");
-  await services.prisma.session.create({
-    data: {
-      id: "session_cli_orgs",
-      userId: user.id,
-      token: "cli-orgs-token",
-      expiresAt: new Date(Date.now() + 60_000),
-      userAgent: "lastsaas-cli",
-    },
-  });
-  return {
-    app,
+  if (realSignup) {
+    await app.request("http://localhost/auth/signup", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        name: "Organization User",
+        email: "org-user@example.com",
+        password: "organization-password",
+      }),
+    });
+    await verifyTestUser(services, "org-user@example.com");
+    const login = await app.request("http://localhost/auth/login", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        email: "org-user@example.com",
+        password: "organization-password",
+      }),
+    });
+    const cookie = login.headers.get("set-cookie")?.split(";")[0];
+    if (!cookie) throw new Error("Expected login cookie");
+    const headers: Record<string, string> = { Cookie: cookie };
+    return { app, services, headers, cliHeaders: headers };
+  }
+  const token = await seedTestSession(
     services,
-    headers: { Cookie: cookie },
-    cliHeaders: { Authorization: "Bearer cli-orgs-token" },
-  };
+    "org-user@example.com",
+    "Organization User",
+  );
+  const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
+  return { app, services, headers, cliHeaders: headers };
 }
 
 describe("organization routes", () => {
@@ -90,7 +82,7 @@ describe("organization routes", () => {
   });
 
   test("signup does not create an organization", async () => {
-    const { app, services, headers } = await createHarness();
+    const { app, services, headers } = await createHarness(true);
 
     const response = await app.request("http://localhost/v1/orgs", { headers });
 

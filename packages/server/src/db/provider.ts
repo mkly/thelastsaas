@@ -1,6 +1,8 @@
 import type { PrismaClient } from "@prisma/client";
 import { databaseProvider, type DatabaseProvider } from "../config";
 
+import { registerJobs } from "../jobs";
+
 const providers = new WeakMap<PrismaClient, DatabaseProvider>();
 
 export function registerDatabaseProvider(
@@ -8,6 +10,7 @@ export function registerDatabaseProvider(
   url: string,
 ): void {
   providers.set(prisma, databaseProvider(url));
+  registerJobs(prisma, url);
 }
 
 /** Resolve from the client's configured datasource, never a module-load global. */

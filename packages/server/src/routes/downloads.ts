@@ -18,6 +18,7 @@ const BINARY_ARTIFACTS = {
 type BinaryPlatform = keyof typeof BINARY_ARTIFACTS;
 type BinaryFile = (typeof BINARY_ARTIFACTS)[BinaryPlatform]["artifact"];
 type EmbeddedBinaryModule = { default: string };
+declare const __CLI_BUILD_PLATFORM__: BinaryPlatform | "all";
 
 const BUN_FS_PREFIX = "/$bunfs/";
 const MODULE_DIR = String(Reflect.get(import.meta, "dir") ?? process.cwd());
@@ -31,17 +32,37 @@ const embeddedBinaryImporters: Record<
   () => Promise<EmbeddedBinaryModule>
 > = {
   "saas-linux-x64": () =>
-    import("../../../../dist/saas-linux-x64", { with: { type: "file" } }),
+    typeof __CLI_BUILD_PLATFORM__ === "undefined" ||
+    __CLI_BUILD_PLATFORM__ === "all" ||
+    __CLI_BUILD_PLATFORM__ === "linux-x64"
+      ? import("../../../../dist/saas-linux-x64", { with: { type: "file" } })
+      : Promise.reject(new Error("CLI platform not embedded")),
   "saas-linux-arm64": () =>
-    import("../../../../dist/saas-linux-arm64", { with: { type: "file" } }),
+    typeof __CLI_BUILD_PLATFORM__ === "undefined" ||
+    __CLI_BUILD_PLATFORM__ === "all" ||
+    __CLI_BUILD_PLATFORM__ === "linux-arm64"
+      ? import("../../../../dist/saas-linux-arm64", { with: { type: "file" } })
+      : Promise.reject(new Error("CLI platform not embedded")),
   "saas-darwin-x64": () =>
-    import("../../../../dist/saas-darwin-x64", { with: { type: "file" } }),
+    typeof __CLI_BUILD_PLATFORM__ === "undefined" ||
+    __CLI_BUILD_PLATFORM__ === "all" ||
+    __CLI_BUILD_PLATFORM__ === "darwin-x64"
+      ? import("../../../../dist/saas-darwin-x64", { with: { type: "file" } })
+      : Promise.reject(new Error("CLI platform not embedded")),
   "saas-darwin-arm64": () =>
-    import("../../../../dist/saas-darwin-arm64", { with: { type: "file" } }),
+    typeof __CLI_BUILD_PLATFORM__ === "undefined" ||
+    __CLI_BUILD_PLATFORM__ === "all" ||
+    __CLI_BUILD_PLATFORM__ === "darwin-arm64"
+      ? import("../../../../dist/saas-darwin-arm64", { with: { type: "file" } })
+      : Promise.reject(new Error("CLI platform not embedded")),
   "saas-windows-x64.exe": () =>
-    import("../../../../dist/saas-windows-x64.exe", {
-      with: { type: "file" },
-    }),
+    typeof __CLI_BUILD_PLATFORM__ === "undefined" ||
+    __CLI_BUILD_PLATFORM__ === "all" ||
+    __CLI_BUILD_PLATFORM__ === "windows-x64"
+      ? import("../../../../dist/saas-windows-x64.exe", {
+          with: { type: "file" },
+        })
+      : Promise.reject(new Error("CLI platform not embedded")),
 };
 
 const embeddedBinaryPaths = new Map<BinaryFile, string>();

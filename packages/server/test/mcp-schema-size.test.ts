@@ -6,6 +6,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { McpToolContext } from "../src/mcp/context";
 import { registerTools } from "../src/mcp/registry";
 import { buildInfo } from "../src/build-info";
+import { version as serverVersion } from "../package.json";
+import { version as cliVersion } from "../../client/package.json";
 
 // Advertised tool schemas are serialized into every MCP client's model
 // context, so an oversized schema breaks clients before any call is made
@@ -45,6 +47,8 @@ describe("MCP tool schema size", () => {
         userId: "build-info-test",
         ...buildInfo,
       });
+      expect(buildInfo.version).toBe(serverVersion);
+      expect(buildInfo.bundledCliVersion).toBe(cliVersion);
       expect(buildInfo.commit).toBeNull();
       expect(buildInfo.builtAt).toBeNull();
       expect(Date.parse(buildInfo.startedAt)).toBeLessThanOrEqual(Date.now());

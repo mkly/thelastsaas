@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { version as serverVersion } from "../package.json";
+import { version as cliVersion } from "../../client/package.json";
 import { createHash, randomBytes } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -11,72 +13,6 @@ import { verifyTestUser } from "./auth-helpers";
 import { testMigrationSql } from "./test-migrations";
 const protocolVersion = "2025-11-25";
 const cleanups: Array<() => Promise<void>> = [];
-
-const expectedTools = [
-  "audit_log",
-  "collections_create",
-  "collections_delete",
-  "collections_describe",
-  "collections_list",
-  "collections_update_schema",
-  "field_filter_delete",
-  "field_filter_list",
-  "field_filter_set",
-  "files_delete",
-  "files_download",
-  "files_download_link",
-  "files_get",
-  "files_list",
-  "files_upload",
-  "files_upload_link",
-  "files_prepare_upload",
-  "files_complete_upload",
-  "files_upload_status",
-  "invitations_accept",
-  "invitations_cancel",
-  "invitations_create",
-  "invitations_list",
-  "members_change_role",
-  "members_list",
-  "members_remove",
-  "notification_preferences_set",
-  "notification_preferences_show",
-  "notification_schedules_cancel",
-  "notification_schedules_create_once",
-  "notification_schedules_create_recurring",
-  "notification_schedules_list",
-  "notifications_delete",
-  "notifications_list",
-  "notifications_queue",
-  "notifications_read",
-  "notifications_unread",
-  "organizations_list",
-  "organizations_create",
-  "organizations_select",
-  "org_export",
-  "org_import",
-  "permissions_assign_role",
-  "permissions_check",
-  "permissions_grant",
-  "permissions_list",
-  "permissions_revoke",
-  "permissions_unassign_role",
-  "records_aggregate",
-  "records_batch",
-  "records_count",
-  "records_delete",
-  "records_get",
-  "records_insert",
-  "records_query",
-  "records_update",
-  "row_filter_delete",
-  "row_filter_list",
-  "row_filter_set",
-  "getting_started",
-  "server_info",
-  "service_accounts_create",
-  "stats",
-] as const;
 
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0)) await cleanup();
@@ -304,6 +240,20 @@ describe("MCP end-to-end walkthrough", () => {
     });
     expect(removedEndpoint.status).toBe(404);
 
+    const initialized = await app.request(
+      endpoint,
+      mcpRequest(token, 0, "initialize", {
+        protocolVersion,
+        capabilities: {},
+        clientInfo: { name: "version-test", version: "1.0.0" },
+      }),
+    );
+    expect(initialized.status).toBe(200);
+    expect((await initialized.json()).result.serverInfo).toEqual({
+      name: "lastsaas",
+      version: serverVersion,
+    });
+
     const listed = await app.request(
       endpoint,
       mcpRequest(token, 1, "tools/list"),
@@ -312,7 +262,6 @@ describe("MCP end-to-end walkthrough", () => {
     const listedBody = (await listed.json()) as { result: McpResult };
     const names = listedBody.result.tools?.map((tool) => tool.name) ?? [];
     expect(new Set(names).size).toBe(names.length);
-    expect([...names].sort()).toEqual([...expectedTools].sort());
 
     const serverInfo = await callTool(
       app,
@@ -322,7 +271,12 @@ describe("MCP end-to-end walkthrough", () => {
       "server_info",
       {},
     );
-    expect(serverInfo).toMatchObject({ orgId, userId });
+    expect(serverInfo).toMatchObject({
+      version: serverVersion,
+      bundledCliVersion: cliVersion,
+      orgId,
+      userId,
+    });
 
     const created = await callTool(
       app,

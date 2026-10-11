@@ -1,8 +1,11 @@
-import type { PrismaClient } from "@prisma/client";
+import type { Prisma, PrismaClient } from "@prisma/client";
 import type { Cache } from "../cache";
 
 // Separate service/database instances never share cached data.
-const caches = new WeakMap<PrismaClient, { cache: Cache; ttlMs: number }>();
+const caches = new WeakMap<
+  Prisma.TransactionClient,
+  { cache: Cache; ttlMs: number }
+>();
 
 export function registerMetadataCache(
   prisma: PrismaClient,
@@ -18,7 +21,7 @@ export const policyCacheKey = (orgId: string) =>
   JSON.stringify(["policies", orgId]);
 
 export function cachedMetadata<T>(
-  prisma: PrismaClient,
+  prisma: Prisma.TransactionClient,
   key: string,
   load: () => Promise<T>,
 ): Promise<T> {

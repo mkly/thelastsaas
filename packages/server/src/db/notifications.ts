@@ -2,6 +2,7 @@ import {
   genId,
   type NotificationKind,
   type NotificationPayloads,
+  type NotificationAudience,
 } from "@lastsaas/shared";
 import { Prisma, type PrismaClient } from "@prisma/client";
 
@@ -10,11 +11,18 @@ import {
   normalizeNotificationMessage,
   type NotificationMessage,
 } from "../notifications/channels";
-import { resolveNotificationChannels } from "../notifications/preferences";
+import {
+  applyRecipientPreferences,
+  resolveNotificationChannels,
+} from "../notifications/preferences";
 import type {
   NotificationQueue,
   QueueNotificationInput,
 } from "../notifications/queue";
+import {
+  resolveNotificationAudience,
+  type NotificationRecipient,
+} from "./notification-audiences";
 
 const DELIVERY_DATA_KEY = "__delivery";
 
@@ -124,17 +132,19 @@ export async function createNotification(
 const queueSelect = {
   id: true,
   status: true,
-  nextAttemptAt: true,
 } satisfies Prisma.NotificationSelect;
 
 export async function enqueueNotification(
-  prisma: PrismaClient,
+  prisma: Prisma.TransactionClient,
   input: QueueNotificationInput,
-): Promise<{ id: string; status: string; nextAttemptAt: Date | null }> {
+): Promise<{ id: string; status: string }> {
   const create = {
     id: genId(),
     orgId: input.orgId,
     userId: input.userId,
+    ...(input.createdByUserId
+      ? { createdByUserId: input.createdByUserId }
+      : {}),
     ...(input.scheduleId ? { scheduleId: input.scheduleId } : {}),
     ...(input.occurrenceAt ? { occurrenceAt: input.occurrenceAt } : {}),
     type: input.type,
@@ -143,8 +153,7 @@ export async function enqueueNotification(
     ...(input.dedupeKey ? { dedupeKey: input.dedupeKey } : {}),
     inApp: input.inApp ?? true,
     channel: input.delivery.channels?.join(",") ?? "console",
-    status: "pending",
-    nextAttemptAt: new Date(),
+    status: input.delivery.channels?.length === 0 ? "sent" : "pending",
   };
 
   if (!input.dedupeKey) {
@@ -158,31 +167,14 @@ export async function enqueueNotification(
       dedupeKey: input.dedupeKey,
     },
   } as const;
-  const existing = await prisma.notification.findUnique({
+  // A nonempty, unchanged unique value lets Prisma use the database upsert.
+  // Catching a uniqueness error inside a PostgreSQL transaction aborts the fanout.
+  return prisma.notification.upsert({
     where,
+    create,
+    update: { dedupeKey: input.dedupeKey },
     select: queueSelect,
   });
-  if (existing) return existing;
-
-  try {
-    return await prisma.notification.create({
-      data: create,
-      select: queueSelect,
-    });
-  } catch (error) {
-    if (
-      !(error instanceof Prisma.PrismaClientKnownRequestError) ||
-      error.code !== "P2002"
-    ) {
-      throw error;
-    }
-    const concurrent = await prisma.notification.findUnique({
-      where,
-      select: queueSelect,
-    });
-    if (!concurrent) throw error;
-    return concurrent;
-  }
 }
 
 const messageBuilders: {
@@ -197,7 +189,7 @@ const messageBuilders: {
 
 export async function emitNotification<Kind extends NotificationKind>(
   prisma: PrismaClient,
-  queue: NotificationQueue,
+  queue: Pick<NotificationQueue, "enqueue">,
   orgId: string,
   userId: string,
   kind: Kind,
@@ -256,29 +248,41 @@ export interface DirectNotificationInput {
   inApp?: boolean;
   channel?: string;
   dedupeKey?: string;
+  audience?: NotificationAudience;
 }
 
-export async function queueDirectNotification(
-  prisma: PrismaClient,
-  queue: NotificationQueue,
+export function notificationDeliveryInput(
   orgId: string,
-  userId: string,
+  senderId: string,
+  recipient: NotificationRecipient,
   input: DirectNotificationInput,
-): Promise<string> {
-  const recipient = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { email: true },
-  });
-  if (!recipient) throw new Error(`User '${userId}' not found`);
-
+): QueueNotificationInput | null {
+  const type = input.type ?? "direct_notification";
   const message = input.message ?? input.text ?? input.subject;
-  return queue.enqueue({
+  let inApp = input.inApp ?? true;
+  let channels = input.channel
+    ? input.channel
+        .split(",")
+        .map((channel) => channel.trim())
+        .filter(Boolean)
+    : undefined;
+  if (recipient.id !== senderId) {
+    const preferred = applyRecipientPreferences(
+      recipient.notificationPreferences,
+      type,
+      { inApp, channels },
+    );
+    if (preferred.muted) return null;
+    ({ inApp, channels } = preferred);
+  }
+  return {
     orgId,
-    userId,
-    type: input.type ?? "direct_notification",
+    userId: recipient.id,
+    createdByUserId: senderId,
+    type,
     message,
     ...(input.data ? { data: input.data } : {}),
-    inApp: input.inApp ?? true,
+    inApp,
     dedupeKey: input.dedupeKey,
     delivery: {
       ...normalizeNotificationMessage({
@@ -287,9 +291,50 @@ export async function queueDirectNotification(
         text: input.text ?? message,
         ...(input.html ? { html: input.html } : {}),
       }),
-      ...(input.channel ? { channels: [input.channel] } : {}),
+      ...(channels ? { channels } : {}),
     },
-  });
+  };
+}
+
+export async function queueNotifications(
+  prisma: PrismaClient,
+  queue: Pick<NotificationQueue, "enqueue">,
+  orgId: string,
+  senderId: string,
+  input: DirectNotificationInput,
+) {
+  const { recipients } = await resolveNotificationAudience(
+    prisma,
+    orgId,
+    senderId,
+    input.audience,
+  );
+  // Caller keys are scoped to the sender so they cannot collide with system keys.
+  const dedupeKey = input.dedupeKey
+    ? JSON.stringify(["direct", senderId, input.dedupeKey])
+    : undefined;
+  const ids = await prisma.$transaction(
+    async (transaction) => {
+      const queued: string[] = [];
+      for (const recipient of recipients) {
+        const delivery = notificationDeliveryInput(orgId, senderId, recipient, {
+          ...input,
+          dedupeKey,
+        });
+        if (delivery) queued.push(await queue.enqueue(delivery, transaction));
+      }
+      return queued;
+    },
+    { timeout: 30_000 },
+  );
+  return {
+    // A single delivery keeps the original one-ID response; fanouts use ids.
+    id: ids.length === 1 ? ids[0]! : null,
+    ids,
+    recipient_count: recipients.length,
+    queued_count: ids.length,
+    skipped_count: recipients.length - ids.length,
+  };
 }
 
 export async function getNotifications(
@@ -312,6 +357,7 @@ export async function getNotifications(
       message: true,
       data: true,
       read: true,
+      createdByUserId: true,
       createdAt: true,
     },
   });
@@ -321,6 +367,7 @@ export async function getNotifications(
     message: row.message,
     data: stripInternalData(row.data),
     read: row.read,
+    created_by: row.createdByUserId ?? null,
     created_at: row.createdAt.toISOString(),
   }));
 }

@@ -15,9 +15,10 @@ resource gates; the CLI consumes the Hono route type through `hc`.
 6. Zod validates input, the database layer performs the operation, and Hono
    returns a typed response.
 
-There is one principal type: a user. CLI and agent requests act through the
-user's delegated, rolling session. Organization scope never comes from hidden
-session state.
+Human sessions and organization-bound service-account API keys resolve to a user
+principal and current membership. CLI API tokens use `x-api-key`; rolling human
+sessions use bearer/cookie authentication. REST organization scope is explicit;
+MCP resolves its selected organization at request start.
 
 ## Data primitives
 
@@ -39,17 +40,24 @@ Files are streamed through a `Storage` interface backed by local disk or S3.
 Metadata and unique per-organization paths live in the database. Slash prefixes
 provide organization without a separate hierarchy model.
 
-Notifications use a durable queue with retry and deduplication. The scheduler
-turns one-shot or recurring schedules into queue entries. SQLite uses an
-in-process scheduler; PostgreSQL deployments can use pg-boss.
+Queues store immutable payloads and one native job per enabled subscription.
+PostgreSQL uses pg-boss, SQLite uses embedded Bunqueue with a transactional outbox.
+Workers receive whole payloads after organization/queue/subscription authorization.
+Libraries own job lifecycle; application rows retain identities and audit events.
+
+Schedules publish once for missed work after downtime. Triggers publish within
+source record transactions and preserve collection row/field permissions.
+Notification rows hold inbox/channel state while private native queues deliver.
+See [workers](../docs/queues.md), [backends](../docs/job-backends.md), and
+[automation](../docs/automation.md).
 
 ## Databases and portability
 
-`schema.prisma` is the only hand-edited Prisma schema and targets SQLite. A
-script generates the PostgreSQL variant by changing only the provider literal.
-SQLite migrations are not replayed against PostgreSQL; generate provider-
-specific SQL or use `prisma db push` for PostgreSQL.
+`schema.prisma` targets SQLite; the generation script produces the PostgreSQL
+variant. SQLite migrations do not run against PostgreSQL. Generate provider-specific
+SQL or use `prisma db push` for a new PostgreSQL database.
 
-Organization export/import reconstructs schemas before records and provides a
-portable backup and cloning boundary. Audit rows preserve the acting user,
-operation, resource, and details.
+Organization export/import reconstructs configuration and records. Queue runtime
+state belongs to database backups. Imports restore schedules and triggers paused.
+Secret values use AES-256-GCM with organization/secret/version authenticated
+identity. Metadata read is separate from reveal. Back up key material separately.

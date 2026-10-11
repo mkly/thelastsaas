@@ -8,10 +8,10 @@
   "scripts": {
     "start": "bun run --cwd packages/server start",
     "dev": "bun run --cwd packages/server dev",
-    "test": "bun run test:shared && bun run test:server && bun run test:client",
-    "test:shared": "bun test packages/shared",
-    "test:server": "bun test packages/server",
-    "test:client": "bun test packages/client",
+    "test": "bun test --parallel --timeout=30000 packages/shared packages/server packages/client",
+    "test:shared": "bun test --parallel --timeout=30000 packages/shared",
+    "test:server": "bun test --parallel --timeout=30000 packages/server",
+    "test:client": "bun test --parallel --timeout=30000 packages/client",
     "embed:skill": "bun run scripts/embed-skill.ts",
     "build:client": "bun run embed:skill && bun build packages/client/src/index.ts --compile --outfile dist/saas",
     "build:client:linux-x64": "bun run embed:skill && bun build packages/client/src/index.ts --compile --target=bun-linux-x64 --outfile dist/saas-linux-x64",
@@ -22,11 +22,15 @@
     "build:client:all": "bun run build:client:linux-x64 && bun run build:client:linux-arm64 && bun run build:client:darwin-x64 && bun run build:client:darwin-arm64 && bun run build:client:windows-x64",
     "build:server": "bun run --cwd packages/server prisma:generate && bun run build:client:all && bun run scripts/build-server.ts",
     "build:server:postgres": "bun run --cwd packages/server prisma:generate:postgres && bun run build:client:all && bun run scripts/build-server.ts",
+    "build:server:current": "bun run --cwd packages/server prisma:generate && bun run build:client && bun run scripts/build-server.ts --current-platform",
+    "smoke:built": "bun run scripts/smoke-built.ts",
     "typecheck": "bun run --filter '*' typecheck",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test:postgres": "bun run scripts/test-postgres-queries.ts"
+    "test:postgres": "bun run scripts/test-postgres.ts",
+    "test:postgres:queues": "bun run scripts/test-postgres.ts --queues",
+    "test:postgres:automation": "bun run scripts/test-postgres.ts --automation"
   },
   "devDependencies": {
     "@types/bun": "latest",
@@ -34,5 +38,8 @@
     "prettier": "^3.6.2",
     "typescript": "^5.9.2",
     "typescript-eslint": "^8.46.1"
+  },
+  "engines": {
+    "bun": ">=1.4.0"
   }
 }

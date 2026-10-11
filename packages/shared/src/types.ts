@@ -1,3 +1,7 @@
+import type { EncryptedSecret } from "./secrets";
+import type { PortableAutomationData } from "./portable-automation";
+import type { NotificationAudience } from "./notification-audience";
+
 export type FieldDef = string | { type: string; description?: string };
 export type Schema = Record<string, FieldDef>;
 
@@ -100,7 +104,9 @@ export interface NotificationSchedule {
   id: string;
   kind: NotificationScheduleKind;
   channel: string;
-  recipient: string;
+  recipient: string | null;
+  created_by: string;
+  audience: NotificationAudience;
   subject: string | null;
   message: string;
   data: Record<string, unknown> | null;
@@ -130,8 +136,9 @@ export interface QueryResult {
   offset: number;
 }
 
-export interface ExportData {
+export interface ExportData extends PortableAutomationData {
   version: 1;
+  encrypted_secrets?: EncryptedSecret[];
   collections: Array<{
     name: string;
     schema: Schema;
@@ -183,6 +190,7 @@ export interface ExportData {
   notification_schedules: Array<{
     id: string;
     user_id: string;
+    audience?: NotificationAudience;
     dedupe_key: string;
     type: string;
     message: string;
@@ -200,6 +208,7 @@ export interface ExportData {
 }
 
 export interface ImportResult {
+  imported_secrets?: number;
   imported_collections: number;
   imported_records: number;
   imported_files: number;
@@ -208,6 +217,10 @@ export interface ImportResult {
   imported_row_filters: number;
   imported_field_filters: number;
   imported_notification_schedules: number;
+  imported_queues?: number;
+  imported_queue_subscriptions?: number;
+  imported_queue_schedules?: number;
+  imported_collection_triggers?: number;
   skipped_records?: number;
   warnings?: string[];
 }
@@ -242,6 +255,7 @@ export interface MemberList {
 
 export interface Notification {
   id: string;
+  created_by?: string | null;
   type: string;
   message: string;
   data: Record<string, unknown> | null;

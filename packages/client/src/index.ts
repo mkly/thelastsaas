@@ -1,11 +1,12 @@
 #!/usr/bin/env bun
 
 import { Command } from "commander";
+import { version as CLI_VERSION } from "../package.json";
 
 import { commandRegistrars, type CommandRegistrar } from "./commands";
 import { CliError, formatCliError } from "./errors";
 
-export const CLI_VERSION = "0.1.0";
+export { CLI_VERSION };
 
 export interface GlobalOptions {
   json?: boolean;

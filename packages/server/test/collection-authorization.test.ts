@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { createApp } from "../src/app";
 import { loadConfig } from "../src/config";
 import { closeServices, createServices } from "../src/services";
-import { verifyTestUser } from "./auth-helpers";
+import { seedTestSession } from "./auth-helpers";
 import { testMigrationSql } from "./test-migrations";
 const cleanups: Array<() => Promise<void>> = [];
 
@@ -35,31 +35,6 @@ async function createHarness() {
 }
 
 type Harness = Awaited<ReturnType<typeof createHarness>>;
-
-async function signUp(harness: Harness, email: string, name: string) {
-  const response = await harness.app.request(
-    "http://localhost:3000/api/auth/sign-up/email",
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email, name, password: "collection-password" }),
-    },
-  );
-  expect(response.status).toBe(200);
-  await verifyTestUser(harness.services, email);
-  const signIn = await harness.app.request(
-    "http://localhost:3000/api/auth/sign-in/email",
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email, password: "collection-password" }),
-    },
-  );
-  expect(signIn.status).toBe(200);
-  const token = signIn.headers.get("set-auth-token");
-  if (!token) throw new Error("Sign-in session token was not returned");
-  return token;
-}
 
 function jsonRequest(
   token: string,
@@ -102,13 +77,21 @@ describe("private collection authorization", () => {
   test("separates membership, delegated creation, and creator-owned access", async () => {
     const harness = await createHarness();
     const { app, services } = harness;
-    const adminToken = await signUp(harness, "mike@example.com", "Mike Admin");
-    const creatorToken = await signUp(
-      harness,
+    const adminToken = await seedTestSession(
+      services,
+      "mike@example.com",
+      "Mike Admin",
+    );
+    const creatorToken = await seedTestSession(
+      services,
       "creator@example.com",
       "Casey Creator",
     );
-    const memberToken = await signUp(harness, "tom@example.com", "Tom Member");
+    const memberToken = await seedTestSession(
+      services,
+      "tom@example.com",
+      "Tom Member",
+    );
 
     const organizationResponse = await app.request(
       "http://localhost:3000/v1/orgs",

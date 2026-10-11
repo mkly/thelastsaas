@@ -225,11 +225,7 @@ export async function getCollection(
     prisma,
     collectionCacheKey(orgId, name),
     async () => {
-      const row = await prisma.collection.findUnique({
-        where: { orgId_name: { orgId, name } },
-      });
-      if (!row) throw new CollectionNotFoundError(name);
-      asSchema(row.schema);
+      const row = await getCollectionInTransaction(prisma, orgId, name);
       return {
         ...row,
         createdAt: row.createdAt.toISOString(),
@@ -242,6 +238,20 @@ export async function getCollection(
     createdAt: new Date(collection.createdAt),
     updatedAt: new Date(collection.updatedAt),
   };
+}
+
+/** Read the transaction's schema, without caching uncommitted metadata. */
+export async function getCollectionInTransaction(
+  db: Prisma.TransactionClient,
+  orgId: string,
+  name: string,
+) {
+  const row = await db.collection.findUnique({
+    where: { orgId_name: { orgId, name } },
+  });
+  if (!row) throw new CollectionNotFoundError(name);
+  asSchema(row.schema);
+  return row;
 }
 
 /**

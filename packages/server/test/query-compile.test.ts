@@ -941,3 +941,35 @@ describe("schema-aware query operands", () => {
     });
   }
 });
+
+describe("queue payload predicates", () => {
+  for (const provider of ["sqlite", "postgresql"] as const) {
+    test(`${provider}: metadata names are payload fields, including injected and negated predicates`, () => {
+      const payloadSchema: Schema = { id: "number", created_at: "number" };
+      const result = compileWhere({ not: { id: 7 } }, payloadSchema, provider, {
+        payloadOnly: true,
+        extraWhere: { created_at: { gt: 2 } },
+      });
+      expect(result.sql).not.toContain('"id"');
+      expect(result.sql).not.toContain('"created_at"');
+      expect(result.sql).toContain("NOT");
+      expect(result.params).toContain(2);
+      if (provider === "sqlite") {
+        expect(result.params).toContain("$.id");
+        expect(result.params).toContain("$.created_at");
+      } else {
+        expect(result.params).toContain('{"id":7}');
+        expect(result.params).toContain("created_at");
+      }
+      expect(() =>
+        compileWhere({ created_by: "worker" }, payloadSchema, provider, {
+          payloadOnly: true,
+        }),
+      ).toThrow("Unknown payload field");
+      // Collection behavior continues to address native metadata columns.
+      expect(
+        compileWhere({ id: "record" }, payloadSchema, provider).sql,
+      ).toContain('"id"');
+    });
+  }
+});

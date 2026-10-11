@@ -37,6 +37,9 @@ model User {
   oauthConsents           OauthConsent[]
   apiKeys                 Apikey[]
   mcpOrganizations        McpOrganization[]
+  queueEntries            QueueEntry[]
+  queueSchedules          QueueSchedule[]
+  collectionTriggers      CollectionTrigger[]
 
   @@map("user")
 }
@@ -319,6 +322,8 @@ model Organization {
   members               Member[]
   invitations           Invitation[]
   collections           Collection[]
+  queues                Queue[]
+  queueSchedules        QueueSchedule[]
   records               Record[]
   rowFilters            RowFilter[]
   fieldFilters          FieldFilter[]
@@ -327,6 +332,9 @@ model Organization {
   notificationSchedules NotificationSchedule[]
   casbinRules           CasbinRule[]
   auditLogs             AuditLog[]
+  secrets               Secret[]
+  collectionTriggers    CollectionTrigger[]
+  transactionRequests   TransactionRequest[]
 
   @@map("organization")
 }
@@ -367,18 +375,19 @@ model Invitation {
 // --- Application models ---
 
 model Collection {
-  id           String        @id
-  orgId        String        @map("org_id")
+  id           String              @id
+  orgId        String              @map("org_id")
   name         String
   schema       Json
-  description  String        @default("")
-  createdAt    DateTime      @default(now()) @map("created_at")
-  updatedAt    DateTime      @updatedAt @map("updated_at")
-  org          Organization  @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  description  String              @default("")
+  createdAt    DateTime            @default(now()) @map("created_at")
+  updatedAt    DateTime            @updatedAt @map("updated_at")
+  org          Organization        @relation(fields: [orgId], references: [id], onDelete: Cascade)
   records      Record[]
   files        File[]
   rowFilters   RowFilter[]
   fieldFilters FieldFilter[]
+  triggers     CollectionTrigger[]
 
   @@unique([orgId, name])
   @@unique([orgId, id])
@@ -461,33 +470,31 @@ model File {
 }
 
 model Notification {
-  id            String                @id
-  orgId         String                @map("org_id")
-  userId        String                @map("user_id")
-  scheduleId    String?               @map("schedule_id")
-  occurrenceAt  DateTime?             @map("occurrence_at")
-  dedupeKey     String?               @map("dedupe_key")
-  type          String
-  message       String
-  data          Json?
-  read          Boolean               @default(false)
-  inApp         Boolean               @default(true) @map("in_app")
-  channel       String                @default("console")
-  status        String                @default("pending")
-  lockedAt      DateTime?             @map("locked_at")
-  errorLogs     Json?                 @map("error_logs")
-  attempts      Int                   @default(0)
-  nextAttemptAt DateTime?             @map("next_attempt_at")
-  createdAt     DateTime              @default(now()) @map("created_at")
-  updatedAt     DateTime              @updatedAt @map("updated_at")
-  org           Organization          @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  user          User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
-  schedule      NotificationSchedule? @relation(fields: [orgId, scheduleId], references: [orgId, id], onDelete: Restrict)
+  id              String                @id
+  orgId           String                @map("org_id")
+  userId          String                @map("user_id")
+  createdByUserId String?               @map("created_by_user_id")
+  scheduleId      String?               @map("schedule_id")
+  occurrenceAt    DateTime?             @map("occurrence_at")
+  dedupeKey       String?               @map("dedupe_key")
+  type            String
+  message         String
+  data            Json?
+  read            Boolean               @default(false)
+  inApp           Boolean               @default(true) @map("in_app")
+  channel         String                @default("console")
+  status          String                @default("pending")
+  errorLogs       Json?                 @map("error_logs")
+  channelResults  Json?                 @map("channel_results")
+  createdAt       DateTime              @default(now()) @map("created_at")
+  updatedAt       DateTime              @updatedAt @map("updated_at")
+  org             Organization          @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user            User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  schedule        NotificationSchedule? @relation(fields: [orgId, scheduleId], references: [orgId, id], onDelete: Restrict)
 
   @@unique([orgId, userId, dedupeKey])
-  @@unique([orgId, scheduleId, occurrenceAt])
+  @@unique([orgId, scheduleId, occurrenceAt, userId])
   @@index([orgId, userId, read])
-  @@index([status, nextAttemptAt])
   @@map("notifications")
 }
 
@@ -495,6 +502,7 @@ model NotificationSchedule {
   id               String         @id
   orgId            String         @map("org_id")
   userId           String         @map("user_id")
+  audience         Json?
   dedupeKey        String         @map("dedupe_key")
   type             String
   message          String
@@ -598,4 +606,199 @@ model FileUpload {
   @@index([expiresAt])
   @@index([orgId, userId])
   @@map("file_upload")
+}
+
+// Ciphertext is deliberately separate from public metadata and ordinary exports.
+model Secret {
+  id         String       @id
+  orgId      String       @map("org_id")
+  name       String
+  keyVersion String       @map("key_version")
+  ciphertext String
+  nonce      String
+  authTag    String       @map("auth_tag")
+  createdAt  DateTime     @default(now()) @map("created_at")
+  updatedAt  DateTime     @updatedAt @map("updated_at")
+  org        Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, name])
+  @@index([orgId, createdAt, id])
+  @@index([orgId, keyVersion, id])
+  @@map("secrets")
+}
+
+// --- Durable queues ---
+
+model Queue {
+  id            String              @id
+  orgId         String              @map("org_id")
+  name          String
+  schema        Json
+  schemaVersion Int                 @default(1) @map("schema_version")
+  enabled       Boolean             @default(true)
+  createdAt     DateTime            @default(now()) @map("created_at")
+  updatedAt     DateTime            @updatedAt @map("updated_at")
+  org           Organization        @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  subscriptions QueueSubscription[]
+  entries       QueueEntry[]
+  schedules     QueueSchedule[]
+  triggers      CollectionTrigger[]
+
+  @@unique([orgId, name])
+  @@unique([orgId, id])
+  @@index([orgId, id])
+  @@map("queues")
+}
+
+model QueueSubscription {
+  id            String          @id
+  queueId       String          @map("queue_id")
+  name          String
+  enabled       Boolean         @default(true)
+  maxAttempts   Int             @default(3) @map("max_attempts")
+  retryDelaySeconds Int         @default(30) @map("retry_delay_seconds")
+  leaseSeconds  Int             @default(60) @map("lease_seconds")
+  retentionDays Int             @default(7) @map("retention_days")
+  createdAt     DateTime        @default(now()) @map("created_at")
+  updatedAt     DateTime        @updatedAt @map("updated_at")
+  queue         Queue           @relation(fields: [queueId], references: [id], onDelete: Cascade)
+  deliveries    QueueDelivery[]
+
+  @@unique([queueId, name])
+  @@unique([queueId, id])
+  @@index([queueId, enabled])
+  @@map("queue_subscriptions")
+}
+
+// Payload, schema version and producer identity are written only at enqueue.
+// A nullable key permits independent unkeyed entries; keyed requests also store
+// their canonical content hash for conflict detection during idempotency replay.
+model QueueEntry {
+  id              String          @id
+  queueId         String          @map("queue_id")
+  payload         Json
+  schemaVersion   Int             @map("schema_version")
+  producerUserId  String?         @map("producer_user_id")
+  availableAt     DateTime        @default(now()) @map("available_at")
+  idempotencyKey  String?         @map("idempotency_key")
+  idempotencyHash String?         @map("idempotency_hash")
+  createdAt       DateTime        @default(now()) @map("created_at")
+  queue           Queue           @relation(fields: [queueId], references: [id], onDelete: Cascade)
+  producer        User?           @relation(fields: [producerUserId], references: [id], onDelete: SetNull)
+  deliveries      QueueDelivery[]
+
+  @@unique([queueId, id])
+  @@unique([queueId, idempotencyKey])
+  @@index([queueId, createdAt, id])
+  @@map("queue_entries")
+}
+
+model QueueDelivery {
+  id               String            @id
+  queueId          String            @map("queue_id")
+  entryId          String            @map("entry_id")
+  subscriptionId   String            @map("subscription_id")
+  createdAt        DateTime          @default(now()) @map("created_at")
+  // Composite references prevent cross-queue (and therefore cross-org) fanout.
+  entry            QueueEntry        @relation(fields: [queueId, entryId], references: [queueId, id], onDelete: Cascade)
+  subscription     QueueSubscription @relation(fields: [queueId, subscriptionId], references: [queueId, id], onDelete: Cascade)
+
+  @@unique([entryId, subscriptionId])
+  @@index([queueId, createdAt, id])
+  @@map("queue_deliveries")
+}
+
+model TransactionRequest {
+  id          String       @id
+  orgId       String       @map("org_id")
+  principalId String       @map("principal_id")
+  key         String
+  requestHash String       @map("request_hash")
+  response    Json
+  visibility  Json
+  expiresAt   DateTime     @map("expires_at")
+  createdAt   DateTime     @default(now()) @map("created_at")
+  org         Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, principalId, key])
+  @@index([expiresAt])
+  @@map("transaction_requests")
+}
+
+// The creator remains the execution principal even when another administrator
+// edits the schedule. Cursor advancement belongs to occurrence materialization.
+model QueueSchedule {
+  id               String       @id
+  orgId            String       @map("org_id")
+  createdBy        String       @map("created_by")
+  queueId          String       @map("queue_id")
+  payload          Json
+  deliverAt        DateTime?    @map("deliver_at")
+  recurrence       String?
+  timezone         String?
+  status           String       @default("active")
+  pauseReason      String?      @map("pause_reason")
+  cursorAt         DateTime?    @map("cursor_at")
+  nextOccurrenceAt DateTime?    @map("next_occurrence_at")
+  createdAt        DateTime     @default(now()) @map("created_at")
+  updatedAt        DateTime     @updatedAt @map("updated_at")
+  org              Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  creator          User         @relation(fields: [createdBy], references: [id], onDelete: Cascade)
+  queue            Queue        @relation(fields: [orgId, queueId], references: [orgId, id], onDelete: Cascade)
+
+  occurrences      QueueScheduleOccurrence[]
+
+  @@unique([orgId, id])
+  @@index([status, nextOccurrenceAt, id])
+  @@index([orgId, createdAt, id])
+  @@index([orgId, createdBy, status])
+  @@map("queue_schedules")
+}
+
+// --- Collection trigger configuration ---
+
+model CollectionTrigger {
+  id            String       @id
+  orgId         String       @map("org_id")
+  createdBy     String       @map("created_by")
+  collectionId  String       @map("collection_id")
+  queueId       String       @map("queue_id")
+  events        Json
+  watchedFields Json?        @map("watched_fields")
+  where         Json?
+  mapping       Json
+  status        String       @default("active")
+  pauseReason   String?      @map("pause_reason")
+  createdAt     DateTime     @default(now()) @map("created_at")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
+  org           Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  creator       User         @relation(fields: [createdBy], references: [id], onDelete: Cascade)
+  collection    Collection   @relation(fields: [orgId, collectionId], references: [orgId, id], onDelete: Cascade)
+  queue         Queue        @relation(fields: [orgId, queueId], references: [orgId, id], onDelete: Cascade)
+
+  @@index([orgId, createdAt, id])
+  @@index([orgId, collectionId, status])
+  @@map("collection_triggers")
+}
+
+// Durable publication identity survives queue-entry retention.
+model QueueScheduleOccurrence {
+  id           String        @id
+  scheduleId   String        @map("schedule_id")
+  occurrenceAt DateTime      @map("occurrence_at")
+  entryId      String        @map("entry_id")
+  createdAt    DateTime      @default(now()) @map("created_at")
+  schedule     QueueSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+
+  @@unique([scheduleId, occurrenceAt])
+  @@map("queue_schedule_occurrences")
+}
+
+// SQLite transactional publication bridge; removed after Bunqueue acknowledges persistence.
+model JobOutbox {
+  id        String   @id
+  message   Json
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("job_outbox")
 }
