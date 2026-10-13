@@ -80,9 +80,6 @@ async function fixture() {
       schema: { title: "string" },
     },
   });
-  await prisma.queueSubscription.create({
-    data: { id: crypto.randomUUID(), queueId: queue.id, name: "worker" },
-  });
   const grant = (resource: string, action: string, options = {}) =>
     addPolicy(prisma, orgId, userId, resource, action, options);
   for (const action of ["create", "update", "delete", "read"])
@@ -94,9 +91,6 @@ async function fixture() {
   const counts = async () => ({
     records: await prisma.record.count({ where: { orgId } }),
     entries: await prisma.queueEntry.count({ where: { queueId: queue.id } }),
-    deliveries: await prisma.queueDelivery.count({
-      where: { queueId: queue.id },
-    }),
     audits: await prisma.auditLog.count({ where: { orgId } }),
     requests: await prisma.transactionRequest.count({ where: { orgId } }),
   });
@@ -142,7 +136,7 @@ describe(`bounded transactions (${provider})`, () => {
     expect(await counts()).toEqual({
       records: 1,
       entries: 1,
-      deliveries: 1,
+
       audits: 2,
       requests: 0,
     });
@@ -164,7 +158,7 @@ describe(`bounded transactions (${provider})`, () => {
     expect(await counts()).toEqual({
       records: 0,
       entries: 0,
-      deliveries: 0,
+
       audits: 0,
       requests: 0,
     });
@@ -496,7 +490,7 @@ describe(`bounded transactions (${provider})`, () => {
     expect(await counts()).toEqual({
       records: 1,
       entries: 1,
-      deliveries: 1,
+
       audits: 2,
       requests: 1,
     });

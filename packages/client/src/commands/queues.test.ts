@@ -17,19 +17,6 @@ const queue = {
   created_at: "2026-10-10T00:00:00Z",
   updated_at: "2026-10-10T00:00:00Z",
 };
-const subscription = {
-  id: "s1",
-  queue_id: "q1",
-  name: "worker",
-  enabled: true,
-  max_attempts: 3,
-  lease_seconds: 60,
-  retry_delay_seconds: 30,
-  retention_days: 7,
-  created_at: queue.created_at,
-  updated_at: queue.updated_at,
-};
-
 async function fixture(
   run: (f: {
     parse(args: string[]): Promise<void>;
@@ -52,7 +39,7 @@ async function fixture(
     token: string | null;
   }> = [];
   const outputs: Array<{ value: unknown; json?: boolean; human?: string }> = [];
-  let response = Response.json({ status: "ok", queue, subscription });
+  let response = Response.json({ status: "ok", queue });
   const server = Bun.serve({
     port: 0,
     async fetch(request) {
@@ -133,8 +120,24 @@ describe("queue administration CLI", () => {
         await parse(["queues", "update", "jobs", "--enabled", "on"]);
         await parse(["queues", "update", "jobs", "--schema-file", path]);
         expect(requests.map((r) => r.body)).toEqual([
-          { name: "jobs", schema: queue.schema, enabled: true },
-          { name: "jobs", schema: queue.schema, enabled: false },
+          {
+            name: "jobs",
+            schema: queue.schema,
+            enabled: true,
+            max_attempts: 3,
+            retry_delay_seconds: 30,
+            lease_seconds: 60,
+            retention_days: 7,
+          },
+          {
+            name: "jobs",
+            schema: queue.schema,
+            enabled: false,
+            max_attempts: 3,
+            retry_delay_seconds: 30,
+            lease_seconds: 60,
+            retention_days: 7,
+          },
           { enabled: true },
           { schema: queue.schema },
         ]);
@@ -147,7 +150,6 @@ describe("queue administration CLI", () => {
         expect(outputs[0]?.value).toEqual({
           status: "ok",
           queue,
-          subscription,
         });
         expect(outputs[0]?.json).toBe(true);
         expect(outputs[1]?.human).toContain('Schema: {"title":"string"}');
@@ -184,96 +186,31 @@ describe("queue administration CLI", () => {
     });
   });
 
-  test("subscription CRUD serializes wire settings, defaults, pagination and explicit deletion", async () => {
-    await fixture(async ({ parse, requests, respond }) => {
-      await parse(["queues", "subscriptions", "create", "jobs", "worker"]);
+  test("queue updates serialize retry and lease settings", async () => {
+    await fixture(async ({ parse, requests }) => {
       await parse([
         "queues",
-        "subscriptions",
-        "create",
-        "jobs",
-        "worker",
-        "--max-attempts",
-        "100",
-        "--lease-seconds",
-        "3600",
-        "--retention-days",
-        "365",
-        "--enabled",
-        "off",
-      ]);
-      await parse([
-        "queues",
-        "subscriptions",
         "update",
         "jobs",
-        "worker",
+        "--max-attempts",
+        "5",
         "--lease-seconds",
+        "120",
+        "--retry-delay-seconds",
         "10",
-        "--enabled",
-        "on",
+        "--retention-days",
+        "14",
       ]);
-      expect(requests.map((r) => r.body)).toEqual([
-        {
-          name: "worker",
-          enabled: true,
-          max_attempts: 3,
-          lease_seconds: 60,
-          retry_delay_seconds: 30,
-          retention_days: 7,
-        },
-        {
-          name: "worker",
-          enabled: false,
-          max_attempts: 100,
-          lease_seconds: 3600,
-          retry_delay_seconds: 30,
-          retention_days: 365,
-        },
-        { enabled: true, lease_seconds: 10 },
-      ]);
-      expect(requests[2]?.method).toBe("PATCH");
-      expect(requests[2]?.path).toBe(
-        "/v1/orgs/org_1/queues/jobs/subscriptions/worker",
-      );
-      respond(
-        Response.json({
-          status: "ok",
-          items: [subscription],
-          next_cursor: "next",
-        }),
-      );
-      await parse([
-        "queues",
-        "subscriptions",
-        "list",
-        "jobs",
-        "--limit",
-        "1",
-        "--cursor",
-        "next",
-      ]);
-      expect(requests[3]?.query).toBe("?limit=1&cursor=next");
-      respond(Response.json({ status: "ok" }));
-      await parse([
-        "queues",
-        "subscriptions",
-        "delete",
-        "jobs",
-        "worker",
-        "--confirm",
-      ]);
-      await parse(["queues", "delete", "jobs", "--confirm"]);
-      expect(
-        requests.slice(4).map((r) => [r.method, r.path, r.query, r.body]),
-      ).toEqual([
-        ["DELETE", "/v1/orgs/org_1/queues/jobs/subscriptions/worker", "", null],
-        ["DELETE", "/v1/orgs/org_1/queues/jobs", "", null],
-      ]);
+      expect(requests[0]?.body).toEqual({
+        max_attempts: 5,
+        lease_seconds: 120,
+        retry_delay_seconds: 10,
+        retention_days: 14,
+      });
     });
   });
 
-  test("inspection sends JSON Where and delivery filters without altering server projection", async () => {
+  test("inspection sends JSON Where and job state filters without altering server projection", async () => {
     await fixture(async ({ parse, requests, outputs, respond }) => {
       const page = {
         status: "ok",
@@ -285,7 +222,7 @@ describe("queue administration CLI", () => {
       await parse([
         "--json",
         "queues",
-        "entries",
+        "jobs",
         "jobs",
         "--where",
         JSON.stringify(where),
@@ -297,18 +234,14 @@ describe("queue administration CLI", () => {
       respond(Response.json({ status: "ok", items: [], next_cursor: null }));
       await parse([
         "queues",
-        "deliveries",
         "jobs",
-        "--subscription",
-        "worker",
+        "jobs",
         "--state",
         "dead",
         "--limit",
         "5",
       ]);
-      expect(requests[1]?.query).toBe(
-        "?limit=5&subscription=worker&state=dead",
-      );
+      expect(requests[1]?.query).toBe("?limit=5&state=dead");
     });
   });
 
@@ -337,29 +270,13 @@ describe("queue administration CLI", () => {
         ["list", "--limit", "1.5"],
         ["list", "--cursor", ""],
         ["list", "--cursor", "x".repeat(2049)],
-        ["subscriptions", "create", "jobs", "worker", "--max-attempts", "0"],
-        [
-          "subscriptions",
-          "create",
-          "jobs",
-          "worker",
-          "--lease-seconds",
-          "3601",
-        ],
-        [
-          "subscriptions",
-          "create",
-          "jobs",
-          "worker",
-          "--retention-days",
-          "366",
-        ],
-        ["subscriptions", "update", "jobs", "worker"],
-        ["subscriptions", "delete", "jobs", "worker"],
-        ["entries", "jobs", "--where", "{"],
-        ["entries", "jobs", "--where", '{"a":{"wat":1}}'],
-        ["deliveries", "jobs", "--state", "unknown"],
-        ["deliveries", "jobs", "--subscription", "../worker"],
+        ["update", "jobs", "--max-attempts", "0"],
+        ["update", "jobs", "--lease-seconds", "3601"],
+        ["update", "jobs", "--retention-days", "366"],
+        ["jobs", "jobs", "--where", "{"],
+        ["jobs", "jobs", "--where", '{"a":{"wat":1}}'],
+        ["jobs", "jobs", "--state", "unknown"],
+        ["jobs", "jobs", "--subscription", "../worker"],
       ])
         await expect(parse(["queues", ...args])).rejects.toThrow();
       expect(requests).toHaveLength(0);
@@ -402,8 +319,7 @@ describe("queue administration CLI", () => {
       await fixture(async ({ parse, requests, outputs, respond }) => {
         const receipt = {
           status: "ok",
-          entries: [{ id: "e1" }],
-          delivery_count: 2,
+          jobs: [{ id: "e1" }],
         };
         respond(Response.json(receipt, { status: 201 }));
         await parse([
@@ -432,8 +348,8 @@ describe("queue administration CLI", () => {
           { entries: [{ payload: { title: "é & +" } }] },
         ]);
         expect(requests.map((r) => [r.method, r.path])).toEqual([
-          ["POST", "/v1/orgs/org_1/queues/jobs/entries"],
-          ["POST", "/v1/orgs/org_1/queues/jobs/entries"],
+          ["POST", "/v1/orgs/org_1/queues/jobs/jobs"],
+          ["POST", "/v1/orgs/org_1/queues/jobs/jobs"],
         ]);
         expect(outputs[0]?.value).toEqual(receipt);
         expect(outputs[0]?.json).toBe(true);
@@ -450,7 +366,7 @@ describe("queue administration CLI", () => {
         status: "ok",
         claims: [
           {
-            delivery_id: "delivery_1",
+            job_id: "delivery_1",
             lease_token: "opaque+/lease=",
             payload: { title: "process" },
           },
@@ -458,22 +374,14 @@ describe("queue administration CLI", () => {
         has_more: true,
       };
       respond(Response.json(claim));
-      await parse([
-        "--json",
-        "queues",
-        "claim",
-        "jobs",
-        "worker",
-        "--limit",
-        "2",
-      ]);
+      await parse(["--json", "queues", "claim", "jobs", "--limit", "2"]);
       expect(requests).toHaveLength(1); // Claim never implicitly settles work.
       expect(outputs[0]?.value).toEqual(claim);
       expect(outputs[0]?.json).toBe(true);
       const leased = outputs[0]?.value as typeof claim;
       const result = {
         status: "ok",
-        delivery: { id: "delivery_1", state: "succeeded" },
+        job: { id: "delivery_1", state: "succeeded" },
       };
       respond(Response.json(result));
       await parse([
@@ -481,25 +389,21 @@ describe("queue administration CLI", () => {
         "queues",
         "ack",
         "jobs",
-        leased.claims[0]!.delivery_id,
+        leased.claims[0]!.job_id,
         "--lease-token",
         leased.claims[0]!.lease_token,
       ]);
       expect(requests.map((r) => [r.path, r.body, r.token])).toEqual([
+        ["/v1/orgs/org_1/queues/jobs/claim", { limit: 2 }, "worker-token"],
         [
-          "/v1/orgs/org_1/queues/jobs/subscriptions/worker/claim",
-          { limit: 2 },
-          "worker-token",
-        ],
-        [
-          "/v1/orgs/org_1/queues/jobs/deliveries/delivery_1/ack",
+          "/v1/orgs/org_1/queues/jobs/jobs/delivery_1/ack",
           { token: "opaque+/lease=" },
           "worker-token",
         ],
       ]);
       expect(outputs[1]?.value).toEqual(result);
       respond(Response.json({ status: "ok", claims: [], has_more: false }));
-      await parse(["queues", "claim", "jobs", "worker"]);
+      await parse(["queues", "claim", "jobs"]);
       expect(requests[2]?.body).toEqual({ limit: 1 });
       expect(outputs[2]?.value).toEqual({
         status: "ok",
@@ -513,7 +417,7 @@ describe("queue administration CLI", () => {
     await fixture(async ({ parse, requests, respond, outputs }) => {
       const result = {
         status: "ok",
-        delivery: { id: "delivery_1", state: "ready" },
+        job: { id: "delivery_1", state: "ready" },
       };
       respond(Response.json(result));
       await parse([

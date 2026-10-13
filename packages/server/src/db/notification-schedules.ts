@@ -1,3 +1,4 @@
+import stringify from "fast-json-stable-stringify";
 import {
   genId,
   InvalidQueryError,
@@ -11,8 +12,8 @@ import { resolveNotificationAudience } from "./notification-audiences";
 export interface ScheduleRow {
   id: string;
   userId: string;
-  audience?: Prisma.JsonValue | null;
-  channel: string;
+  audience: Prisma.JsonValue;
+  subject: string;
   message: string;
   data: Prisma.JsonValue | null;
   deliverAt: Date | null;
@@ -31,7 +32,6 @@ export function scheduleResponse(row: ScheduleRow) {
   return {
     id: row.id,
     kind: row.recurrence ? ("recurring" as const) : ("one_shot" as const),
-    channel: row.channel,
     recipient:
       audience.kind === "self"
         ? row.userId
@@ -40,9 +40,9 @@ export function scheduleResponse(row: ScheduleRow) {
           : null,
     created_by: row.userId,
     audience,
-    subject: null,
+    subject: row.subject,
     message: row.message,
-    data: row.data,
+    data: row.data as Record<string, unknown> | null,
     deliver_at: row.deliverAt?.toISOString() ?? null,
     recurrence: row.recurrence,
     timezone,
@@ -57,11 +57,10 @@ export function scheduleResponse(row: ScheduleRow) {
 }
 
 export interface NotificationScheduleInput {
+  subject: string;
   message: string;
   type?: string;
   data?: object;
-  in_app?: boolean;
-  channel?: string;
   dedupe_key?: string;
   deliver_at?: string;
   recurrence?: string;
@@ -101,24 +100,46 @@ export async function createNotificationSchedule(
             input.audience,
           )
         ).audience;
-  return prisma.notificationSchedule.create({
-    data: {
-      id: genId(),
-      orgId,
-      userId: senderId,
-      audience: audience as Prisma.InputJsonObject,
-      dedupeKey: input.dedupe_key ?? genId(),
-      type: input.type ?? "direct_notification",
-      message: input.message,
-      ...(input.data ? { data: input.data as Prisma.InputJsonObject } : {}),
-      inApp: input.in_app ?? true,
-      channel: input.channel ?? "console",
-      ...(input.deliver_at ? { deliverAt: new Date(input.deliver_at) } : {}),
-      ...(input.recurrence
-        ? { recurrence: input.recurrence, nextOccurrenceAt }
-        : {}),
+  const data = {
+    id: genId(),
+    orgId,
+    userId: senderId,
+    audience: audience as Prisma.InputJsonObject,
+    dedupeKey: input.dedupe_key ?? genId(),
+    subject: input.subject,
+    type: input.type ?? "direct_notification",
+    message: input.message,
+    ...(input.data ? { data: input.data as Prisma.InputJsonObject } : {}),
+    ...(input.deliver_at ? { deliverAt: new Date(input.deliver_at) } : {}),
+    ...(input.recurrence
+      ? { recurrence: input.recurrence, nextOccurrenceAt }
+      : {}),
+  } satisfies Prisma.NotificationScheduleUncheckedCreateInput;
+  if (!input.dedupe_key) return prisma.notificationSchedule.create({ data });
+  const row = await prisma.notificationSchedule.upsert({
+    where: {
+      orgId_userId_dedupeKey: {
+        orgId,
+        userId: senderId,
+        dedupeKey: input.dedupe_key,
+      },
     },
+    create: data,
+    update: { dedupeKey: input.dedupe_key },
   });
+  if (
+    row.subject !== data.subject ||
+    row.message !== data.message ||
+    row.type !== data.type ||
+    row.deliverAt?.toISOString() !== data.deliverAt?.toISOString() ||
+    (row.recurrence ?? undefined) !== input.recurrence ||
+    stringify(row.audience) !== stringify(data.audience) ||
+    stringify(row.data ?? null) !== stringify(input.data ?? null)
+  )
+    throw new InvalidQueryError(
+      "Dedupe key is already used for a different notification schedule",
+    );
+  return row;
 }
 
 export function listNotificationSchedules(

@@ -2,6 +2,7 @@ import { describe, expect, mock, test } from "bun:test";
 import { Hono } from "hono";
 
 import type { AppEnvironment } from "../src/env";
+import { notificationRouter } from "../src/routes/notifications";
 import { notificationScheduleRouter } from "../src/routes/notification-schedules";
 
 const now = new Date("2026-08-18T20:00:00.000Z");
@@ -15,8 +16,8 @@ function scheduleRow(overrides: Record<string, unknown> = {}) {
     type: "direct_notification",
     message: "Reminder",
     data: null,
-    inApp: true,
-    channel: "console",
+    audience: { kind: "self" },
+    subject: "Reminder",
     deliverAt: new Date("2026-08-20T09:00:00.000Z"),
     recurrence: null,
     nextOccurrenceAt: null,
@@ -38,7 +39,8 @@ function createScheduleApp(prisma: unknown) {
     context.set("audit", async () => undefined);
     await next();
   });
-  app.route("/", notificationScheduleRouter);
+  app.route("/schedules", notificationScheduleRouter);
+  app.route("/", notificationRouter);
   return app;
 }
 
@@ -51,12 +53,13 @@ describe("notification schedule routes", () => {
       notificationSchedule: { create },
     });
 
-    const response = await app.request("/", {
+    const response = await app.request("/notify", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
+        subject: "Reminder",
         message: "Reminder",
-        deliver_at: "2026-08-20T09:00:00.000Z",
+        timing: { kind: "once", at: "2026-08-20T09:00:00.000Z" },
       }),
     });
 
@@ -67,17 +70,19 @@ describe("notification schedule routes", () => {
       userId: "user_123",
       type: "direct_notification",
       message: "Reminder",
-      inApp: true,
-      channel: "console",
+      subject: "Reminder",
       deliverAt: new Date("2026-08-20T09:00:00.000Z"),
     });
     expect(await response.json()).toMatchObject({
       status: "ok",
-      id: expect.any(String),
-      kind: "one_shot",
-      recipient: "user_123",
-      enabled: true,
-      deliver_at: "2026-08-20T09:00:00.000Z",
+      kind: "scheduled",
+      schedule: {
+        id: expect.any(String),
+        kind: "one_shot",
+        recipient: "user_123",
+        enabled: true,
+        deliver_at: "2026-08-20T09:00:00.000Z",
+      },
     });
   });
 
@@ -87,12 +92,12 @@ describe("notification schedule routes", () => {
       notificationSchedule: { create },
     });
 
-    const response = await app.request("/", {
+    const response = await app.request("/notify", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        message: "Weekly reminder",
-        recurrence: "RRULE:FREQ=WEEKLY",
+        subject: "Weekly reminder",
+        timing: { kind: "recurring", recurrence: "RRULE:FREQ=WEEKLY" },
       }),
     });
 
@@ -100,7 +105,7 @@ describe("notification schedule routes", () => {
     expect(create).not.toHaveBeenCalled();
     expect(await response.json()).toMatchObject({
       status: "error",
-      error: "InvalidQueryError",
+      error: "InvalidRequest",
     });
   });
 
@@ -111,8 +116,8 @@ describe("notification schedule routes", () => {
       notificationSchedule: { findMany, updateMany },
     });
 
-    const listResponse = await app.request("/");
-    const cancelResponse = await app.request("/schedule_1", {
+    const listResponse = await app.request("/schedules");
+    const cancelResponse = await app.request("/schedules/schedule_1", {
       method: "DELETE",
     });
 

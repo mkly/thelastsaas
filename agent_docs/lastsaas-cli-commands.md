@@ -63,9 +63,8 @@ saas permissions cancel-invite --id <invitation-id>
 
 # Notifications
 saas notifications list [--unread]
-saas notifications queue --subject <text> [--message <text>] [--data <json>] [--channel <name>] [--dedupe-key <key>]
-saas notifications schedules once --at <iso-time> --message <text>
-saas notifications schedules recurring --recurrence <content> --message <text>
+saas notify --subject <text> [--message <text>] [--data <json>] [--dedupe-key <key>] [--at <utc-time> | --recurrence <content>]
+# Audience options: --to <id-or-email> (repeatable), --to-role <role> (repeatable), or --to-all
 saas notifications schedules list
 saas notifications schedules cancel <id>
 saas notifications read <id>
@@ -96,20 +95,15 @@ saas queues update <queue> [--schema <json> | --schema-file <path>] [--enabled o
 saas queues list [--limit <n>] [--cursor <cursor>]
 saas queues show <queue>
 saas queues delete <queue> --confirm
-saas queues subscriptions create <queue> <subscription> [--enabled on|off] [--max-attempts <n>] [--lease-seconds <n>] [--retry-delay-seconds <n>] [--retention-days <n>]
-saas queues subscriptions update <queue> <subscription> [--enabled on|off] [--max-attempts <n>] [--lease-seconds <n>] [--retry-delay-seconds <n>] [--retention-days <n>]
-saas queues subscriptions list <queue> [--limit <n>] [--cursor <cursor>]
-saas queues subscriptions delete <queue> <subscription> --confirm
-saas queues entries <queue> [--where <json>] [--limit <n>] [--cursor <cursor>]
-saas queues deliveries <queue> [--subscription <name>] [--state <state>] [--limit <n>] [--cursor <cursor>]
+saas queues jobs <queue> [--state <state>] [--where <json>] [--limit <n>] [--cursor <cursor>]
 
 # Queue publication and workers (claim prints tokens; no automatic ack)
 saas queues enqueue <queue> (--payload <json> | --payload-file <path>) [--available-at <UTC>] [--idempotency-key <key>]
-saas queues claim <queue> <subscription> [--limit <n>]
-saas queues ack <queue> <delivery> --lease-token <token>
-saas queues nack <queue> <delivery> --lease-token <token> [--error <safe-text>]
-saas queues extend <queue> <delivery> --lease-token <token>
-saas queues cancel <queue> <delivery>
+saas queues claim <queue> [--limit <n>]
+saas queues ack <queue> <job-id> --lease-token <token>
+saas queues nack <queue> <job-id> --lease-token <token> [--error <safe-text>]
+saas queues extend <queue> <job-id> --lease-token <token>
+saas queues cancel <queue> <job-id>
 saas queues redrive <queue> <dead-delivery>
 
 # General schedules (payload-file may replace payload)
@@ -157,11 +151,12 @@ does not grant reveal; reveal requires read on `/secrets/<name>/value`.
 `key_version` identifies the server encryption key version, not an API token.
 Server keys must be configured for writes and reveals. See [config](config.md).
 
-Queue creation requires `write` on `/queues`; configuration and subscription
-commands require `manage` on `/queues/<name>`, and `queues delete` requires
-`delete`. `entries` and `deliveries` require whole-queue `read`; `manage` alone does not grant payload access. Schema edits
-require zero retained entries, and new subscriptions receive only future entries.
-Subscription defaults are 3 attempts, a 60-second lease, 30-second retry delay, and 7-day retention.
+Queue creation requires `write` on `/queues`; configuration requires `manage`
+on `/queues/<name>`, and deletion requires `delete`. Job inspection requires
+`read`; claim and settlement require `read` and `update`. Management alone does
+not grant payload access. Schema edits require zero retained jobs. Queue
+create/update accept `--max-attempts`, `--lease-seconds`, `--retry-delay-seconds`
+and `--retention-days` (defaults 3, 60, 30, 7 respectively).
 
 Transaction input is a UTF-8 JSON request object with an `operations` array and
 optional `idempotency_key`. Raw input and the submitted request are bounded to

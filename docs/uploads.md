@@ -17,7 +17,7 @@ The upload is attributed to the user who requested the link.
 
 REST equivalents under `/v1/orgs/:orgId/files`:
 `POST /uploads/link`, `POST /uploads`, `GET /uploads/:id`, and
-`POST /uploads/:id/complete`. Existing multipart `POST /` remains supported.
+`POST /uploads/:id/complete`. Multipart uploads use `POST /`.
 The upload response also includes a capability-authorized completion URL and
 headers, for clients that do not use the authenticated REST completion endpoint.
 Only send the returned headers to the transfer URL, never the account's API token.
@@ -63,8 +63,6 @@ Creating an upload also removes up to 50 sessions expired for over an hour and
 their temporary objects. Each user can have at most 20 unexpired, unfinished
 uploads per organization. Expired links require a new upload session.
 
-The file-upload database migration is required on existing installations.
-
 ## Download links
 
 MCP `files_download_link` and REST `POST /v1/orgs/:orgId/files/:id/download-link`
@@ -80,4 +78,4 @@ remain usable until expiry even if the requesting user's permissions change.
 Local storage uses a signed link and rechecks membership and read permission
 when used. Both methods deliver attachments with the original filename and
 request no caching. Anyone holding a link can use it during its five-minute
-lifetime. No additional database migration is needed for download links.
+lifetime.

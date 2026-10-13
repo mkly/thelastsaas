@@ -1,3 +1,4 @@
+import { notify } from "../../notifications/notify";
 import { HTTPException } from "hono/http-exception";
 import { createDownloadLink } from "../../file-downloads";
 import {
@@ -11,7 +12,7 @@ import {
   FileMissingError,
   LastSaasError,
   NOTIFICATION_KINDS,
-  notificationAudienceSchema,
+  notifySchema,
   genId,
   sanitizePathComponent,
   secretBackupRequestSchema,
@@ -36,12 +37,10 @@ import {
   deleteNotification,
   getNotifications,
   markNotificationRead,
-  queueNotifications,
 } from "../../db/notifications";
 import { getStats } from "../../db/stats";
 import type { PermissionAction } from "../../middleware/permission";
 import {
-  createNotificationSchedule,
   listNotificationSchedules,
   cancelNotificationSchedule,
   scheduleResponse,
@@ -243,16 +242,6 @@ async function readLimitedContent(
   }
   return Buffer.concat(chunks, total);
 }
-
-const deliverySchema = {
-  audience: notificationAudienceSchema.optional(),
-  message: z.string().min(1),
-  type: z.string().min(1).default("direct_notification"),
-  data: z.record(z.string(), z.unknown()).optional(),
-  in_app: z.boolean().optional(),
-  channel: z.string().min(1).optional(),
-  dedupe_key: z.string().min(1).optional(),
-};
 
 function registerFileTools(server: McpServer, context: McpToolContext): void {
   server.registerTool(
@@ -625,61 +614,36 @@ function registerNotificationTools(
   );
 
   server.registerTool(
-    "notifications_queue",
+    "notify",
     {
       description:
-        "Queue notifications for self, selected organization members, all human members, or members of any selected role. Sending to others requires write permission for each destination.",
-      inputSchema: z.object({
-        audience: notificationAudienceSchema.optional(),
-        subject: z.string().min(1),
-        message: z.string().min(1).optional(),
-        text: z.string().min(1).optional(),
-        html: z.string().min(1).optional(),
-        data: z.record(z.string(), z.unknown()).optional(),
-        type: z.string().min(1).default("direct_notification"),
-        in_app: z.boolean().optional(),
-        channel: z.enum(["console", "email"]).optional(),
-        dedupe_key: z.string().min(1).optional(),
-      }),
+        "Notify yourself, selected members, roles, or everyone in the organization. Omit timing to send now; use once or recurring timing for reminders. Recipient preferences choose delivery channels. Sending to others requires notification write permission. Scheduled content is fixed; this does not run an AI assistant.",
+      inputSchema: notifySchema,
     },
-    ({
-      audience,
-      subject,
-      message,
-      text,
-      html,
-      data,
-      type,
-      in_app,
-      channel,
-      dedupe_key,
-    }) =>
+    (input) =>
       withToolErrors(async () => {
-        const result = await queueNotifications(
+        const result = await notify(
           context.services.prisma,
           context.services.notificationQueue,
           requireOrganization(context),
           context.userId,
+          input,
+        );
+        await audit(
+          context,
+          "notify",
+          "notification",
+          result.kind === "scheduled" ? result.schedule.id : result.id,
           {
-            audience,
-            subject,
-            type,
-            ...(message ? { message } : {}),
-            ...(text ? { text } : {}),
-            ...(html ? { html } : {}),
-            ...(data ? { data } : {}),
-            ...(in_app !== undefined ? { inApp: in_app } : {}),
-            ...(channel ? { channel } : {}),
-            ...(dedupe_key ? { dedupeKey: dedupe_key } : {}),
+            subject: input.subject,
+            audience: input.audience ?? { kind: "self" },
+            kind: result.kind,
+            ...(result.kind === "immediate"
+              ? { recipient_count: result.recipient_count }
+              : {}),
           },
         );
-        await audit(context, "queue_notification", "notification", result.id, {
-          subject,
-          audience: audience ?? { kind: "self" },
-          recipient_count: result.recipient_count,
-          notification_ids: result.ids,
-        });
-        return toolSuccess({ ...result, message: "Notification queued" });
+        return toolSuccess({ ...result });
       }),
   );
 
@@ -697,68 +661,6 @@ function registerNotificationTools(
           context.userId,
         );
         return toolSuccess({ schedules: schedules.map(scheduleResponse) });
-      }),
-  );
-
-  server.registerTool(
-    "notification_schedules_create_once",
-    {
-      description:
-        "Create a one-shot notification schedule for an audience. Selected users are fixed; all and roles resolve current human membership at delivery.",
-      inputSchema: z.object({
-        ...deliverySchema,
-        deliver_at: z.string().datetime({ offset: true }),
-      }),
-    },
-    (input) =>
-      withToolErrors(async () => {
-        const response = scheduleResponse(
-          await createNotificationSchedule(
-            context.services.prisma,
-            requireOrganization(context),
-            context.userId,
-            input,
-          ),
-        );
-        await audit(
-          context,
-          "create_notification_schedule",
-          "notification_schedule",
-          response.id,
-          { type: input.type, audience: response.audience },
-        );
-        return toolSuccess({ schedule: response });
-      }),
-  );
-
-  server.registerTool(
-    "notification_schedules_create_recurring",
-    {
-      description:
-        "Create a recurring notification schedule for an audience using RFC 5545 DTSTART/RRULE/EXDATE content. All and roles resolve current human membership at each delivery; destination permissions are rechecked.",
-      inputSchema: z.object({
-        ...deliverySchema,
-        recurrence: z.string().min(1),
-      }),
-    },
-    (input) =>
-      withToolErrors(async () => {
-        const response = scheduleResponse(
-          await createNotificationSchedule(
-            context.services.prisma,
-            requireOrganization(context),
-            context.userId,
-            input,
-          ),
-        );
-        await audit(
-          context,
-          "create_notification_schedule",
-          "notification_schedule",
-          response.id,
-          { type: input.type, audience: response.audience },
-        );
-        return toolSuccess({ schedule: response });
       }),
   );
 

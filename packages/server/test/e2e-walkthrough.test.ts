@@ -415,10 +415,10 @@ describe("end-to-end walkthrough", () => {
 
     await json(
       await app.request(
-        `/v1/orgs/${orgId}/notifications/schedules`,
+        `/v1/orgs/${orgId}/notifications/notify`,
         jsonRequest(admin.token, {
-          message: "Walkthrough digest",
-          deliver_at: "2026-01-01T09:00:00.000Z",
+          subject: "Walkthrough digest",
+          timing: { kind: "once", at: "2026-01-01T09:00:00.000Z" },
         }),
       ),
       201,
@@ -481,7 +481,7 @@ describe("end-to-end walkthrough", () => {
       "set_row_filter",
       "set_field_filter",
       "insert_record",
-      "create_notification_schedule",
+      "notify",
       "export_data",
     ]) {
       expect(sourceAudit.get(action) ?? 0).toBeGreaterThanOrEqual(1);

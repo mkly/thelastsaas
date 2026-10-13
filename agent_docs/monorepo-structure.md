@@ -49,7 +49,7 @@ inference without bundling server runtime code.
 
 Automation DTOs and validators live in shared `automation.ts`, `queue.ts`,
 `schedules.ts`, `triggers.ts`, `transactions.ts` and `secrets.ts`. Routes and MCP
-tools invoke domain services. CLI `queue-deliveries.ts` handles worker commands;
+tools invoke domain services. CLI `queue-jobs.ts` handles worker commands;
 `schedules.ts`, `triggers.ts`, `transactions.ts` and `secrets.ts` handle the other
 families. Registration is in client `src/commands.ts` and server `src/app.ts` /
 `src/mcp/registry.ts`. `scripts/rotate-secrets.ts` is local operator tooling.

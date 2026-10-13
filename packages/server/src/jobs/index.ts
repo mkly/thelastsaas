@@ -27,7 +27,7 @@ export function unitJobs(unit: UnitOfWork): JobBackend {
     );
   return unit.jobs;
 }
-export function subscriptionPolicy(row: {
+export function queuePolicy(row: {
   maxAttempts: number;
   leaseSeconds: number;
   retryDelaySeconds: number;
@@ -40,7 +40,7 @@ export function subscriptionPolicy(row: {
     retentionDays: row.retentionDays,
   };
 }
-export const subscriptionQueue = (id: string) => `subscription-${id}`;
+export const workQueue = (id: string) => `queue-${id}`;
 
 export function postgresJobSchema(url: string) {
   const schema = new URL(url).searchParams.get("schema");

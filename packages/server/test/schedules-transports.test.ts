@@ -68,13 +68,6 @@ describe("schedule REST and MCP transports", () => {
           schema: { title: "string", private: "string", owner: "string" },
         },
       });
-      await services.prisma.queueSubscription.create({
-        data: {
-          id: `${orgId}-workers`,
-          queueId: `${orgId}-jobs`,
-          name: "workers",
-        },
-      });
     }
     for (const userId of ["admin", "worker", "foreign"]) {
       await services.prisma.user.create({

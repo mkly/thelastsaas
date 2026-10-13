@@ -145,10 +145,8 @@ stable tool identifiers.
 | `notifications read`                    | `notifications_read`                                                           |
 | `notifications unread`                  | `notifications_unread`                                                         |
 | `notifications delete`                  | `notifications_delete`                                                         |
-| `notifications queue`                   | `notifications_queue`                                                          |
+| `notify`                                | `notify`                                                                       |
 | `notifications schedules list`          | `notification_schedules_list`                                                  |
-| `notifications schedules once`          | `notification_schedules_create_once`                                           |
-| `notifications schedules recurring`     | `notification_schedules_create_recurring`                                      |
 | `notifications schedules cancel`        | `notification_schedules_cancel`                                                |
 | `notifications preferences show`        | `notification_preferences_show`                                                |
 | `notifications preferences set-default` | `notification_preferences_set` without `kind`                                  |
@@ -161,22 +159,21 @@ stable tool identifiers.
 | `export`                                | `org_export`                                                                   |
 | `import`                                | `org_import`                                                                   |
 
-Notification queue and schedule creation tools accept an optional `audience`:
+`notify` accepts optional timing and an optional `audience`:
 `self` (default), `users` with IDs or emails, `all`, or `roles` with existing role
 names. Team sends use the same Casbin destination permissions as REST and CLI.
 See [notifications](notifications.md) for payloads and delivery behavior.
 
-The following commands deliberately do not have MCP tools:
+Local CLI commands and browser flows complement MCP:
 
 - `login` and `logout` manage the CLI's local session. MCP clients authenticate
   through the browser OAuth flow described above.
 - `whoami` includes CLI configuration and credential-store state. Use
   `server_info` for the server-confirmed user and organization identity.
 - `skills print` and `skills install` read an asset embedded in the CLI build
-  and write the user's local filesystem, so they are not server operations.
-- Accepting an invitation as a not-yet-member user cannot go through the
-  organization-specific `invitations_accept` tool because it requires an active organization and membership.
-  Use the CLI, browser flow, or REST endpoint for that initial acceptance.
+  and write the user's local filesystem.
+- Use the CLI, browser flow, or REST endpoint to accept an invitation before
+  joining an organization. `invitations_accept` operates within an active organization.
 
 ## Conditional row and field grants
 
@@ -238,12 +235,9 @@ saas permissions grant --subject 'user:<agent-id>' \
   --where '{"created_by":"$user.id"}' --fields '["title","status"]'
 ```
 
-Existing role row/field filter tools remain for compatibility and are resolved
-as paired grants. They retain their existing behavior for creation and updates;
-new configurations should use conditional grants. No database migration is
-needed: optional grant metadata uses the existing `casbin_rule.v3` column. All
-server instances must run this version before creating conditional grants;
-older versions do not interpret that metadata.
+Role row/field filter tools are resolved as paired grants. Conditional grants
+store their optional metadata in `casbin_rule.v3` and combine permission, row
+conditions, and field access in one operation.
 
 `invitations_create` accepts optional `permissions`, an array of grants with
 `resource`, `action`, and optional `where`/`fields`. For read-only access to a
@@ -258,21 +252,19 @@ whole-queue grants and native claim checks as REST. Organization-bound API keys 
 `x-api-key` and cannot switch organizations. Human OAuth clients use the browser
 flow above. Manage authority does not grant queue payload read or secret reveal.
 
-| CLI (`saas` prefix)                            | MCP tool                                                                                                            |
-| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| queues create/list/show/update/delete          | queues_create / queues_list / queues_show / queues_update / queues_delete                                           |
-| queues subscriptions create/list/update/delete | queues_subscriptions_create / queues_subscriptions_list / queues_subscriptions_update / queues_subscriptions_delete |
-| queues enqueue/claim/ack/nack/extend           | queues_enqueue / queues_claim / queues_ack / queues_nack / queues_extend                                            |
-| queues cancel/redrive                          | queues_cancel / queues_redrive                                                                                      |
-| schedules create/list/show/update/delete       | schedules_create / schedules_list / schedules_show / schedules_update / schedules_delete                            |
-| schedules pause/resume                         | schedules_update with enabled false/true                                                                            |
-| triggers create/list/show/update/delete        | triggers_create / triggers_list / triggers_show / triggers_update / triggers_delete                                 |
-| triggers pause/resume                          | triggers_update with enabled false/true                                                                             |
-| transactions execute                           | transactions_execute                                                                                                |
-| secrets create/list/show/replace/delete/reveal | secrets_create / secrets_list / secrets_show / secrets_replace / secrets_delete / secrets_reveal                    |
+| CLI (`saas` prefix)                            | MCP tool                                                                                         |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| queues create/list/show/update/delete          | queues_create / queues_list / queues_show / queues_update / queues_delete                        |
+| queues enqueue/claim/ack/nack/extend           | queues_enqueue / queues_claim / queues_ack / queues_nack / queues_extend                         |
+| queues cancel/redrive                          | queues_cancel / queues_redrive                                                                   |
+| schedules create/list/show/update/delete       | schedules_create / schedules_list / schedules_show / schedules_update / schedules_delete         |
+| schedules pause/resume                         | schedules_update with enabled false/true                                                         |
+| triggers create/list/show/update/delete        | triggers_create / triggers_list / triggers_show / triggers_update / triggers_delete              |
+| triggers pause/resume                          | triggers_update with enabled false/true                                                          |
+| transactions execute                           | transactions_execute                                                                             |
+| secrets create/list/show/replace/delete/reveal | secrets_create / secrets_list / secrets_show / secrets_replace / secrets_delete / secrets_reveal |
 
-Queue tools select `queue`, subscription tools add `subscription`, and settlement
-and attempts use `delivery`. Schedule/trigger tools select `id`; secrets use
+Queue tools select `queue`, and settlement uses `job_id`. Schedule/trigger tools select `id`; secrets use
 `name`. DTO fields are snake_case. Lists accept limit/cursor and return
 items/next_cursor. Creation/update take the shared strict DTO; unknown keys are
 rejected even where the MCP advertised schema is compact.
@@ -290,22 +282,21 @@ rejected even where the MCP advertised schema is compact.
 ```
 
 Send that to `queues_enqueue`. Then `queues_claim` takes
-`{"queue":"jobs","subscription":"indexing","limit":1}`. Process the returned
-payload before `queues_ack` with `{queue,delivery,token}`. Claim alone returns
-lease tokens; never copy them into logs or automatically ack. Nack accepts
-`delay_seconds` and optional safe `error`, extend takes `lease_seconds` from now.
+`{"queue":"jobs","limit":1}`. Process the returned
+payload before `queues_ack` with `{queue,job_id,token}`. Claim alone returns
+lease tokens; never copy them into logs or automatically ack. Nack accepts optional safe `error`; retry delay and lease duration are queue settings.
 At-least-once delivery requires idempotent external effects. Revoked grants or
 expired leases prevent settlement. Cancel/redrive need queue manage; redrive
-only accepts dead deliveries. These tools take selectors without `confirm`;
-queue/subscription deletion also takes only selectors. CLI deletion requires
+only accepts dead jobs. These tools take selectors without `confirm`;
+queue deletion also takes only selectors. CLI deletion requires
 `--confirm`.
 
 Schedule timing is `{kind:"once",at}` or `{kind:"recurring",recurrence}` with
 DTSTART;TZID; triggers use explicitly tagged before/after/literal/metadata
 mappings. See [worker ACLs and examples](queues.md) and
-[atomic producers and transactions](automation.md). Subscription broadcast,
-shared worker consumption, schema restrictions, retry and restore rules apply
-equally to MCP. There is no `queues_metrics` or `secrets_rotate` tool.
+[atomic producers and transactions](automation.md). Direct worker claims,
+shared consumption, schema restrictions, retry and restore rules apply
+equally to MCP.
 
 Secret create/replace accept `{name,value}`; reveal is an explicit empty-value
 request `{name}` requiring read on `/secrets/<name>/value`. Ordinary secret tools
@@ -314,10 +305,6 @@ transcripts. Encrypted exports require `org_export` with
 `include_encrypted_secrets: true`; key rotation is server-local operator tooling.
 See [secret backup and rotation](secrets-backup.md).
 
-`permissions_grant`/`permissions_revoke` also accept inline `where`/`fields` on a
-concrete `/queues/<name>` for read/create/update/write. Queue predicates use
-payload fields and current principal substitutions; collection metadata such as
-`created_by` is not queue payload metadata. Options are rejected on subscription
-gates, wildcards and manage/delete. Claims intersect read/update row conditions
-and return only readable fields. Grants remain additive, so broad grants can
-supersede restrictions; revoke the exact conditional grant including options.
+Queue consumers need whole-queue read/update grants. Claims include complete
+payloads, so use separate queues for different access boundaries. Collection
+row and field restrictions remain in effect for record operations.

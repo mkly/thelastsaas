@@ -97,9 +97,6 @@ async function fixture() {
       },
     ],
   });
-  await prisma.queueSubscription.create({
-    data: { id: "workers", queueId: "jobs", name: "workers" },
-  });
   const service = createScheduleService(prisma, provider);
   const grant = (
     userId: string,
@@ -128,11 +125,8 @@ const once: ScheduleCreate = {
 };
 
 describe(`schedule materialization (${provider})`, () => {
-  test("once publishes one immutable entry per subscription, completes and replays safely", async () => {
+  test("once publishes one job, completes and replays safely", async () => {
     const { prisma, create, materializer } = await fixture();
-    await prisma.queueSubscription.create({
-      data: { id: "second", queueId: "jobs", name: "second" },
-    });
     const row = await create();
     expect(await materializer.materialize("2029-12-31T23:59:59Z")).toEqual({
       enqueued: 0,
@@ -145,7 +139,7 @@ describe(`schedule materialization (${provider})`, () => {
       has_more: false,
     });
     const published = await prisma.queueScheduleOccurrence.findFirstOrThrow();
-    expect(await prisma.queueDelivery.count()).toBe(2);
+    expect(await prisma.queueEntry.count()).toBe(1);
     const entry = await prisma.queueEntry.findFirstOrThrow();
     expect(entry).toMatchObject({
       producerUserId: "creator",
@@ -238,7 +232,7 @@ describe(`schedule materialization (${provider})`, () => {
       expect(results.reduce((sum, r) => sum + r.enqueued, 0)).toBe(1);
       expect(await prisma.queueEntry.count()).toBe(1);
       expect(await prisma.queueScheduleOccurrence.count()).toBe(1);
-      expect(await prisma.queueDelivery.count()).toBe(1);
+      expect(await prisma.queueEntry.count()).toBe(1);
     } finally {
       await other.$disconnect();
     }
@@ -259,7 +253,7 @@ describe(`schedule materialization (${provider})`, () => {
       }),
     ).rejects.toThrow("simulated crash");
     expect(await prisma.queueEntry.count()).toBe(0);
-    expect(await prisma.queueDelivery.count()).toBe(0);
+    expect(await prisma.queueEntry.count()).toBe(0);
     expect(await prisma.queueScheduleOccurrence.count()).toBe(0);
     expect(await prisma.auditLog.count()).toBe(auditCount);
     expect(
@@ -270,8 +264,8 @@ describe(`schedule materialization (${provider})`, () => {
     ).toBe(1);
   });
 
-  test("invalid schema, disabled queues and absent subscribers pause", async () => {
-    for (const invalid of ["schema", "disabled", "subscriptions"] as const) {
+  test("invalid schema and disabled queues pause", async () => {
+    for (const invalid of ["schema", "disabled"] as const) {
       const { prisma, create, materializer } = await fixture();
       await create();
       if (invalid === "schema")
@@ -284,8 +278,6 @@ describe(`schedule materialization (${provider})`, () => {
           where: { id: "jobs" },
           data: { enabled: false },
         });
-      if (invalid === "subscriptions")
-        await prisma.queueSubscription.updateMany({ data: { enabled: false } });
       expect(
         (await materializer.materialize("2030-01-01T00:00:00Z")).paused,
       ).toBe(1);

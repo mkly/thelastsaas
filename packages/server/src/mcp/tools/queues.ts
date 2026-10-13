@@ -1,13 +1,10 @@
 import {
-  deliveryListSchema,
-  entryListSchema,
+  jobListSchema,
   nonemptyPatch,
   pageRequestSchema,
   queueCreateSchema,
   queueUpdateSchema,
   resourceNameSchema,
-  subscriptionCreateSchema,
-  subscriptionUpdateSchema,
   type AutomationContext,
 } from "@lastsaas/shared";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -19,14 +16,12 @@ import {
   parseQueueRequest,
 } from "../../queues/config";
 import { createQueueReadService } from "../../queues/read";
-import { createQueueSubscriptionService } from "../../queues/subscriptions";
 import { requireOrganization, type McpToolContext } from "../context";
 
 function service(context: McpToolContext) {
   const { prisma } = context.services;
   return {
     ...createQueueConfigService(prisma),
-    ...createQueueSubscriptionService(prisma),
     ...createQueueReadService(prisma),
   };
 }
@@ -48,28 +43,13 @@ export function registerQueueTools(
   context: McpToolContext,
 ): void {
   const queueSelector = z.strictObject({ queue: resourceNameSchema });
-  const queuePage = pageRequestSchema.extend(queueSelector.shape);
-  const subscriptionSelector = queueSelector.extend({
-    subscription: resourceNameSchema,
-  });
-  const subscriptionCreate = subscriptionCreateSchema.extend(
-    queueSelector.shape,
-  );
   const queueUpdate = queueSelector
     .extend(queueUpdateSchema.shape)
     .refine(
       ({ queue: _queue, ...patch }) => nonemptyPatch(patch),
       "At least one change is required",
     );
-  const subscriptionUpdate = subscriptionSelector
-    .extend(subscriptionUpdateSchema.shape)
-    .refine(
-      ({ queue: _queue, subscription: _subscription, ...patch }) =>
-        nonemptyPatch(patch),
-      "At least one change is required",
-    );
-  const entries = entryListSchema.extend(queueSelector.shape);
-  const deliveries = deliveryListSchema.extend(queueSelector.shape);
+  const jobs = jobListSchema.extend(queueSelector.shape);
 
   async function execute<T>(
     schema: z.ZodType<T>,
@@ -161,7 +141,7 @@ export function registerQueueTools(
     "queues_delete",
     {
       description:
-        "Delete a queue with delete permission, only when it has no nonterminal deliveries.",
+        "Delete a queue with delete permission, only when it has no unfinished jobs.",
       inputSchema: queueSelector.loose(),
       annotations: { destructiveHint: true },
     },
@@ -172,114 +152,18 @@ export function registerQueueTools(
       }),
   );
   server.registerTool(
-    "queues_subscriptions_create",
+    "queues_jobs",
     {
       description:
-        "Create a queue subscription with manage permission. Receives future entries only.",
-      inputSchema: subscriptionCreate.loose(),
-    },
-    (input) =>
-      execute(
-        subscriptionCreate,
-        input,
-        async (queues, principal, { queue, ...parsed }) => ({
-          subscription: await queues.createSubscription(
-            principal,
-            queue,
-            parsed,
-          ),
-        }),
-      ),
-  );
-  server.registerTool(
-    "queues_subscriptions_list",
-    {
-      description:
-        "List queue subscriptions with manage permission. Does not include payloads.",
-      inputSchema: queuePage.loose(),
-      annotations: { readOnlyHint: true },
-    },
-    (input) =>
-      execute(
-        queuePage,
-        input,
-        async (queues, principal, { queue, ...page }) => ({
-          ...(await queues.listSubscriptions(principal, queue, page)),
-        }),
-      ),
-  );
-  server.registerTool(
-    "queues_subscriptions_update",
-    {
-      description: "Update subscription settings with queue manage permission.",
-      inputSchema: subscriptionUpdate.loose(),
-    },
-    (input) =>
-      execute(
-        subscriptionUpdate,
-        input,
-        async (queues, principal, { queue, subscription, ...patch }) => ({
-          subscription: await queues.updateSubscription(
-            principal,
-            queue,
-            subscription,
-            patch,
-          ),
-        }),
-      ),
-  );
-  server.registerTool(
-    "queues_subscriptions_delete",
-    {
-      description:
-        "Delete a subscription with queue manage permission, only when it has no nonterminal deliveries.",
-      inputSchema: subscriptionSelector.loose(),
-      annotations: { destructiveHint: true },
-    },
-    (input) =>
-      execute(
-        subscriptionSelector,
-        input,
-        async (queues, principal, { queue, subscription }) => {
-          await queues.deleteSubscription(principal, queue, subscription);
-          return {};
-        },
-      ),
-  );
-  server.registerTool(
-    "queues_entries",
-    {
-      description:
-        "Inspect entries with current queue read grants, row conditions and field projection. Where uses the shared recursive query DSL.",
-      inputSchema: entries
+        "Inspect jobs, their payloads and processing state with queue read permission. Supports payload Where filters and state filters; never returns lease tokens.",
+      inputSchema: jobs
         .loose()
         .extend({ where: z.record(z.string(), z.unknown()).optional() }),
       annotations: { readOnlyHint: true },
     },
     (input) =>
-      execute(
-        entries,
-        input,
-        async (queues, principal, { queue, ...page }) => ({
-          ...(await queues.listEntries(principal, queue, page)),
-        }),
-      ),
-  );
-  server.registerTool(
-    "queues_deliveries",
-    {
-      description:
-        "Inspect delivery metadata visible under queue read permission. Never returns payloads or lease tokens.",
-      inputSchema: deliveries.loose(),
-      annotations: { readOnlyHint: true },
-    },
-    (input) =>
-      execute(
-        deliveries,
-        input,
-        async (queues, principal, { queue, ...page }) => ({
-          ...(await queues.listDeliveries(principal, queue, page)),
-        }),
-      ),
+      execute(jobs, input, async (queues, principal, { queue, ...page }) => ({
+        ...(await queues.listJobs(principal, queue, page)),
+      })),
   );
 }

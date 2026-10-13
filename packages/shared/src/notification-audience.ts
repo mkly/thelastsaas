@@ -30,11 +30,9 @@ export const notificationAudienceSchema = z.discriminatedUnion("kind", [
 
 export type NotificationAudience = z.infer<typeof notificationAudienceSchema>;
 
-// Rows from before audiences existed are self notifications.
 export function storedNotificationAudience(
   value: unknown,
 ): NotificationAudience {
-  if (value == null) return { kind: "self" };
   const parsed = notificationAudienceSchema.safeParse(value);
   if (!parsed.success)
     throw new InvalidQueryError("Stored notification audience is malformed");

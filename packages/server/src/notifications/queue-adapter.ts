@@ -87,14 +87,16 @@ export function createNotificationQueueAdapter(
       }
       let inApp = row.inApp;
       let channels = delivery.channels ?? dispatcher.channelNames();
-      if (row.createdByUserId && row.createdByUserId !== row.userId) {
+      if (row.createdByUserId) {
         try {
           // Current membership, sender authority and preferences stay domain checks.
           const { recipients } = await resolveNotificationAudience(
             prisma,
             orgId,
             row.createdByUserId,
-            { kind: "users", users: [row.userId] },
+            row.createdByUserId === row.userId
+              ? { kind: "self" }
+              : { kind: "users", users: [row.userId] },
             { atDelivery: true },
           );
           const recipient = recipients[0];

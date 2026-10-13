@@ -12,7 +12,7 @@ import { notificationScheduleRouter } from "./notification-schedules";
 import { notificationRouter } from "./notifications";
 import { organizationRouter } from "./organizations";
 import { permissionRouter } from "./permissions";
-import { queueDeliveriesRouter } from "./queue-deliveries";
+import { queueJobsRouter } from "./queue-jobs";
 import { queuesRouter } from "./queues";
 import { recordsRouter } from "./records";
 import { serviceAccountRouter } from "./service-accounts";
@@ -29,7 +29,7 @@ export const apiRouter = new Hono<AppEnvironment>()
   .route("/v1/orgs/:orgId/collections", collectionsRouter)
   .route("/v1/orgs/:orgId/collections/:name/records", recordsRouter)
   .route("/v1/orgs/:orgId/queues", queuesRouter)
-  .route("/v1/orgs/:orgId/queues", queueDeliveriesRouter)
+  .route("/v1/orgs/:orgId/queues", queueJobsRouter)
   .route("/v1/orgs/:orgId/transactions", transactionsRouter)
   .route("/v1/orgs/:orgId/triggers", triggersRouter)
   .route("/v1/orgs/:orgId/schedules", schedulesRouter)

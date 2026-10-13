@@ -343,21 +343,13 @@ describe("MCP end-to-end walkthrough", () => {
       files: [{ path: "walkthrough/mcp.txt" }],
     });
 
-    const queued = await callTool(
-      app,
-      endpoint,
-      token,
-      9,
-      "notifications_queue",
-      {
-        subject: "MCP walkthrough",
-        message: "The MCP workflow completed",
-        in_app: true,
-      },
-    );
+    const queued = await callTool(app, endpoint, token, 9, "notify", {
+      subject: "MCP walkthrough",
+      message: "The MCP workflow completed",
+    });
     expect(queued).toMatchObject({
       status: "ok",
-      message: "Notification queued",
+      kind: "immediate",
     });
 
     const stats = await callTool(app, endpoint, token, 10, "stats", {});
@@ -379,7 +371,7 @@ describe("MCP end-to-end walkthrough", () => {
     expect(actions).toContain("insert_record");
     expect(actions).toContain("add_policy");
     expect(actions).toContain("upload_file");
-    expect(actions).toContain("queue_notification");
+    expect(actions).toContain("notify");
   });
 });
 

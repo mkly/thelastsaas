@@ -109,7 +109,7 @@ export function resolveNotificationChannels(
   return preferences.by_kind[kind as NotificationKind] ?? preferences.default;
 }
 
-// A recipient's opt-outs narrow a delivery someone else chose for them.
+// Recipient preferences apply to every delivery, including self notifications.
 // `muted` means nothing the recipient wants is left to deliver.
 export function applyRecipientPreferences(
   value: unknown,
@@ -118,11 +118,7 @@ export function applyRecipientPreferences(
 ): { inApp: boolean; channels?: string[]; muted: boolean } {
   const preferences = resolveNotificationChannels(value, kind);
   const inApp = delivery.inApp && preferences.in_app;
-  const channels = preferences.email
-    ? delivery.channels
-    : (delivery.channels ?? ["console"]).filter(
-        (channel) => channel !== "email",
-      );
+  const channels = preferences.email ? delivery.channels : [];
   return {
     inApp,
     ...(channels ? { channels } : {}),

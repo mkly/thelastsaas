@@ -60,16 +60,16 @@ fields or policies return 403. CLI handlers convert failed responses to
 ## Queues and transactional producers
 
 Queue payloads reject unknown fields and reuse collection field types, including
-omitted/null values; there is no `required` schema modifier. Schema changes
-require zero retained entries. Inline queue grants use concrete payload resources
-and read/create/update/write, never subscription/config gates. Claim and settlement require whole-queue read/update and the subscription update
-gate. Authorized workers receive full payloads. Collection filters still apply.
+omitted/null values. Schema changes
+require zero retained entries. Claim and settlement require whole-queue read/update permissions and an owned
+lease token. Authorized workers receive full payloads. Collection filters still apply.
 
 Keep outer transaction ownership in services. Pass `{db,provider}` through record
 mutation, enqueue, trigger publication and occurrence materialization; do not
 open nested transactions or infer a provider from the transaction client.
 Queue enqueue idempotency expires with retained entries; transaction idempotency
-is scoped to organization+principal for seven days. Native claim tokens are returned only by claim and excluded from logs/audit/export.
+is scoped to organization+principal for seven days. Public claim tokens are returned only by claim and excluded from logs/audit/export.
+Their hashes and native backend tokens remain private.
 Processing is at least once: external effects require consumer idempotency.
 
 Schedules and triggers recheck their creator at execution. Authority/schema

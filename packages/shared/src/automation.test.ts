@@ -6,7 +6,7 @@ import {
   AutomationUnavailableError,
   ackRequestSchema,
   claimRequestSchema,
-  deliveryActionSchema,
+  jobActionSchema,
   enqueueRequestSchema,
   extendRequestSchema,
   jsonByteLength,
@@ -22,8 +22,6 @@ import {
   secretRevealSchema,
   secretRotationSchema,
   secretKeyringConfigSchema,
-  subscriptionCreateSchema,
-  subscriptionUpdateSchema,
   transactionOperationSchema,
   transactionRequestSchema,
   triggerCreateSchema,
@@ -47,8 +45,8 @@ const recurrence =
 describe("automation request contracts", () => {
   test("exports interfaces' validators through the shared entry point", () => {
     expect(queueCreateSchema.parse(queue).enabled).toBe(true);
-    expect(subscriptionCreateSchema.parse({ name: "workers" })).toEqual({
-      name: "workers",
+    expect(queueCreateSchema.parse({ ...queue })).toEqual({
+      ...queue,
       enabled: true,
       max_attempts: 3,
       retry_delay_seconds: 30,
@@ -81,7 +79,7 @@ describe("automation request contracts", () => {
   test("rejects unknown control fields, including proposed system bypasses", () => {
     const cases = [
       [queueCreateSchema, { ...queue, system: true }],
-      [subscriptionCreateSchema, { name: "workers", where: {} }],
+      [queueCreateSchema, { ...queue, where: {} }],
       [enqueueRequestSchema, { entries: [{ payload: {}, bypass: true }] }],
       [claimRequestSchema, { owner: "other" }],
       [ackRequestSchema, { token: "secret", user_id: "other" }],
@@ -90,7 +88,7 @@ describe("automation request contracts", () => {
         extendRequestSchema,
         { token: "secret", lease_seconds: 1, expired: false },
       ],
-      [deliveryActionSchema, { token: "secret" }],
+      [jobActionSchema, { token: "secret" }],
       [
         scheduleCreateSchema,
         {
@@ -223,16 +221,15 @@ describe("automation request contracts", () => {
     }
     for (const lease_seconds of [0, 3601, 1.5]) {
       expect(
-        subscriptionCreateSchema.safeParse({ name: "workers", lease_seconds })
-          .success,
+        queueCreateSchema.safeParse({ ...queue, lease_seconds }).success,
       ).toBe(false);
       expect(
         extendRequestSchema.safeParse({ token: "t", lease_seconds }).success,
       ).toBe(false);
     }
     expect(
-      subscriptionCreateSchema.safeParse({
-        name: "workers",
+      queueCreateSchema.safeParse({
+        ...queue,
         max_attempts: 100,
         retention_days: 365,
         lease_seconds: 3600,
@@ -244,10 +241,9 @@ describe("automation request contracts", () => {
       { retention_days: 0 },
       { retention_days: 366 },
     ])
-      expect(
-        subscriptionCreateSchema.safeParse({ name: "workers", ...input })
-          .success,
-      ).toBe(false);
+      expect(queueCreateSchema.safeParse({ ...queue, ...input }).success).toBe(
+        false,
+      );
     expect(
       nackRequestSchema.safeParse({ token: "t", error: "delivery failed" })
         .success,
@@ -335,7 +331,6 @@ describe("automation request contracts", () => {
   test("rejects empty patches and bounded rotation violations", () => {
     for (const schema of [
       queueUpdateSchema,
-      subscriptionUpdateSchema,
       scheduleUpdateSchema,
       triggerUpdateSchema,
     ])

@@ -26,14 +26,6 @@ export interface Queue {
   schema: Schema;
   schema_version: number;
   enabled: boolean;
-  created_at: string;
-  updated_at: string;
-}
-export interface QueueSubscription {
-  id: string;
-  queue_id: string;
-  name: string;
-  enabled: boolean;
   max_attempts: number;
   retry_delay_seconds: number;
   lease_seconds: number;
@@ -51,20 +43,17 @@ export interface QueueEntry {
   idempotency_key: string | null;
   created_at: string;
 }
-export const deliveryStateSchema = z.enum([
+export const jobStateSchema = z.enum([
   "ready",
   "leased",
   "succeeded",
   "dead",
   "cancelled",
 ]);
-export type DeliveryState = z.infer<typeof deliveryStateSchema>;
+export type JobState = z.infer<typeof jobStateSchema>;
 /** Public metadata deliberately excludes payload, plaintext token and token hash. */
-export interface QueueDelivery {
-  id: string;
-  entry_id: string;
-  subscription_id: string;
-  state: DeliveryState;
+export interface QueueJob extends QueueEntryReceipt {
+  state: JobState;
   attempts: number;
   available_at: string;
   lease_expires_at: string | null;
@@ -72,10 +61,12 @@ export interface QueueDelivery {
   completed_at: string | null;
 }
 
+export interface QueueJobDetails extends QueueJob {
+  payload: JsonObject;
+}
+
 export interface QueueClaim {
-  delivery_id: string;
-  entry_id: string;
-  subscription_id: string;
+  job_id: string;
   payload: JsonObject;
   schema_version: number;
   attempts: number;
@@ -91,38 +82,32 @@ export type QueueEntryReceipt = Omit<
   "payload" | "producer_user_id" | "idempotency_key"
 >;
 export interface EnqueueResult {
-  entries: QueueEntryReceipt[];
-  delivery_count: number;
+  jobs: QueueEntryReceipt[];
 }
-export const queueCreateSchema = z.strictObject({
-  name: resourceNameSchema,
-  schema: dynamicSchemaSchema,
-  enabled: z.boolean().default(true),
-});
-export const queueUpdateSchema = z
-  .strictObject({
-    schema: dynamicSchemaSchema.optional(),
-    enabled: z.boolean().optional(),
-  })
-  .refine(nonemptyPatch, "At least one change is required");
-const subscriptionSettings = {
-  enabled: z.boolean(),
+export const queuePolicyShape = {
   max_attempts: z.number().int().min(1).max(AUTOMATION_LIMITS.maxAttempts),
   retry_delay_seconds: z.number().int().min(0).max(3600),
   lease_seconds: z.number().int().min(10).max(AUTOMATION_LIMITS.leaseSeconds),
   retention_days: z.number().int().min(1).max(AUTOMATION_LIMITS.retentionDays),
 };
-export const subscriptionCreateSchema = z.strictObject({
+export const queueCreateSchema = z.strictObject({
   name: resourceNameSchema,
-  enabled: subscriptionSettings.enabled.default(true),
-  max_attempts: subscriptionSettings.max_attempts.default(3),
-  retry_delay_seconds: subscriptionSettings.retry_delay_seconds.default(30),
-  lease_seconds: subscriptionSettings.lease_seconds.default(60),
-  retention_days: subscriptionSettings.retention_days.default(7),
+  schema: dynamicSchemaSchema,
+  enabled: z.boolean().default(true),
+  max_attempts: queuePolicyShape.max_attempts.default(3),
+  retry_delay_seconds: queuePolicyShape.retry_delay_seconds.default(30),
+  lease_seconds: queuePolicyShape.lease_seconds.default(60),
+  retention_days: queuePolicyShape.retention_days.default(7),
 });
-export const subscriptionUpdateSchema = z
-  .strictObject(subscriptionSettings)
-  .partial()
+export const queueUpdateSchema = z
+  .strictObject({
+    schema: dynamicSchemaSchema.optional(),
+    enabled: z.boolean().optional(),
+    max_attempts: queuePolicyShape.max_attempts.optional(),
+    retry_delay_seconds: queuePolicyShape.retry_delay_seconds.optional(),
+    lease_seconds: queuePolicyShape.lease_seconds.optional(),
+    retention_days: queuePolicyShape.retention_days.optional(),
+  })
   .refine(nonemptyPatch, "At least one change is required");
 export const enqueueEntrySchema = z.strictObject({
   payload: payloadSchema,
@@ -143,27 +128,21 @@ export const nackRequestSchema = ackRequestSchema.extend({
   error: z.string().max(1024).optional(),
 });
 export const extendRequestSchema = ackRequestSchema;
-export const deliveryActionSchema = z.strictObject({});
-export const entryListSchema = pageRequestSchema.extend({
+export const jobActionSchema = z.strictObject({});
+export const jobListSchema = pageRequestSchema.extend({
   where: whereSchema.optional(),
+  state: jobStateSchema.optional(),
 });
-export const deliveryListSchema = pageRequestSchema.extend({
-  subscription: resourceNameSchema.optional(),
-  state: deliveryStateSchema.optional(),
-});
-export const deliveryIdSchema = automationIdSchema;
-export type QueueCreate = z.infer<typeof queueCreateSchema>;
+export const jobIdSchema = automationIdSchema;
+export type QueueCreate = z.input<typeof queueCreateSchema>;
 export type QueueUpdate = z.infer<typeof queueUpdateSchema>;
-export type SubscriptionCreate = z.infer<typeof subscriptionCreateSchema>;
-export type SubscriptionUpdate = z.infer<typeof subscriptionUpdateSchema>;
 export type EnqueueEntry = z.infer<typeof enqueueEntrySchema>;
 export type EnqueueRequest = z.infer<typeof enqueueRequestSchema>;
 export type ClaimRequest = z.infer<typeof claimRequestSchema>;
 export type AckRequest = z.infer<typeof ackRequestSchema>;
 export type NackRequest = z.infer<typeof nackRequestSchema>;
 export type ExtendRequest = z.infer<typeof extendRequestSchema>;
-export type EntryListRequest = z.infer<typeof entryListSchema>;
-export type DeliveryListRequest = z.infer<typeof deliveryListSchema>;
+export type JobListRequest = z.infer<typeof jobListSchema>;
 
 /** Queue validation rejects underscore/unknown fields, unlike legacy record metadata. */
 export function queuePayloadSchema(schema: Schema) {
@@ -195,27 +174,6 @@ export interface QueueService<UnitOfWork> {
     input: QueueUpdate,
   ): Promise<Queue>;
   delete(context: AutomationContext, queue: string): Promise<void>;
-  createSubscription(
-    context: AutomationContext,
-    queue: string,
-    input: SubscriptionCreate,
-  ): Promise<QueueSubscription>;
-  listSubscriptions(
-    context: AutomationContext,
-    queue: string,
-    input: PageRequest,
-  ): Promise<AutomationPage<QueueSubscription>>;
-  updateSubscription(
-    context: AutomationContext,
-    queue: string,
-    subscription: string,
-    input: SubscriptionUpdate,
-  ): Promise<QueueSubscription>;
-  deleteSubscription(
-    context: AutomationContext,
-    queue: string,
-    subscription: string,
-  ): Promise<void>;
   enqueue(
     context: AutomationContext,
     queue: string,
@@ -227,50 +185,44 @@ export interface QueueService<UnitOfWork> {
     queue: string,
     input: EnqueueRequest,
   ): Promise<EnqueueResult>;
-  listEntries(
+  listJobs(
     context: AutomationContext,
     queue: string,
-    input: EntryListRequest,
-  ): Promise<AutomationPage<QueueEntry>>;
-  listDeliveries(
-    context: AutomationContext,
-    queue: string,
-    input: DeliveryListRequest,
-  ): Promise<AutomationPage<QueueDelivery>>;
+    input: JobListRequest,
+  ): Promise<AutomationPage<QueueJobDetails>>;
   claim(
     context: AutomationContext,
     queue: string,
-    subscription: string,
     input: ClaimRequest,
   ): Promise<ClaimResult>;
   ack(
     context: AutomationContext,
     queue: string,
-    delivery: string,
+    job: string,
     input: AckRequest,
-  ): Promise<QueueDelivery>;
+  ): Promise<QueueJob>;
   nack(
     context: AutomationContext,
     queue: string,
-    delivery: string,
+    job: string,
     input: NackRequest,
-  ): Promise<QueueDelivery>;
+  ): Promise<QueueJob>;
   extend(
     context: AutomationContext,
     queue: string,
-    delivery: string,
+    job: string,
     input: ExtendRequest,
-  ): Promise<QueueDelivery>;
+  ): Promise<QueueJob>;
   cancel(
     context: AutomationContext,
     queue: string,
-    delivery: string,
-  ): Promise<QueueDelivery>;
+    job: string,
+  ): Promise<QueueJob>;
   redrive(
     context: AutomationContext,
     queue: string,
-    delivery: string,
-  ): Promise<QueueDelivery>;
+    job: string,
+  ): Promise<QueueJob>;
 }
 
 /** Existing Casbin semantics, with inline constraints only on concrete payload gates. */
@@ -284,22 +236,11 @@ export type QueueResponse = AutomationResponse<{ queue: Queue }>;
 
 export type QueueListResponse = AutomationResponse<AutomationPage<Queue>>;
 
-export type SubscriptionResponse = AutomationResponse<{
-  subscription: QueueSubscription;
-}>;
-
-export type SubscriptionListResponse = AutomationResponse<
-  AutomationPage<QueueSubscription>
->;
-
 export type EnqueueResponse = AutomationResponse<EnqueueResult>;
 
-export type EntryListResponse = AutomationResponse<AutomationPage<QueueEntry>>;
-
-export type DeliveryResponse = AutomationResponse<{ delivery: QueueDelivery }>;
-
-export type DeliveryListResponse = AutomationResponse<
-  AutomationPage<QueueDelivery>
+export type JobResponse = AutomationResponse<{ job: QueueJob }>;
+export type JobListResponse = AutomationResponse<
+  AutomationPage<QueueJobDetails>
 >;
 
 export type ClaimResponse = AutomationResponse<ClaimResult>;

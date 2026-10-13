@@ -130,7 +130,7 @@ export function createScheduleMaterializer(
         id: genId(),
         scheduleId,
         occurrenceAt,
-        entryId: result.entries[0]!.id,
+        entryId: result.jobs[0]!.id,
       },
     });
     await advance();

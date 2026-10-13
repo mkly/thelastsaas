@@ -75,30 +75,21 @@ PATCH  /v1/orgs/:orgId/secrets/:name               /secrets/:name:manage
 DELETE /v1/orgs/:orgId/secrets/:name               /secrets/:name:delete
 POST   /v1/orgs/:orgId/secrets/:name/reveal        /secrets/:name/value:read
 
-# Queues: configuration, subscriptions, and inspection. Payload inspection
-# (entries, deliveries, attempts) uses current `/queues/:name:read` grants with
-# whole-queue grants; config grants alone do not reveal payloads.
-# Queue responses carry `Cache-Control: no-store`.
+# Queues: configuration and jobs. Payload access requires whole-queue read.
+# Responses carry Cache-Control: no-store.
 POST   /v1/orgs/:orgId/queues                     /queues:write
 GET    /v1/orgs/:orgId/queues?limit=&cursor=       filters by /queues/:name:read
 GET    /v1/orgs/:orgId/queues/:name                /queues/:name:read
 PATCH  /v1/orgs/:orgId/queues/:name                /queues/:name:manage
 DELETE /v1/orgs/:orgId/queues/:name                /queues/:name:delete
-POST   /v1/orgs/:orgId/queues/:name/subscriptions  /queues/:name:manage
-GET    /v1/orgs/:orgId/queues/:name/subscriptions  /queues/:name:manage
-PATCH  /v1/orgs/:orgId/queues/:name/subscriptions/:subscription   manage
-DELETE /v1/orgs/:orgId/queues/:name/subscriptions/:subscription   manage
-GET    /v1/orgs/:orgId/queues/:name/entries?limit=&cursor=&where=<json>       read
-GET    /v1/orgs/:orgId/queues/:name/deliveries?limit=&cursor=&subscription=&state=  read
-
-# Queue production and lease settlement (current membership/grants required)
-POST   /v1/orgs/:orgId/queues/:name/entries         create on queue
-POST   /v1/orgs/:orgId/queues/:name/subscriptions/:subscription/claim  read+update on queue AND update on subscription
-POST   /v1/orgs/:orgId/queues/:name/deliveries/:id/ack     same consumer gates + owned unexpired token
-POST   /v1/orgs/:orgId/queues/:name/deliveries/:id/nack    same
-POST   /v1/orgs/:orgId/queues/:name/deliveries/:id/extend  same
-POST   /v1/orgs/:orgId/queues/:name/deliveries/:id/cancel  queue:manage
-POST   /v1/orgs/:orgId/queues/:name/deliveries/:id/redrive queue:manage, dead only
+GET    /v1/orgs/:orgId/queues/:name/jobs?limit=&cursor=&where=&state= read
+POST   /v1/orgs/:orgId/queues/:name/jobs           create on queue
+POST   /v1/orgs/:orgId/queues/:name/claim          read+update on queue
+POST   /v1/orgs/:orgId/queues/:name/jobs/:id/ack    read+update and owned unexpired token
+POST   /v1/orgs/:orgId/queues/:name/jobs/:id/nack   same
+POST   /v1/orgs/:orgId/queues/:name/jobs/:id/extend same
+POST   /v1/orgs/:orgId/queues/:name/jobs/:id/cancel queue:manage
+POST   /v1/orgs/:orgId/queues/:name/jobs/:id/redrive queue:manage, dead only
 
 # Schedules and triggers (creator authority rechecked on edit and execution)
 POST   /v1/orgs/:orgId/schedules       /schedules:write + destination create
@@ -150,9 +141,8 @@ GET    /tokens/claim/:code
 GET    /v1/orgs/:orgId/notifications?unread=true
 GET    /v1/orgs/:orgId/notifications/preferences
 PATCH  /v1/orgs/:orgId/notifications/preferences
-POST   /v1/orgs/:orgId/notifications/queue
+POST   /v1/orgs/:orgId/notifications/notify
 GET    /v1/orgs/:orgId/notifications/schedules
-POST   /v1/orgs/:orgId/notifications/schedules
 DELETE /v1/orgs/:orgId/notifications/schedules/:id
 PATCH  /v1/orgs/:orgId/notifications/:id
 DELETE /v1/orgs/:orgId/notifications/:id
@@ -169,7 +159,8 @@ Record query bodies accept `where`, `order_by`, `limit`, and `offset`.
 contain a bounded pair of ISO timestamps. Aggregate bodies accept `where`,
 `group_by`, `metrics`, `having`, `order_by`, `limit`, and `offset`.
 
-Notification queue and schedule bodies accept optional `audience`:
+`notify` accepts subject, optional message/type/data/dedupe_key, optional once or
+recurring `timing`, and optional `audience`:
 `{"kind":"self"}` (default), `{"kind":"users","users":["id-or-email"]}`,
 `{"kind":"all"}`, or `{"kind":"roles","roles":["existing-role"]}`.
 Team destinations require Casbin `write` on each recipient's user path or one

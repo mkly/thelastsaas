@@ -2,8 +2,8 @@ import {
   AUTOMATION_LIMITS,
   ackRequestSchema,
   claimRequestSchema,
-  deliveryActionSchema,
-  deliveryIdSchema,
+  jobActionSchema,
+  jobIdSchema,
   enqueueEntrySchema,
   enqueueRequestSchema,
   extendRequestSchema,
@@ -42,21 +42,18 @@ function result(
 }
 
 // Match the REST envelopes; never expose parser diagnostics or database inputs.
-export function registerQueueDeliveryTools(
+export function registerQueueJobTools(
   server: McpServer,
   context: McpToolContext,
 ): void {
   const queueSelector = z.strictObject({ queue: resourceNameSchema });
   const enqueue = enqueueRequestSchema.extend(queueSelector.shape);
-  const claim = claimRequestSchema.extend({
-    ...queueSelector.shape,
-    subscription: resourceNameSchema,
-  });
-  const deliverySelector = queueSelector.extend({ delivery: deliveryIdSchema });
-  const ack = ackRequestSchema.extend(deliverySelector.shape);
-  const nack = nackRequestSchema.extend(deliverySelector.shape);
-  const extend = extendRequestSchema.extend(deliverySelector.shape);
-  const action = deliveryActionSchema.extend(deliverySelector.shape);
+  const claim = claimRequestSchema.extend(queueSelector.shape);
+  const jobSelector = queueSelector.extend({ job_id: jobIdSchema });
+  const ack = ackRequestSchema.extend(jobSelector.shape);
+  const nack = nackRequestSchema.extend(jobSelector.shape);
+  const extend = extendRequestSchema.extend(jobSelector.shape);
+  const action = jobActionSchema.extend(jobSelector.shape);
 
   async function execute<T>(
     schema: z.ZodType<T>,
@@ -119,15 +116,15 @@ export function registerQueueDeliveryTools(
     "queues_claim",
     {
       description:
-        "Lease available work in a subscription with current queue read/update and subscription update permission. Only this result returns lease_token and complete payload. Processing is at least once: explicitly ack after work succeeds, or nack for retry; claims never auto-ack.",
+        "Lease available work with current queue read/update permission. Only this result returns lease_token. Processing is at least once: explicitly ack after work succeeds, or nack for retry; claims never auto-ack.",
       inputSchema: claim.loose(),
     },
     (input) =>
       execute(
         claim,
         input,
-        async (queues, principal, { queue, subscription, ...request }) => ({
-          ...(await queues.claim(principal, queue, subscription, request)),
+        async (queues, principal, { queue, ...request }) => ({
+          ...(await queues.claim(principal, queue, request)),
         }),
       ),
   );
@@ -142,8 +139,8 @@ export function registerQueueDeliveryTools(
       execute(
         ack,
         input,
-        async (queues, principal, { queue, delivery, ...request }) => ({
-          delivery: await queues.ack(principal, queue, delivery, request),
+        async (queues, principal, { queue, job_id, ...request }) => ({
+          job: await queues.ack(principal, queue, job_id, request),
         }),
       ),
   );
@@ -151,15 +148,15 @@ export function registerQueueDeliveryTools(
     "queues_nack",
     {
       description:
-        "Reject leased work using the current token and consumer grants. Retries with the subscription retry backoff, becoming dead at max attempts. Optional error text must omit sensitive payloads.",
+        "Reject leased work using the current token and consumer grants. Retries with the queue retry backoff, becoming dead at max attempts. Optional error text must omit sensitive payloads.",
       inputSchema: nack.loose(),
     },
     (input) =>
       execute(
         nack,
         input,
-        async (queues, principal, { queue, delivery, ...request }) => ({
-          delivery: await queues.nack(principal, queue, delivery, request),
+        async (queues, principal, { queue, job_id, ...request }) => ({
+          job: await queues.nack(principal, queue, job_id, request),
         }),
       ),
   );
@@ -167,15 +164,15 @@ export function registerQueueDeliveryTools(
     "queues_extend",
     {
       description:
-        "Extend a current claim with current consumer grants by the subscription lease duration. Returns metadata without a token; the original token remains required for explicit settlement.",
+        "Extend a current claim with current consumer grants by the queue lease duration. Returns metadata without a token; the original token remains required for explicit settlement.",
       inputSchema: extend.loose(),
     },
     (input) =>
       execute(
         extend,
         input,
-        async (queues, principal, { queue, delivery, ...request }) => ({
-          delivery: await queues.extend(principal, queue, delivery, request),
+        async (queues, principal, { queue, job_id, ...request }) => ({
+          job: await queues.extend(principal, queue, job_id, request),
         }),
       ),
   );
@@ -183,33 +180,25 @@ export function registerQueueDeliveryTools(
     "queues_cancel",
     {
       description:
-        "Cancel unfinished delivery work with queue manage permission. Invalidates any lease without revealing its token or payload.",
+        "Cancel unfinished job with queue manage permission. Invalidates any lease without revealing its token or payload.",
       inputSchema: action.loose(),
       annotations: { destructiveHint: true },
     },
     (input) =>
-      execute(
-        action,
-        input,
-        async (queues, principal, { queue, delivery }) => ({
-          delivery: await queues.cancel(principal, queue, delivery),
-        }),
-      ),
+      execute(action, input, async (queues, principal, { queue, job_id }) => ({
+        job: await queues.cancel(principal, queue, job_id),
+      })),
   );
   server.registerTool(
     "queues_redrive",
     {
       description:
-        "Redrive a dead delivery with queue manage permission. Uses the native retry policy and preserves delivery identity. Returns metadata without payloads or tokens.",
+        "Redrive a dead job with queue manage permission. Uses the native retry policy and preserves job identity. Returns metadata without payloads or tokens.",
       inputSchema: action.loose(),
     },
     (input) =>
-      execute(
-        action,
-        input,
-        async (queues, principal, { queue, delivery }) => ({
-          delivery: await queues.redrive(principal, queue, delivery),
-        }),
-      ),
+      execute(action, input, async (queues, principal, { queue, job_id }) => ({
+        job: await queues.redrive(principal, queue, job_id),
+      })),
   );
 }

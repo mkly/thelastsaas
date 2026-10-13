@@ -7,7 +7,7 @@ code or reads secrets.
 
 ## Schedules
 
-Create the queue and at least one enabled subscription first:
+Create the destination queue first:
 
 ```sh
 saas schedules create --queue jobs \
@@ -40,7 +40,7 @@ REST creation at `POST /v1/orgs/:orgId/schedules` uses:
 ```
 
 Recurring timing is `{ "kind": "recurring", "recurrence": "DTSTART;TZID=..." }`.
-Timezone is derived from the recurrence; there is no separate REST timezone field.
+Timezone is derived from the recurrence.
 MCP `schedules_create` takes this same object. List/show/update/delete use
 `schedules_list`, `schedules_show`, `schedules_update` and `schedules_delete`.
 Pause/resume are patches with `enabled: false/true`.
@@ -153,7 +153,7 @@ also limits the raw body to 1 MiB. MCP limits the whole JSON-RPC envelope to
 16 MiB and applies the transaction limit to parsed tool arguments.
 Each operation uses existing row/field permissions. All writes, messages,
 trigger publications and transactional audits commit or roll back together.
-IDs/payloads are literal; there is no result interpolation, SQL or network call.
+Each operation takes literal IDs and payloads.
 If the update above already has a matching trigger, it also publishes that
 trigger's message; avoid an extra explicit enqueue if only one message is wanted.
 
@@ -166,7 +166,7 @@ absent key or match the file's key.
 
 ## Export and restore
 
-Organization export/import includes queue definitions, subscriptions, schedules
+Organization export/import includes queue definitions, processing policies, schedules
 and triggers. Export requires manage `/system/export`; import requires manage
 `/system/import`. Import remaps references and restores schedules/triggers paused.
 Inspect their configuration and creator permissions before resuming them.

@@ -97,9 +97,6 @@ async function fixture() {
       },
     },
   });
-  await prisma.queueSubscription.create({
-    data: { id: crypto.randomUUID(), queueId: queue.id, name: "worker" },
-  });
   const grant = (resource: string, action: string, options = {}) =>
     addPolicy(prisma, context.orgId, context.userId, resource, action, options);
   await grant("/triggers", "write");
@@ -198,7 +195,7 @@ describe("transactional collection trigger publication", () => {
     expect(
       entries.every((entry) => entry.producerUserId === f.context.userId),
     ).toBe(true);
-    expect(await f.prisma.queueDelivery.count()).toBe(5);
+    expect(await f.prisma.queueEntry.count()).toBe(5);
     expect(JSON.stringify(await f.prisma.auditLog.findMany())).not.toContain(
       "DO NOT PUBLISH",
     );
@@ -304,7 +301,6 @@ describe("transactional collection trigger publication", () => {
     "predicate",
     "schema",
     "disabled",
-    "subscriptions",
   ] as const)
     test(`${revocation} invalidation pauses with redacted audit while source mutation commits`, async () => {
       const f = await fixture();
@@ -368,11 +364,6 @@ describe("transactional collection trigger publication", () => {
           where: { id: f.queue.id },
           data: { enabled: false },
         });
-      if (revocation === "subscriptions")
-        await f.prisma.queueSubscription.updateMany({
-          where: { queueId: f.queue.id },
-          data: { enabled: false },
-        });
       await f.update(row.id, { private: "SENSITIVE after" });
       expect(
         (await f.prisma.record.findUniqueOrThrow({ where: { id: row.id } }))
@@ -431,7 +422,7 @@ describe("transactional collection trigger publication", () => {
     const first = await transactions.execute(f.context, request);
     expect(await transactions.execute(f.context, request)).toEqual(first);
     expect(await f.entries()).toHaveLength(2);
-    expect(await f.prisma.queueDelivery.count()).toBe(2);
+    expect(await f.prisma.queueEntry.count()).toBe(2);
     expect(
       await f.prisma.auditLog.count({
         where: { action: "enqueue_queue_entry" },
@@ -447,9 +438,9 @@ describe("transactional collection trigger publication", () => {
       events: ["create", "update", "delete"],
       mapping: { event: { kind: "metadata", key: "event" } },
     });
-    // Real SQLite failure after entry insertion, while fanout is being persisted.
+    // Real SQLite failure after entry insertion, while the native job is being published.
     await f.prisma.$executeRawUnsafe(
-      `CREATE TRIGGER reject_trigger_delivery BEFORE INSERT ON queue_deliveries BEGIN SELECT RAISE(ABORT, 'fanout persistence failed'); END`,
+      `CREATE TRIGGER reject_trigger_delivery BEFORE INSERT ON job_outbox BEGIN SELECT RAISE(ABORT, 'job publication failed'); END`,
     );
     for (const operation of [
       () => f.create({ title: "After" }),

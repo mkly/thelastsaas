@@ -145,9 +145,8 @@ same grant before and after the change. Queries using a field only include rows
 where that field is readable. Revoke a conditional grant with the same `--where`
 and `--fields`; omitting them revokes only the unrestricted grant.
 
-The older role row-filter/field-filter commands remain for compatibility.
-Prefer conditional grants for new configurations. Do not add a broad grant as
-an extra step: a conditional grant already supplies the permission.
+Use conditional grants to combine permission, row conditions, and field access
+in one operation. A conditional grant already supplies the permission.
 
 ## Compose a calendar collection
 
@@ -227,15 +226,15 @@ the separate `/files` resource, and organization statistics and audit logs use
 ```bash
 saas --org <org-id> notifications list --unread
 saas --org <org-id> notifications read <notification-id>
-saas --org <org-id> notifications queue \
+saas --org <org-id> notify \
   --subject "Import finished" --message "The contact import is ready"
-saas --org <org-id> notifications queue --subject "Build ready" \
-  --to alice@example.com --to <user-id> --channel email --dedupe-key build-42
-saas --org <org-id> notifications schedules once --at 2026-10-15T09:00:00Z \
-  --message "All hands" --to-all --channel email
-saas --org <org-id> notifications schedules recurring \
+saas --org <org-id> notify --subject "Build ready" \
+  --to alice@example.com --to <user-id> --dedupe-key build-42
+saas --org <org-id> notify --at 2026-10-15T09:00:00Z \
+  --subject "All hands" --to-all
+saas --org <org-id> notify \
   --recurrence $'DTSTART;TZID=UTC:20261015T090000\nRRULE:FREQ=WEEKLY' \
-  --message "Weekly update" --to-role engineering --channel email
+  --subject "Weekly update" --to-role engineering
 saas --org <org-id> notifications schedules list
 saas --org <org-id> notifications schedules cancel <schedule-id>
 
@@ -255,9 +254,8 @@ metadata belongs with structured data.
 
 Notification delivery can be immediate, one-shot at a future timestamp, or
 recurring from the same recurrence content described above. Use a stable
-dedupe value when retrying a request; keys are scoped to the sender. Team queue
-responses return `ids` with a `null` `id`, and team schedules return a `null`
-`recipient`.
+dedupe value when retrying a request; keys are scoped to the sender. Immediate responses return `kind: "immediate"`, notification `ids` and recipient
+counts. Scheduled responses return `kind: "scheduled"` and a `schedule`.
 
 Omit audience options to notify yourself. Choose one of repeatable
 `--to <user-id-or-email>`, repeatable `--to-role <existing-role>`, or `--to-all`.
@@ -265,8 +263,8 @@ Everyone includes the sender and excludes service accounts. Team sends require
 `write` on `/notifications/users/<recipient-id>` or a recipient's current
 `/notifications/roles/<role>` destination; `/notifications/*` permits everyone.
 A role destination grant also permits selecting its members directly.
-Unauthorized destinations reject the whole request. Other recipients' channel
-preferences apply. Use `--channel email` to request email delivery.
+Unauthorized destinations reject the whole request. Channel preferences apply to every recipient, including yourself. The server
+selects delivery channels; use notification preferences to opt in or out.
 
 Selected people are stored as IDs. Scheduled role/everyone audiences use current
 membership when materialized; queued deliveries recheck sender permissions and
@@ -276,115 +274,104 @@ read state. Cancelling a schedule stops future occurrences.
 
 ## Durable queues and workers
 
-PostgreSQL uses pg-boss; SQLite uses embedded Bunqueue. Queues contain immutable,
-schema-validated messages. Each enabled subscription receives a copy, and workers
-on that subscription share its work. New subscriptions receive future entries only.
+Queues hold schema-validated jobs for external workers. Each enqueue publishes
+one job. Any human or service account with the queue's consumer permissions can
+claim it; concurrent workers share the work. Producers can enqueue before a
+worker connects. Creating an account or schedule does not start an agent runtime.
 
 ```sh
-saas queues create jobs --schema '{"job_id":"string","title":"string"}'
-saas queues subscriptions create jobs indexing --lease-seconds 60 --retry-delay-seconds 30
-saas queues enqueue jobs --payload '{"job_id":"job-42","title":"Index report"}' --idempotency-key job-42
-saas --json queues claim jobs indexing --limit 1
-# Process claims[].payload, then settle the returned delivery_id:
-saas queues ack jobs <delivery-id> --lease-token <lease-token>
-# On failure, or to keep a long job alive:
-saas queues nack jobs <delivery-id> --lease-token <lease-token> --error 'Temporary failure'
-saas queues extend jobs <delivery-id> --lease-token <lease-token>
-saas queues deliveries jobs --subscription indexing --state dead
-saas queues redrive jobs <dead-delivery-id>
-saas queues cancel jobs <unfinished-delivery-id>
+saas queues create jobs --schema '{"title":"string"}' --lease-seconds 60 --retry-delay-seconds 30
+saas queues enqueue jobs --payload '{"title":"Index report"}' --idempotency-key report-42
+saas --json queues claim jobs --limit 1
+saas queues ack jobs <job-id> --lease-token <lease-token>
+saas queues nack jobs <job-id> --lease-token <lease-token> --error 'Temporary failure'
+saas queues extend jobs <job-id> --lease-token <lease-token>
+saas queues jobs jobs --state dead
+saas queues redrive jobs <job-id>
+saas queues cancel jobs <job-id>
 ```
 
-Select the organization with `saas orgs use <org-id>` or `--org`. Humans and
-service accounts use the same commands. `--token` authenticates the account;
-`--lease-token` identifies a native job claim. Do not log claim tokens.
+Use the same job ID from the enqueue receipt through claim, inspection and
+settlement. `--token` authenticates the CLI; `--lease-token` identifies a claim.
+Only claim responses include lease tokens. Ack after processing succeeds; no
+command automatically acknowledges work.
 
 ### Permissions
 
-Permissions apply to the organization, queue and subscription. An authorized
-consumer receives the **whole payload of every job in its subscription**. Give
-different job types separate queues when their access requirements differ.
+| Operation                  | Required permission                     |
+| -------------------------- | --------------------------------------- |
+| Create queue               | `write` on `/queues`                    |
+| Enqueue                    | `create` on `/queues/<name>`            |
+| List jobs and payloads     | `read` on `/queues/<name>`              |
+| Claim, ack, nack, extend   | `read` and `update` on `/queues/<name>` |
+| Configure, cancel, redrive | `manage` on `/queues/<name>`            |
+| Delete queue               | `delete` on `/queues/<name>`            |
 
-| Operation                                | Required authority                                                                          |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------- |
-| Create queue                             | write `/queues`                                                                             |
-| List/show and inspect entries/deliveries | read `/queues/<name>`                                                                       |
-| Edit queue or administer subscriptions   | manage `/queues/<name>`                                                                     |
-| Delete queue                             | delete `/queues/<name>`                                                                     |
-| Publish                                  | create `/queues/<name>`                                                                     |
-| Claim, acknowledge, fail, heartbeat      | read and update `/queues/<name>`, plus update `/queues/<name>/subscriptions/<subscription>` |
-| Cancel or redrive                        | manage `/queues/<name>`                                                                     |
+Current organization membership and permissions are checked on each request.
+Settlement also requires the current unexpired token and the account that claimed
+the job. Tokens are random; hashes and backend credentials stay private.
+Management authority alone does not expose payloads. Authorized consumers receive
+whole payloads; use separate queues for different access boundaries. Record
+access still requires collection permissions.
 
 ```sh
 saas permissions grant --subject 'user:<worker-id>' --resource /queues/jobs --action read
 saas permissions grant --subject 'user:<worker-id>' --resource /queues/jobs --action update
-saas permissions grant --subject 'user:<worker-id>' --resource /queues/jobs/subscriptions/indexing --action update
 ```
 
-Queue grants do not accept row conditions or field lists. Collection permissions
-still support both. Membership and grants are checked on every claim and settlement.
-Manage does not grant payload read. A payload reference grants no collection access.
+### Processing and retention
 
-### Delivery and retention
+Queue settings control maximum attempts (default 3), exponential retry delay
+(default 30 seconds), lease duration (default 60 seconds), and terminal retention
+(default 7 days). Set them during creation or with `queues update`. Disabling a
+queue blocks new publication and claims; existing claims can still be settled.
+A schema change requires zero retained jobs. Queue deletion requires no pending
+publication or unfinished jobs and the CLI requires `--confirm`.
 
-Delivery is at least once. Make external effects idempotent with a business key:
-a worker can crash after its effect succeeds but before acknowledgement. Enqueue
-idempotency does not deduplicate external effects.
+Claims return `job_id`, `payload`, `schema_version`, `attempts`, `lease_token`,
+and `lease_expires_at`. Extend before expiry while work continues. After losing
+a lease, stop acting on the job. Expired work becomes eligible for another
+attempt through the backend's supervisor. Poll with a delay when idle; an empty
+claim does not prove that all delayed or leased work has finished.
 
-Subscription defaults are 3 attempts, a 60-second lease, a 30-second retry delay
-and 7-day retention. Configure `--max-attempts` (1..100), `--lease-seconds`
-(10..3600), `--retry-delay-seconds` (0..3600), and `--retention-days` (1..365).
-Libraries own retries, backoff, expiry and terminal retention. PostgreSQL jobs
-capture these settings at publication; pg-boss has a maximum 24-hour execution
-deadline even with heartbeats. Retry timing can vary by provider.
+Delivery is at least once. Workers must make external effects safe to retry.
+Nack reports failure using the queue's retry policy; exhausted jobs become dead.
+Redrive only accepts dead jobs and retains the job ID. Cancellation invalidates
+an unfinished job's lease; it cannot retract an external effect. Bunqueue removes
+cancelled jobs from inspection, while PostgreSQL retains their cancelled state.
 
-Claim returns `claims` and `has_more`. Each claim includes entry, delivery and
-subscription IDs, payload, attempts, token and expiry. Poll with a delay when
-idle. Extend heartbeats the claim using subscription settings. Revoked authority
-or a stale claim prevents settlement. Disabling queues/subscriptions blocks new
-claims; existing valid claims can settle.
+Enqueue supports UTC `available_at`, per-queue `idempotency_key`, and atomic
+batches of up to 100 entries. Reusing a retained key with changed payload or
+availability is rejected. Keep keys free of credentials and sensitive content.
+Ordinary job inspection and settlement never return lease credentials.
+See [backend operations](job-backends.md) for retention and provider details.
 
-Inspection reports native current state and attempt count. Redrive asks the
-library to retry dead work: pg-boss adds one attempt; Bunqueue requeues its dead
-letter job. Attempt counts follow the library. Application audit events remain.
-Cancellation invalidates unfinished work; Bunqueue removes cancelled jobs, so
-they subsequently disappear from delivery inspection. Queue/subscription deletion
-rejects unfinished deliveries, including pending SQLite publication.
+### REST and MCP
 
-Application entry receipts expire after their deliveries are cleaned. Idempotency
-keys therefore do not last indefinitely. Use database backups for runtime state.
-
-### Requests
-
-Names start with a letter, contain letters/digits/underscores, and have at most
-64 characters. Schemas use collection field types, reject unknown payload fields,
-and allow omitted/null values. Schema edits require zero retained entries.
-
-CLI enqueue accepts exactly one of `--payload` and `--payload-file`. REST/MCP
-accept 1..100 entries atomically, each at most 64 KiB. At least one enabled
-subscription is required. `--available-at` accepts a UTC timestamp ending in Z.
-Same-key retries return original receipts; conflicting content returns 409.
-
-REST paths below are relative to `/v1/orgs/:orgId`:
+Routes are under `/v1/orgs/:orgId`:
 
 ```text
-POST /queues/jobs/entries
-{"entries":[{"payload":{"job_id":"job-42","title":"Index report"},"idempotency_key":"job-42"}]}
-POST /queues/jobs/subscriptions/indexing/claim
-{"limit":1}
-POST /queues/jobs/deliveries/<delivery-id>/ack
-{"token":"<lease-token>"}
+POST /queues/:name/jobs                         {entries:[{payload,available_at?,idempotency_key?}]}
+GET  /queues/:name/jobs?limit=&cursor=&where=&state=
+POST /queues/:name/claim                        {limit?}
+POST /queues/:name/jobs/:id/ack                  {token}
+POST /queues/:name/jobs/:id/nack                 {token,error?}
+POST /queues/:name/jobs/:id/extend               {token}
+POST /queues/:name/jobs/:id/cancel               {}
+POST /queues/:name/jobs/:id/redrive              {}
 ```
 
-MCP uses `queues_enqueue` with `{queue,entries}`, `queues_claim` with
-`{queue,subscription,limit}`, and `queues_ack`/`queues_nack`/`queues_extend` with
-`{queue,delivery,token}`. Nack also accepts a safe `error` summary.
-Lists return `items` and `next_cursor`; pass limit (1..100) and cursor to continue.
-Entry lists accept JSON `where`; delivery lists accept subscription and state.
-State filtering can produce an empty page with a continuation cursor.
+MCP exposes `queues_enqueue`, `queues_jobs`, `queues_claim`, `queues_ack`,
+`queues_nack`, `queues_extend`, `queues_cancel`, and `queues_redrive`, plus queue
+configuration tools. Claim takes `{queue,limit?}`; settlement takes
+`{queue,job_id,token}`. Cancel/redrive take `{queue,job_id}`. Enqueue returns
+`jobs`; settlement returns `job`; lists return `items` and `next_cursor`.
 
-See [backend operations](job-backends.md), [automation](automation.md), and
-[contracts](queues-design.md).
+List filters accept the shared payload `where` grammar and a job `state`.
+State filtering can produce an empty page with a continuation cursor. Continue
+until `next_cursor` is null.
+
+See [automation](automation.md) for schedules, record triggers and atomic writes.
 
 ## Schedules, triggers and atomic writes
 
@@ -475,7 +462,7 @@ with --org/--key-version/--limit/--cursor), not a saas or MCP tool.
 Ordinary exports omit secrets. Encrypted backup requires the same source key
 bytes/versions on the destination; restored values re-encrypt with its active
 key. Back up keys separately and retain old keys for old backups. Organization export requires
-manage `/system/export` and includes queue configuration, subscriptions, schedules
+manage `/system/export` and includes queue configuration, processing policies, schedules
 and triggers. Import requires manage `/system/import`, remaps configuration and
 restores schedules/triggers paused. Pending jobs and delivery state belong to
 database backups. Queue acknowledgement completes transport work, not inbox read.

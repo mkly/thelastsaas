@@ -1,5 +1,5 @@
 import { parseRequest as parseQueueRequest } from "../lib/transport";
-import { unitJobs, subscriptionQueue } from "../jobs";
+import { unitJobs, workQueue } from "../jobs";
 import {
   AutomationConflictError,
   AutomationNotFoundError,
@@ -96,6 +96,10 @@ function serializeQueue(row: QueueRow): Queue {
     schema: row.schema as Schema,
     schema_version: row.schemaVersion,
     enabled: row.enabled,
+    max_attempts: row.maxAttempts,
+    retry_delay_seconds: row.retryDelaySeconds,
+    lease_seconds: row.leaseSeconds,
+    retention_days: row.retentionDays,
     created_at: row.createdAt.toISOString(),
     updated_at: row.updatedAt.toISOString(),
   };
@@ -192,6 +196,10 @@ export function createQueueConfigService(
               name: parsed.name,
               schema: parsed.schema as Prisma.InputJsonObject,
               enabled: parsed.enabled,
+              maxAttempts: parsed.max_attempts,
+              retryDelaySeconds: parsed.retry_delay_seconds,
+              leaseSeconds: parsed.lease_seconds,
+              retentionDays: parsed.retention_days,
             },
           });
           await auditQueueConfiguration(db, context, "create_queue", row.id);
@@ -261,6 +269,10 @@ export function createQueueConfigService(
         const updated = await unit.db.queue.update({
           where: { id: row.id },
           data: {
+            maxAttempts: parsed.max_attempts,
+            retryDelaySeconds: parsed.retry_delay_seconds,
+            leaseSeconds: parsed.lease_seconds,
+            retentionDays: parsed.retention_days,
             ...(parsed.schema !== undefined
               ? {
                   schema: parsed.schema as Prisma.InputJsonObject,
@@ -280,30 +292,18 @@ export function createQueueConfigService(
       await withUnitOfWork(source, async (unit) => {
         const row = await lockQueue(unit, context, name);
         await requireQueueGate(unit.db, context, `/queues/${name}`, "delete");
-        const subscriptions = await unit.db.queueSubscription.findMany({
+        const entries = await unit.db.queueEntry.findMany({
           where: { queueId: row.id },
         });
-        for (const subscription of subscriptions) {
-          const deliveries = await unit.db.queueDelivery.findMany({
-            where: { subscriptionId: subscription.id },
-          });
-          for (const delivery of deliveries) {
-            const job = await unitJobs(unit).get(
-              subscriptionQueue(subscription.id),
-              delivery.id,
-            );
-            if (
-              (await unit.db.jobOutbox.findUnique({
-                where: { id: delivery.id },
-              })) ||
-              (job && ["ready", "leased"].includes(job.state))
-            )
-              throw new AutomationConflictError(
-                "Queue has unfinished deliveries",
-              );
-          }
-          await unitJobs(unit).deleteQueue(subscriptionQueue(subscription.id));
+        for (const entry of entries) {
+          const job = await unitJobs(unit).get(workQueue(row.id), entry.id);
+          if (
+            (await unit.db.jobOutbox.findUnique({ where: { id: entry.id } })) ||
+            (job && ["ready", "leased"].includes(job.state))
+          )
+            throw new AutomationConflictError("Queue has unfinished jobs");
         }
+        await unitJobs(unit).deleteQueue(workQueue(row.id));
         await unit.db.queue.delete({ where: { id: row.id } });
         // LIKE treats "_" as a wildcard and is case-insensitive on SQLite, so
         // match the child prefix exactly before deleting.

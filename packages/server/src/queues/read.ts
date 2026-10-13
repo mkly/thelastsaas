@@ -1,17 +1,13 @@
 import {
   InvalidQueryError,
-  deliveryListSchema,
-  entryListSchema,
+  jobListSchema,
   type JsonObject,
-  type QueueDelivery,
+  type QueueJob,
+  type QueueJobDetails,
   type QueueService,
   type Schema,
 } from "@lastsaas/shared";
-import type {
-  PrismaClient,
-  QueueDelivery as DeliveryRow,
-  QueueEntry as EntryRow,
-} from "@prisma/client";
+import type { PrismaClient, QueueEntry as EntryRow } from "@prisma/client";
 import { createHash } from "node:crypto";
 import { queryProvider } from "../db/provider";
 import { compileWhere } from "../db/query/compile";
@@ -24,7 +20,7 @@ import {
   queuePagePosition,
 } from "./config";
 import { authorizeQueueAction } from "./permissions";
-import { unitJobs, jobsFor, subscriptionQueue } from "../jobs";
+import { unitJobs, jobsFor, workQueue } from "../jobs";
 import type { JobStatus } from "../jobs/types";
 
 function cursorPredicate(
@@ -42,14 +38,9 @@ function cursorPredicate(
   return sql`(created_at > ${timestamp} OR (created_at = ${timestamp} AND id > ${id.gt}))`;
 }
 
-export function serializeQueueDelivery(
-  row: DeliveryRow,
-  job: JobStatus,
-): QueueDelivery {
+export function serializeQueueJob(row: EntryRow, job: JobStatus): QueueJob {
   return {
-    id: row.id,
-    entry_id: row.entryId,
-    subscription_id: row.subscriptionId,
+    ...serializeEntry(row),
     state: job.state,
     attempts: job.attempts,
     available_at: job.availableAt,
@@ -62,24 +53,22 @@ function serializeEntry(row: EntryRow) {
   return {
     id: row.id,
     queue_id: row.queueId,
-    payload: row.payload as JsonObject,
     schema_version: row.schemaVersion,
-    producer_user_id: row.producerUserId,
     available_at: row.availableAt.toISOString(),
-    idempotency_key: row.idempotencyKey,
     created_at: row.createdAt.toISOString(),
   };
 }
 export function createQueueReadService(
   prisma: PrismaClient,
   provider = queryProvider(prisma),
-): Pick<QueueService<UnitOfWork>, "listEntries" | "listDeliveries"> {
+): Pick<QueueService<UnitOfWork>, "listJobs"> {
   return {
-    async listEntries(context, name, input) {
-      const { limit, cursor, where } = parseQueueRequest(
-        entryListSchema,
+    async listJobs(context, name, input) {
+      const { limit, cursor, where, state } = parseQueueRequest(
+        jobListSchema,
         input,
       );
+      await jobsFor(prisma)?.flush();
       return withUnitOfWork({ prisma, provider }, async (unit) => {
         const queue = await authorizeQueueAction(
           unit.db,
@@ -88,7 +77,8 @@ export function createQueueReadService(
           "read",
         );
         const scope = JSON.stringify([
-          "entries",
+          "jobs",
+          state,
           queue.id,
           createHash("sha256")
             .update(JSON.stringify(where ?? null))
@@ -113,56 +103,19 @@ export function createQueueReadService(
           where: { id: { in: ids.slice(0, limit).map((row) => row.id) } },
           orderBy: [{ createdAt: "asc" }, { id: "asc" }],
         });
-        return {
-          items: rows.map(serializeEntry),
-          next_cursor:
-            ids.length > limit ? queuePageCursor(rows.at(-1)!, scope) : null,
-        };
-      });
-    },
-    async listDeliveries(context, name, input) {
-      const { limit, cursor, subscription, state } = parseQueueRequest(
-        deliveryListSchema,
-        input,
-      );
-      await jobsFor(prisma)?.flush();
-      return withUnitOfWork({ prisma, provider }, async (unit) => {
-        const queue = await authorizeQueueAction(
-          unit.db,
-          context,
-          name,
-          "read",
-        );
-        const scope = JSON.stringify([
-          "deliveries",
-          queue.id,
-          subscription,
-          state,
-        ]);
-        const rows = await unit.db.queueDelivery.findMany({
-          where: {
-            queueId: queue.id,
-            ...(subscription ? { subscription: { name: subscription } } : {}),
-            ...queuePagePosition(cursor, scope),
-          },
-          orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-          take: limit + 1,
-        });
-        const items: QueueDelivery[] = [];
-        for (const row of rows.slice(0, limit)) {
-          const job = await unitJobs(unit).get(
-            subscriptionQueue(row.subscriptionId),
-            row.id,
-          );
-          if (job && (!state || job.state === state))
-            items.push(serializeQueueDelivery(row, job));
+        const items: QueueJobDetails[] = [];
+        for (const row of rows) {
+          const status = await unitJobs(unit).get(workQueue(queue.id), row.id);
+          if (status && (!state || status.state === state))
+            items.push({
+              ...serializeQueueJob(row, status),
+              payload: row.payload as JsonObject,
+            });
         }
         return {
           items,
           next_cursor:
-            rows.length > limit
-              ? queuePageCursor(rows[limit - 1]!, scope)
-              : null,
+            ids.length > limit ? queuePageCursor(rows.at(-1)!, scope) : null,
         };
       });
     },

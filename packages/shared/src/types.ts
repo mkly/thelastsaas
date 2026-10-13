@@ -103,11 +103,10 @@ export type NotificationScheduleKind = "one_shot" | "recurring";
 export interface NotificationSchedule {
   id: string;
   kind: NotificationScheduleKind;
-  channel: string;
   recipient: string | null;
   created_by: string;
   audience: NotificationAudience;
-  subject: string | null;
+  subject: string;
   message: string;
   data: Record<string, unknown> | null;
   deliver_at: string | null;
@@ -190,13 +189,12 @@ export interface ExportData extends PortableAutomationData {
   notification_schedules: Array<{
     id: string;
     user_id: string;
-    audience?: NotificationAudience;
+    audience: NotificationAudience;
     dedupe_key: string;
     type: string;
+    subject: string;
     message: string;
     data: Record<string, unknown> | null;
-    in_app: boolean;
-    channel: string;
     deliver_at: string | null;
     recurrence: string | null;
     next_occurrence_at: string | null;
@@ -218,7 +216,6 @@ export interface ImportResult {
   imported_field_filters: number;
   imported_notification_schedules: number;
   imported_queues?: number;
-  imported_queue_subscriptions?: number;
   imported_queue_schedules?: number;
   imported_collection_triggers?: number;
   skipped_records?: number;

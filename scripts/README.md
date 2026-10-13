@@ -30,8 +30,10 @@ client, applies SQLite migrations or the PostgreSQL schema, and builds/starts
 the standalone server separately for each provider. It checks `/health`, signs
 up and verifies a disposable human through the public auth endpoints using
 console email, and runs the compiled CLI's `whoami`, organization creation,
-queue/subscription creation, enqueue, claim and ack. A public API delivery list
-confirms the successful settlement and cleared lease. It also compares the
+queue creation, enqueue, claim and ack. A public API job list
+confirms the successful settlement and cleared lease. It sends an immediate
+notification, schedules a reminder, and cancels that reminder through the CLI.
+It also compares the
 embedded host CLI download's SHA-256 with the built CLI and checks that an
 excluded platform returns 404. No source-mode server or
 direct auth/database fixtures substitute for the compiled artifacts.
@@ -47,19 +49,6 @@ It leaves build artifacts in `dist/` and does not run the full test suite or
 cross-platform builds. Do not run it concurrently with other provider checks or
 CLI commands in the same environment. Install Bun, Node and locked dependencies
 before running it.
-
-Verified on Linux x64 with Bun 1.4.3, Prisma 6.19.3 and PostgreSQL 18.6, starting
-from merged-main commit `67ac1ef5202e792abfefe6f37f5c4d55e883ae24` plus these smoke
-and host-only build changes. Commands were `bun install --frozen-lockfile`,
-`bun run --cwd packages/server prisma:generate`, and
-`LASTSAAS_BUILD_COMMIT=67ac1ef5202e792abfefe6f37f5c4d55e883ae24 TEST_POSTGRES_URL=postgresql://… bun run smoke:built`.
-The PostgreSQL URL used a newly created disposable database/role on
-`127.0.0.1`, with both dropped in an EXIT trap. Both providers passed startup,
-embedded download and the public CLI/API queue workflow. The runner stopped
-both servers, dropped its application schema, removed local fixtures and
-restored the SQLite client. `bun test packages/server/test/downloads.test.ts`
-then passed all seven focused regressions. This is a build/wiring check, not
-the feature acceptance matrix or full repository suite.
 
 ## Prisma database providers
 

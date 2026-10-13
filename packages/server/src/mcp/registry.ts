@@ -9,7 +9,7 @@ import { registerDataTools } from "./tools/data";
 import { registerGettingStarted } from "./tools/getting-started";
 import { registerOrganizationTools } from "./tools/organizations";
 import { registerOperationsTools } from "./tools/operations";
-import { registerQueueDeliveryTools } from "./tools/queue-deliveries";
+import { registerQueueJobTools } from "./tools/queue-jobs";
 import { registerQueueTools } from "./tools/queues";
 import { registerSecretTools } from "./tools/secrets";
 import { registerTransactionTools } from "./tools/transactions";
@@ -59,7 +59,7 @@ const toolRegistrars: readonly ToolRegistrar[] = [
   registerOperationsTools,
   registerSecretTools,
   registerQueueTools,
-  registerQueueDeliveryTools,
+  registerQueueJobTools,
   registerTransactionTools,
   registerTriggerTools,
   registerScheduleTools,

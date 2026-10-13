@@ -1,6 +1,7 @@
+import { notify } from "../notifications/notify";
 import {
   NOTIFICATION_KINDS,
-  notificationAudienceSchema,
+  notifySchema,
   LastSaasError,
   PermissionDeniedError,
 } from "@lastsaas/shared";
@@ -15,7 +16,6 @@ import {
   deleteNotification,
   getNotifications,
   markNotificationRead,
-  queueNotifications,
 } from "../db/notifications";
 import type { AppEnvironment } from "../env";
 
@@ -53,19 +53,6 @@ const preferencesPatchSchema = z
     (value) => value.default !== undefined || value.by_kind !== undefined,
     "At least one preference update must be provided",
   );
-
-const queueSchema = z.object({
-  audience: notificationAudienceSchema.optional(),
-  type: z.string().min(1).optional(),
-  message: z.string().min(1).optional(),
-  subject: z.string().min(1),
-  text: z.string().min(1).optional(),
-  html: z.string().min(1).optional(),
-  data: z.record(z.string(), z.unknown()).optional(),
-  in_app: z.boolean().optional(),
-  channel: z.enum(["console", "email"]).optional(),
-  dedupe_key: z.string().min(1).optional(),
-});
 
 const readSchema = z.object({ read: z.boolean() });
 
@@ -121,9 +108,9 @@ export const notificationRouter = new Hono<AppEnvironment>()
     );
     return context.json({ status: "ok" as const, preferences });
   })
-  .post("/queue", async (context) => {
-    const body = await readJson(context, queueSchema);
-    if (!body) {
+  .post("/notify", async (context) => {
+    const body = await readJson(context, notifySchema);
+    if (!body)
       return context.json(
         {
           status: "error" as const,
@@ -132,46 +119,32 @@ export const notificationRouter = new Hono<AppEnvironment>()
         },
         400,
       );
-    }
-    const { prisma, notificationQueue } = context.get("services");
-    let result;
     try {
-      result = await queueNotifications(
+      const { prisma, notificationQueue } = context.get("services");
+      const result = await notify(
         prisma,
         notificationQueue,
         context.get("orgId"),
         context.get("userId"),
+        body,
+      );
+      await context.get("audit")(
+        "notify",
+        "notification",
+        result.kind === "scheduled" ? result.schedule.id : result.id,
         {
-          audience: body.audience,
           subject: body.subject,
-          ...(body.type ? { type: body.type } : {}),
-          ...(body.message ? { message: body.message } : {}),
-          ...(body.text ? { text: body.text } : {}),
-          ...(body.html ? { html: body.html } : {}),
-          ...(body.data ? { data: body.data } : {}),
-          ...(body.in_app !== undefined ? { inApp: body.in_app } : {}),
-          ...(body.channel ? { channel: body.channel } : {}),
-          ...(body.dedupe_key ? { dedupeKey: body.dedupe_key } : {}),
+          audience: body.audience ?? { kind: "self" },
+          kind: result.kind,
+          ...(result.kind === "immediate"
+            ? { recipient_count: result.recipient_count }
+            : {}),
         },
       );
+      return context.json({ status: "ok" as const, ...result }, 201);
     } catch (error) {
       return notificationError(context, error);
     }
-    await context.get("audit")(
-      "queue_notification",
-      "notification",
-      result.id,
-      {
-        subject: body.subject,
-        audience: body.audience ?? { kind: "self" },
-        recipient_count: result.recipient_count,
-        notification_ids: result.ids,
-      },
-    );
-    return context.json(
-      { status: "ok" as const, ...result, message: "Notification queued" },
-      201,
-    );
   })
   .patch("/:id", async (context) => {
     const body = await readJson(context, readSchema);

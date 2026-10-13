@@ -40,9 +40,9 @@ Files are streamed through a `Storage` interface backed by local disk or S3.
 Metadata and unique per-organization paths live in the database. Slash prefixes
 provide organization without a separate hierarchy model.
 
-Queues store immutable payloads and one native job per enabled subscription.
+Queues store immutable payloads and one native job per job ID.
 PostgreSQL uses pg-boss, SQLite uses embedded Bunqueue with a transactional outbox.
-Workers receive whole payloads after organization/queue/subscription authorization.
+Workers receive whole payloads after organization and queue authorization.
 Libraries own job lifecycle; application rows retain identities and audit events.
 
 Schedules publish once for missed work after downtime. Triggers publish within

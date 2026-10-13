@@ -230,10 +230,10 @@ describe("organization export and import", () => {
         userId: owner,
         dedupeKey: "weekly-tasks",
         type: "task_digest",
+        subject: "Tasks",
+        audience: { kind: "self" },
         message: "Review your tasks",
         data: { collection: "tasks" },
-        inApp: true,
-        channel: "console",
         recurrence: "DTSTART:20260824T090000Z\nRRULE:FREQ=WEEKLY;COUNT=4",
         nextOccurrenceAt: new Date("2026-08-24T09:00:00.000Z"),
         status: "scheduled",
@@ -270,7 +270,6 @@ describe("organization export and import", () => {
         "row_filters",
         "version",
         "queues",
-        "queue_subscriptions",
         "queue_schedules",
         "collection_triggers",
       ].sort(),
@@ -406,13 +405,6 @@ async function automationFixture() {
       name: "work",
       schema: { title: "string" },
       schemaVersion: 2,
-    },
-  });
-  await db.queueSubscription.create({
-    data: {
-      id: "source-subscription",
-      queueId: "source-queue",
-      name: "workers",
       maxAttempts: 5,
     },
   });
@@ -511,16 +503,14 @@ describe("automation configuration portability", () => {
     const result = await importData(db, "destination", dump);
     expect(result).toMatchObject({
       imported_queues: 1,
-      imported_queue_subscriptions: 1,
       imported_queue_schedules: 1,
       imported_collection_triggers: 1,
     });
     const queue = await db.queue.findFirstOrThrow({
       where: { orgId: "destination" },
-      include: { subscriptions: true },
     });
     expect(queue.schema).toEqual({ title: "string" });
-    expect(queue.subscriptions[0]!.maxAttempts).toBe(5);
+    expect(queue.maxAttempts).toBe(5);
     const schedule = await db.queueSchedule.findFirstOrThrow({
       where: { orgId: "destination" },
     });

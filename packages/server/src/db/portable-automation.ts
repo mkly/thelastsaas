@@ -25,11 +25,7 @@ export async function exportAutomation(db: Db, orgId: string) {
     orderBy: { id: "asc" },
   });
   const queueIds = queues.map((q) => q.id);
-  const [subscriptions, schedules, triggers] = await Promise.all([
-    db.queueSubscription.findMany({
-      where: { queueId: { in: queueIds } },
-      orderBy: { id: "asc" },
-    }),
+  const [schedules, triggers] = await Promise.all([
     db.queueSchedule.findMany({
       where: { orgId, queueId: { in: queueIds } },
       orderBy: { id: "asc" },
@@ -51,18 +47,11 @@ export async function exportAutomation(db: Db, orgId: string) {
       schema: q.schema as Schema,
       schema_version: q.schemaVersion,
       enabled: q.enabled,
+      max_attempts: q.maxAttempts,
+      retry_delay_seconds: q.retryDelaySeconds,
+      lease_seconds: q.leaseSeconds,
+      retention_days: q.retentionDays,
       ...timestamps(q),
-    })),
-    queue_subscriptions: subscriptions.map((s) => ({
-      id: s.id,
-      queue_id: s.queueId,
-      name: s.name,
-      enabled: s.enabled,
-      max_attempts: s.maxAttempts,
-      retry_delay_seconds: s.retryDelaySeconds,
-      lease_seconds: s.leaseSeconds,
-      retention_days: s.retentionDays,
-      ...timestamps(s),
     })),
     queue_schedules: schedules.map((s) => ({
       id: s.id,
@@ -110,24 +99,16 @@ export function validateAutomation(data: ExportData, provider: DbProvider) {
   };
   for (const rows of [
     data.queues,
-    data.queue_subscriptions,
     data.queue_schedules,
     data.collection_triggers,
   ])
     unique<{ id: string }>(rows ?? [], (v) => v.id);
   const queues = new Map((data.queues ?? []).map((q) => [q.id, q]));
-  const subscriptions = new Map(
-    (data.queue_subscriptions ?? []).map((s) => [s.id, s]),
-  );
   const schedules = new Map((data.queue_schedules ?? []).map((s) => [s.id, s]));
   const collections = new Map(data.collections.map((c) => [c.name, c.schema]));
   const queue = (id: string) =>
     queues.get(id) ?? fail("Missing backup queue reference");
   unique(data.queues ?? [], (q) => q.name);
-  unique(data.queue_subscriptions ?? [], (s) =>
-    JSON.stringify([s.queue_id, s.name]),
-  );
-  for (const s of subscriptions.values()) queue(s.queue_id);
   for (const s of schedules.values()) {
     queue(s.queue_id);
     scheduleTimingState(s.timing);
@@ -190,29 +171,14 @@ export async function importAutomation(
         schema: json(q.schema),
         schemaVersion: q.schema_version,
         enabled: q.enabled,
+        maxAttempts: q.max_attempts,
+        retryDelaySeconds: q.retry_delay_seconds,
+        leaseSeconds: q.lease_seconds,
+        retentionDays: q.retention_days,
         ...dates(q),
       },
     });
   }
-  for (const s of data.queue_subscriptions ?? [])
-    await db.queueSubscription.create({
-      data: {
-        id: await allocate("subscription", s.id, (id) =>
-          db.queueSubscription.findUnique({
-            where: { id },
-            select: { id: true },
-          }),
-        ),
-        queueId: ref("queue", s.queue_id),
-        name: s.name,
-        enabled: s.enabled,
-        maxAttempts: s.max_attempts,
-        retryDelaySeconds: s.retry_delay_seconds,
-        leaseSeconds: s.lease_seconds,
-        retentionDays: s.retention_days,
-        ...dates(s),
-      },
-    });
   for (const s of data.queue_schedules ?? [])
     await db.queueSchedule.create({
       data: {
@@ -255,7 +221,6 @@ export async function importAutomation(
     });
   const counts = {
     imported_queues: data.queues?.length ?? 0,
-    imported_queue_subscriptions: data.queue_subscriptions?.length ?? 0,
     imported_queue_schedules: data.queue_schedules?.length ?? 0,
     imported_collection_triggers: data.collection_triggers?.length ?? 0,
   } satisfies Partial<ImportResult>;

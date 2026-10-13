@@ -224,10 +224,9 @@ async function exportInTransaction(
       audience: storedNotificationAudience(schedule.audience),
       dedupe_key: schedule.dedupeKey,
       type: schedule.type,
+      subject: schedule.subject,
       message: schedule.message,
       data: schedule.data === null ? null : asObject(schedule.data),
-      in_app: schedule.inApp,
-      channel: schedule.channel,
       deliver_at: schedule.deliverAt?.toISOString() ?? null,
       recurrence: schedule.recurrence,
       next_occurrence_at: schedule.nextOccurrenceAt?.toISOString() ?? null,
@@ -481,7 +480,13 @@ async function importInTransaction(
     }
     if (
       await prisma.notificationSchedule.findUnique({
-        where: { orgId_dedupeKey: { orgId, dedupeKey: s.dedupe_key } },
+        where: {
+          orgId_userId_dedupeKey: {
+            orgId,
+            userId: s.user_id,
+            dedupeKey: s.dedupe_key,
+          },
+        },
       })
     ) {
       warnings.push(
@@ -504,10 +509,9 @@ async function importInTransaction(
         ) as Prisma.InputJsonObject,
         dedupeKey: s.dedupe_key,
         type: s.type,
+        subject: s.subject,
         message: s.message,
         data: s.data === null ? Prisma.JsonNull : jsonObject(s.data),
-        inApp: s.in_app,
-        channel: s.channel,
         deliverAt: s.deliver_at && new Date(s.deliver_at),
         recurrence: s.recurrence,
         nextOccurrenceAt:

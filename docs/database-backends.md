@@ -49,7 +49,7 @@ WHERE org_id = $1 AND collection_id = $2
 SQLite evaluates the same filter with `json_extract(data, ?) = ?`, binding
 `$.status` and the requested value.
 Equality values must match the declared scalar type; a number field takes `42`,
-not `"42"`. No conversion of legacy stored values is performed. Metadata fields
+not `"42"`. Metadata fields
 use their native columns. Untyped `json` fields use extraction comparisons rather
 than treating scalar equality as document containment.
 
@@ -92,9 +92,8 @@ JSON operations. Ranges, ordering, substring searches, and aggregation may still
 scan candidate records and need workload-specific indexes.
 
 The database planner decides whether to use GIN, the scope index, or a scan.
-Index creation on an existing deployment can take time and requires the normal
-schema deployment process; it is not performed during server startup. Existing
-records stay in place and are not rewritten by this query-adapter change.
+The schema deployment process creates the indexes. Server startup opens the
+configured database and query adapter.
 
 SQLite uses the canonical Prisma schema and SQLite migrations. It does not get
 the PostgreSQL GIN index. Its performance characteristics differ, but access
@@ -102,16 +101,13 @@ control is enforced on both backends.
 
 ## Supported collection schema edits
 
-Adding new fields, removing fields, and editing descriptions remain supported.
-Changing an existing field's type is unsupported, including through `add_fields`
-or changes to an enum/ref type definition. An identical type is allowed when
-editing a description.
+Collections support adding fields, removing fields, and editing descriptions.
+An existing field keeps its declared type, including enum/ref definitions.
+Description edits accept the same type.
 
-Removing a field does not erase stored JSON values. Re-adding a removed name
-while any record still contains it is unsupported, to prevent a remove/add
-sequence from silently reinterpreting existing values. No automatic data
-migration or compatibility conversion is supplied. An explicit type-migration
-workflow may be added in the future.
+Removing a field preserves its stored JSON values. A field name can be reused
+once all records are clear of that name, keeping existing values consistent
+with their declared types.
 
 ## Backend contract tests
 

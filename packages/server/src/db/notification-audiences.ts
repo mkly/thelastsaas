@@ -112,7 +112,7 @@ export async function resolveNotificationAudience(
   prisma: Prisma.TransactionClient,
   orgId: string,
   senderId: string,
-  value: unknown,
+  value: unknown = { kind: "self" },
   { atDelivery = false, cache }: ResolveNotificationAudienceOptions = {},
 ): Promise<{
   audience: NotificationAudience;
@@ -120,6 +120,17 @@ export async function resolveNotificationAudience(
 }> {
   const audience = storedNotificationAudience(value);
   if (audience.kind === "self") {
+    if (
+      atDelivery &&
+      !(await prisma.member.findUnique({
+        where: {
+          organizationId_userId: { organizationId: orgId, userId: senderId },
+        },
+      }))
+    )
+      throw new PermissionDeniedError(
+        "Notification sender is no longer an organization member",
+      );
     const user = await prisma.user.findUnique({
       where: { id: senderId },
       select: { id: true, email: true, notificationPreferences: true },

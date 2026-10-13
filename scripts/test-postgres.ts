@@ -58,10 +58,11 @@ try {
   await run(["bun", "run", "--cwd", "packages/server", "typecheck"]);
   const files =
     selection === "--queues"
-      ? ["job-backends.test.ts", "queue-services.test.ts"]
+      ? ["job-backends.test.ts", "queue-services.test.ts", "notify.test.ts"]
       : [
           "job-backends.test.ts",
           "queue-services.test.ts",
+          "notify.test.ts",
           "transactions-service.test.ts",
           "schedules.test.ts",
           "automation-integration.test.ts",

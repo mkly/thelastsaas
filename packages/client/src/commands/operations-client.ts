@@ -50,7 +50,7 @@ interface NotificationRoutes {
     param: OrgParam;
     query: { unread?: "true" };
   }): Promise<Response>;
-  queue: {
+  notify: {
     $post(input: {
       param: OrgParam;
       json: Record<string, unknown>;
@@ -65,10 +65,6 @@ interface NotificationRoutes {
   };
   schedules: {
     $get(input: { param: OrgParam }): Promise<Response>;
-    $post(input: {
-      param: OrgParam;
-      json: Record<string, unknown>;
-    }): Promise<Response>;
     [":id"]: {
       $delete(input: { param: IdParam }): Promise<Response>;
     };

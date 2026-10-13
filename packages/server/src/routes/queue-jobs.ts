@@ -2,7 +2,7 @@ import { jsonRequest } from "../lib/transport";
 import {
   ackRequestSchema,
   claimRequestSchema,
-  deliveryActionSchema,
+  jobActionSchema,
   enqueueRequestSchema,
   extendRequestSchema,
   nackRequestSchema,
@@ -15,53 +15,40 @@ import { createQueueSettlementService } from "../queues/settle";
 import { queueFailure, queuePrincipal } from "./queue-http";
 
 /** Thin public adapters: the services own membership, grants and lease checks. */
-export const queueDeliveriesRouter = new Hono<AppEnvironment>()
+export const queueJobsRouter = new Hono<AppEnvironment>()
+  .post("/:name/jobs", jsonRequest(enqueueRequestSchema), async (context) => {
+    try {
+      const input = context.req.valid("json");
+      const result = await createQueueEnqueueService(
+        context.get("services").prisma,
+      ).enqueue(
+        await queuePrincipal(context),
+        context.req.param("name"),
+        input,
+      );
+      return context.json({ status: "ok" as const, ...result }, 201);
+    } catch (error) {
+      return queueFailure(context, error);
+    }
+  })
+  .post("/:name/claim", jsonRequest(claimRequestSchema), async (context) => {
+    try {
+      const input = context.req.valid("json");
+      const result = await createQueueClaimService(
+        context.get("services").prisma,
+      ).claim(await queuePrincipal(context), context.req.param("name"), input);
+      return context.json({ status: "ok" as const, ...result });
+    } catch (error) {
+      return queueFailure(context, error);
+    }
+  })
   .post(
-    "/:name/entries",
-    jsonRequest(enqueueRequestSchema),
-    async (context) => {
-      try {
-        const input = context.req.valid("json");
-        const result = await createQueueEnqueueService(
-          context.get("services").prisma,
-        ).enqueue(
-          await queuePrincipal(context),
-          context.req.param("name"),
-          input,
-        );
-        return context.json({ status: "ok" as const, ...result }, 201);
-      } catch (error) {
-        return queueFailure(context, error);
-      }
-    },
-  )
-  .post(
-    "/:name/subscriptions/:subscription/claim",
-    jsonRequest(claimRequestSchema),
-    async (context) => {
-      try {
-        const input = context.req.valid("json");
-        const result = await createQueueClaimService(
-          context.get("services").prisma,
-        ).claim(
-          await queuePrincipal(context),
-          context.req.param("name"),
-          context.req.param("subscription"),
-          input,
-        );
-        return context.json({ status: "ok" as const, ...result });
-      } catch (error) {
-        return queueFailure(context, error);
-      }
-    },
-  )
-  .post(
-    "/:name/deliveries/:id/ack",
+    "/:name/jobs/:id/ack",
     jsonRequest(ackRequestSchema),
     async (context) => {
       try {
         const input = context.req.valid("json");
-        const delivery = await createQueueSettlementService(
+        const job = await createQueueSettlementService(
           context.get("services").prisma,
         ).ack(
           await queuePrincipal(context),
@@ -69,19 +56,19 @@ export const queueDeliveriesRouter = new Hono<AppEnvironment>()
           context.req.param("id"),
           input,
         );
-        return context.json({ status: "ok" as const, delivery });
+        return context.json({ status: "ok" as const, job });
       } catch (error) {
         return queueFailure(context, error);
       }
     },
   )
   .post(
-    "/:name/deliveries/:id/nack",
+    "/:name/jobs/:id/nack",
     jsonRequest(nackRequestSchema),
     async (context) => {
       try {
         const input = context.req.valid("json");
-        const delivery = await createQueueSettlementService(
+        const job = await createQueueSettlementService(
           context.get("services").prisma,
         ).nack(
           await queuePrincipal(context),
@@ -89,19 +76,19 @@ export const queueDeliveriesRouter = new Hono<AppEnvironment>()
           context.req.param("id"),
           input,
         );
-        return context.json({ status: "ok" as const, delivery });
+        return context.json({ status: "ok" as const, job });
       } catch (error) {
         return queueFailure(context, error);
       }
     },
   )
   .post(
-    "/:name/deliveries/:id/extend",
+    "/:name/jobs/:id/extend",
     jsonRequest(extendRequestSchema),
     async (context) => {
       try {
         const input = context.req.valid("json");
-        const delivery = await createQueueSettlementService(
+        const job = await createQueueSettlementService(
           context.get("services").prisma,
         ).extend(
           await queuePrincipal(context),
@@ -109,43 +96,43 @@ export const queueDeliveriesRouter = new Hono<AppEnvironment>()
           context.req.param("id"),
           input,
         );
-        return context.json({ status: "ok" as const, delivery });
+        return context.json({ status: "ok" as const, job });
       } catch (error) {
         return queueFailure(context, error);
       }
     },
   )
   .post(
-    "/:name/deliveries/:id/cancel",
-    jsonRequest(deliveryActionSchema),
+    "/:name/jobs/:id/cancel",
+    jsonRequest(jobActionSchema),
     async (context) => {
       try {
-        const delivery = await createQueueSettlementService(
+        const job = await createQueueSettlementService(
           context.get("services").prisma,
         ).cancel(
           await queuePrincipal(context),
           context.req.param("name"),
           context.req.param("id"),
         );
-        return context.json({ status: "ok" as const, delivery });
+        return context.json({ status: "ok" as const, job });
       } catch (error) {
         return queueFailure(context, error);
       }
     },
   )
   .post(
-    "/:name/deliveries/:id/redrive",
-    jsonRequest(deliveryActionSchema),
+    "/:name/jobs/:id/redrive",
+    jsonRequest(jobActionSchema),
     async (context) => {
       try {
-        const delivery = await createQueueSettlementService(
+        const job = await createQueueSettlementService(
           context.get("services").prisma,
         ).redrive(
           await queuePrincipal(context),
           context.req.param("name"),
           context.req.param("id"),
         );
-        return context.json({ status: "ok" as const, delivery });
+        return context.json({ status: "ok" as const, job });
       } catch (error) {
         return queueFailure(context, error);
       }

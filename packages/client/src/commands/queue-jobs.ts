@@ -7,7 +7,7 @@ import {
   nackRequestSchema,
   resourceNameSchema,
   type ClaimResponse,
-  type DeliveryResponse,
+  type JobResponse,
   type EnqueueResponse,
 } from "@lastsaas/shared";
 import type { Command } from "commander";
@@ -36,7 +36,7 @@ function integer(value: string | undefined): number | undefined {
       : NaN;
 }
 function queueName(value: string): void {
-  validate(resourceNameSchema, value, "Invalid queue or subscription name.");
+  validate(resourceNameSchema, value, "Invalid queue name.");
 }
 
 interface EnqueueOptions {
@@ -58,7 +58,7 @@ async function payload(input: EnqueueOptions): Promise<unknown> {
   return parseJson(text, "--payload-file");
 }
 
-export function registerQueueDeliveries(
+export function registerQueueJobs(
   queues: Command,
   dependencies: OperationsCommandDependencies,
 ): void {
@@ -102,7 +102,7 @@ export function registerQueueDeliveries(
           const options = getGlobalOptions(command);
           const { client, orgId } = dependencies.getOrgClient(options);
           const result = await dependencies.handleResponse<EnqueueResponse>(
-            await client.v1.orgs[":orgId"].queues[":name"].entries.$post({
+            await client.v1.orgs[":orgId"].queues[":name"].jobs.$post({
               param: { orgId, name: queue },
               json: body,
             }),
@@ -113,13 +113,13 @@ export function registerQueueDeliveries(
     );
 
   queues
-    .command("claim <queue> <subscription>")
+    .command("claim <queue>")
     .description("Lease work and explicitly print lease tokens; never auto-ack")
     .option("--limit <n>", "Maximum claims (1..100, default 1)")
     .addHelpText(
       "after",
       `
-Process each returned payload, then explicitly ack with its delivery_id and
+Process each returned payload, then explicitly ack with its job_id and
 lease_token using --lease-token. Nack failed work; extend before expiry when needed.
 Delivery is at least once: consumers must be idempotent. has_more can indicate
 availability; poll again. An empty claim does not mean the queue is drained.
@@ -127,14 +127,8 @@ availability; poll again. An empty claim does not mean the queue is drained.
     )
     .action(
       withErrorHandling(
-        async (
-          queue: string,
-          subscription: string,
-          input: { limit?: string },
-          command: Command,
-        ) => {
+        async (queue: string, input: { limit?: string }, command: Command) => {
           queueName(queue);
-          queueName(subscription);
           const body = validate(
             claimRequestSchema,
             {
@@ -147,10 +141,8 @@ availability; poll again. An empty claim does not mean the queue is drained.
           const options = getGlobalOptions(command);
           const { client, orgId } = dependencies.getOrgClient(options);
           const result = await dependencies.handleResponse<ClaimResponse>(
-            await client.v1.orgs[":orgId"].queues[":name"].subscriptions[
-              ":subscription"
-            ].claim.$post({
-              param: { orgId, name: queue, subscription },
+            await client.v1.orgs[":orgId"].queues[":name"].claim.$post({
+              param: { orgId, name: queue },
               json: body,
             }),
           );
@@ -166,18 +158,15 @@ availability; poll again. An empty claim does not mean the queue is drained.
     "cancel",
     "redrive",
   ] as const) {
-    const action = queues
-      .command(`${operation} <queue> <delivery>`)
-      .description(
-        {
-          ack: "Acknowledge successful processing using the current lease token",
-          nack: "Release failed work for retry using the current lease token",
-          extend: "Extend the current lease before expiry",
-          cancel: "Cancel delivery (requires manage authority)",
-          redrive:
-            "Retry a dead or cancelled delivery (requires manage authority)",
-        }[operation],
-      );
+    const action = queues.command(`${operation} <queue> <job>`).description(
+      {
+        ack: "Acknowledge successful processing using the current lease token",
+        nack: "Release failed work for retry using the current lease token",
+        extend: "Extend the current lease before expiry",
+        cancel: "Cancel job (requires manage authority)",
+        redrive: "Retry a dead job (requires manage authority)",
+      }[operation],
+    );
     if (operation === "ack" || operation === "nack" || operation === "extend")
       action.requiredOption(
         "--lease-token <token>",
@@ -192,7 +181,7 @@ availability; poll again. An empty claim does not mean the queue is drained.
       withErrorHandling(
         async (
           queue: string,
-          delivery: string,
+          job: string,
           input: {
             leaseToken?: string;
             error?: string;
@@ -200,15 +189,14 @@ availability; poll again. An empty claim does not mean the queue is drained.
           command: Command,
         ) => {
           queueName(queue);
-          validate(automationIdSchema, delivery, "Invalid delivery ID.");
+          validate(automationIdSchema, job, "Invalid job ID.");
           const token = input.leaseToken;
           const message =
             "Invalid lease input: token required, error at most 1024 characters.";
           const options = getGlobalOptions(command);
           const { client, orgId } = dependencies.getOrgClient(options);
-          const api =
-            client.v1.orgs[":orgId"].queues[":name"].deliveries[":id"];
-          const param = { orgId, name: queue, id: delivery };
+          const api = client.v1.orgs[":orgId"].queues[":name"].jobs[":id"];
+          const param = { orgId, name: queue, id: job };
           try {
             const response =
               operation === "ack"
@@ -237,7 +225,7 @@ availability; poll again. An empty claim does not mean the queue is drained.
                       })
                     : await api[operation].$post({ param, json: {} });
             const result =
-              await dependencies.handleResponse<DeliveryResponse>(response);
+              await dependencies.handleResponse<JobResponse>(response);
             dependencies.writeOutput(result, options);
           } catch (error) {
             // Even an upstream error that echoes submitted input must not print a lease token.

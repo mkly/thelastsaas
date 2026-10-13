@@ -183,7 +183,6 @@ describe("notification audiences", () => {
     email.mockImplementation(async (message) => message.to !== alice.email);
     await queueNotifications(prisma, queue, orgId, sender.id, {
       subject: "Retry",
-      channel: "email",
       audience: { kind: "roles", roles: ["engineering"] },
     });
     const now = new Date(Date.now() + 1000);
@@ -194,7 +193,7 @@ describe("notification audiences", () => {
       }),
     ).toMatchObject({
       status: "pending",
-      channelResults: { failed: ["email"], succeeded: [] },
+      channelResults: { failed: ["email"], succeeded: ["console"] },
     });
     expect(
       await prisma.notification.findFirstOrThrow({
@@ -202,7 +201,7 @@ describe("notification audiences", () => {
       }),
     ).toMatchObject({
       status: "sent",
-      channelResults: { failed: [], succeeded: ["email"] },
+      channelResults: { failed: [], succeeded: ["email", "console"] },
     });
   });
 
@@ -214,7 +213,6 @@ describe("notification audiences", () => {
         kind: "roles",
         roles: ["engineering", "support", "engineering"],
       },
-      channel: "email",
       dedupeKey: "team-1",
     });
     expect(roles.recipient_count).toBe(2);
@@ -222,7 +220,6 @@ describe("notification audiences", () => {
     const users = await queueNotifications(prisma, queue, orgId, sender.id, {
       subject: "Team",
       audience: { kind: "users", users: [alice.email, alice.id, bob.id] },
-      channel: "email",
       dedupeKey: "team-1",
     });
     expect(users.ids).toEqual(roles.ids);
@@ -345,7 +342,6 @@ describe("notification audiences", () => {
     });
     const result = await queueNotifications(prisma, queue, orgId, sender.id, {
       subject: "Email",
-      channel: "email",
       audience: { kind: "users", users: [alice.id, bob.id, eve.id] },
     });
     expect(result).toMatchObject({
@@ -374,6 +370,7 @@ describe("notification audiences", () => {
       orgId,
       sender.id,
       {
+        subject: "Daily",
         message: "Daily",
         recurrence:
           "DTSTART;TZID=UTC:20261010T100000\nRRULE:FREQ=DAILY;COUNT=2",
@@ -412,6 +409,7 @@ describe("notification audiences", () => {
       orgId,
       sender.id,
       {
+        subject: "Fixed",
         message: "Fixed",
         deliver_at: "2026-10-10T10:00:00Z",
         audience: { kind: "users", users: [alice.email, bob.id] },
@@ -445,15 +443,18 @@ describe("notification audiences", () => {
     const { prisma, queue, orgId, sender, bob, email, processor } =
       await fixture();
     const team = await createNotificationSchedule(prisma, orgId, sender.id, {
+      subject: "Team",
       message: "Team",
       deliver_at: "2026-10-10T10:00:00Z",
       audience: { kind: "roles", roles: ["engineering"] },
     });
     await createNotificationSchedule(prisma, orgId, bob.id, {
+      subject: "Self",
       message: "Self",
       deliver_at: "2026-10-10T10:00:00Z",
     });
     const malformed = await createNotificationSchedule(prisma, orgId, bob.id, {
+      subject: "Malformed",
       message: "Malformed",
       deliver_at: "2026-10-10T10:00:00Z",
     });
@@ -463,7 +464,6 @@ describe("notification audiences", () => {
     });
     await queueNotifications(prisma, queue, orgId, sender.id, {
       subject: "Queued team",
-      channel: "email",
       audience: { kind: "roles", roles: ["engineering"] },
     });
     await removePolicy(
@@ -491,7 +491,8 @@ describe("notification audiences", () => {
       ).status,
     ).toBe("cancelled");
     await queue.processDue(new Date(Date.now() + 1000));
-    expect(email).not.toHaveBeenCalled();
+    expect(email).toHaveBeenCalledTimes(1);
+    expect(email.mock.calls[0]![0].to).toBe(bob.email);
     expect(
       await prisma.notification.count({
         where: {
@@ -508,7 +509,6 @@ describe("notification audiences", () => {
     const { prisma, queue, orgId, sender, alice, bob, email } = await fixture();
     await queueNotifications(prisma, queue, orgId, sender.id, {
       subject: "Queued",
-      channel: "email",
       audience: { kind: "roles", roles: ["engineering"] },
     });
     await unassignRole(prisma, orgId, alice.id, "engineering");
@@ -531,7 +531,6 @@ describe("notification audiences", () => {
     });
     const leaving = await queueNotifications(prisma, queue, orgId, sender.id, {
       subject: "Sender leaving",
-      channel: "email",
       audience: { kind: "users", users: [bob.id] },
     });
     await prisma.member.delete({
@@ -555,6 +554,7 @@ describe("notification audiences", () => {
       orgId,
       sender.id,
       {
+        subject: "Atomic",
         message: "Atomic",
         deliver_at: "2026-10-10T10:00:00Z",
         audience: { kind: "roles", roles: ["engineering"] },
@@ -594,6 +594,7 @@ describe("notification audiences", () => {
       orgId,
       sender.id,
       {
+        subject: "Exported",
         message: "Exported",
         deliver_at: "2026-10-10T10:00:00Z",
         audience: { kind: "users", users: [alice.email] },
@@ -643,7 +644,7 @@ describe("notification audiences", () => {
     expect(
       (
         await app.request(
-          "/notifications/queue",
+          "/notifications/notify",
           request({
             subject: "No",
             audience: { kind: "users", users: [eve.id] },
@@ -652,18 +653,21 @@ describe("notification audiences", () => {
       ).status,
     ).toBe(403);
     const scheduled = await app.request(
-      "/notifications/schedules",
+      "/notifications/notify",
       request({
+        subject: "Yes",
         message: "Yes",
-        deliver_at: "2026-10-10T10:00:00Z",
+        timing: { kind: "once", at: "2026-10-10T10:00:00Z" },
         audience: { kind: "users", users: [alice.email] },
       }),
     );
     expect(scheduled.status).toBe(201);
     expect(await scheduled.json()).toMatchObject({
-      audience: { kind: "users", users: [alice.id] },
-      created_by: sender.id,
-      recipient: alice.id,
+      schedule: {
+        audience: { kind: "users", users: [alice.id] },
+        created_by: sender.id,
+        recipient: alice.id,
+      },
     });
     const server = new McpServer({ name: "audience-test", version: "1.0.0" });
     registerOperationsTools(server, {
@@ -682,7 +686,7 @@ describe("notification audiences", () => {
     await client.connect(clientTransport);
     try {
       const denied = await client.callTool({
-        name: "notifications_queue",
+        name: "notify",
         arguments: {
           subject: "No",
           audience: { kind: "users", users: [eve.email] },
@@ -694,7 +698,7 @@ describe("notification audiences", () => {
       });
       expect(await prisma.notification.count({ where: { orgId } })).toBe(0);
       const allowed = await client.callTool({
-        name: "notifications_queue",
+        name: "notify",
         arguments: {
           subject: "Yes",
           audience: { kind: "roles", roles: ["engineering"] },

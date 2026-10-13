@@ -1,25 +1,20 @@
 import { jsonRequest, queryRequest } from "../lib/transport";
 import {
-  deliveryListSchema,
-  entryListSchema,
+  jobListSchema,
   pageRequestSchema,
   queueCreateSchema,
   queueUpdateSchema,
-  subscriptionCreateSchema,
-  subscriptionUpdateSchema,
 } from "@lastsaas/shared";
 import { Hono, type Context } from "hono";
 import type { AppEnvironment } from "../env";
 import { createQueueConfigService } from "../queues/config";
 import { createQueueReadService } from "../queues/read";
-import { createQueueSubscriptionService } from "../queues/subscriptions";
 import { queueFailure, queuePrincipal } from "./queue-http";
 
 function service(context: Context<AppEnvironment>) {
   const { prisma } = context.get("services");
   return {
     ...createQueueConfigService(prisma),
-    ...createQueueSubscriptionService(prisma),
     ...createQueueReadService(prisma),
   };
 }
@@ -84,72 +79,9 @@ export const queuesRouter = new Hono<AppEnvironment>()
       return queueFailure(context, error);
     }
   })
-  .post(
-    "/:name/subscriptions",
-    jsonRequest(subscriptionCreateSchema),
-    async (context) => {
-      try {
-        const input = context.req.valid("json");
-        const subscription = await service(context).createSubscription(
-          await queuePrincipal(context),
-          context.req.param("name"),
-          input,
-        );
-        return context.json({ status: "ok" as const, subscription }, 201);
-      } catch (error) {
-        return queueFailure(context, error);
-      }
-    },
-  )
-  .get(
-    "/:name/subscriptions",
-    queryRequest(pageRequestSchema),
-    async (context) => {
-      try {
-        const page = await service(context).listSubscriptions(
-          await queuePrincipal(context),
-          context.req.param("name"),
-          context.req.valid("query"),
-        );
-        return context.json({ status: "ok" as const, ...page });
-      } catch (error) {
-        return queueFailure(context, error);
-      }
-    },
-  )
-  .patch(
-    "/:name/subscriptions/:subscription",
-    jsonRequest(subscriptionUpdateSchema),
-    async (context) => {
-      try {
-        const input = context.req.valid("json");
-        const subscription = await service(context).updateSubscription(
-          await queuePrincipal(context),
-          context.req.param("name"),
-          context.req.param("subscription"),
-          input,
-        );
-        return context.json({ status: "ok" as const, subscription });
-      } catch (error) {
-        return queueFailure(context, error);
-      }
-    },
-  )
-  .delete("/:name/subscriptions/:subscription", async (context) => {
+  .get("/:name/jobs", queryRequest(jobListSchema), async (context) => {
     try {
-      await service(context).deleteSubscription(
-        await queuePrincipal(context),
-        context.req.param("name"),
-        context.req.param("subscription"),
-      );
-      return context.json({ status: "ok" as const });
-    } catch (error) {
-      return queueFailure(context, error);
-    }
-  })
-  .get("/:name/entries", queryRequest(entryListSchema), async (context) => {
-    try {
-      const page = await service(context).listEntries(
+      const page = await service(context).listJobs(
         await queuePrincipal(context),
         context.req.param("name"),
         context.req.valid("query"),
@@ -158,20 +90,4 @@ export const queuesRouter = new Hono<AppEnvironment>()
     } catch (error) {
       return queueFailure(context, error);
     }
-  })
-  .get(
-    "/:name/deliveries",
-    queryRequest(deliveryListSchema),
-    async (context) => {
-      try {
-        const page = await service(context).listDeliveries(
-          await queuePrincipal(context),
-          context.req.param("name"),
-          context.req.valid("query"),
-        );
-        return context.json({ status: "ok" as const, ...page });
-      } catch (error) {
-        return queueFailure(context, error);
-      }
-    },
-  );
+  });

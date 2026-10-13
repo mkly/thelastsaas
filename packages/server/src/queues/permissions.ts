@@ -55,23 +55,8 @@ export async function resolveQueueConsumerGrants(
   db: Prisma.TransactionClient,
   principal: Principal,
   name: string,
-  subscriptionName: string,
 ) {
   const queue = await authorizeQueueAction(db, principal, name, "read");
   await authorizeQueueAction(db, principal, name, "update");
-  const subscription = await db.queueSubscription.findUnique({
-    where: { queueId_name: { queueId: queue.id, name: subscriptionName } },
-  });
-  if (!subscription) throw new AutomationNotFoundError();
-  if (
-    !(await hasPermission(
-      db,
-      principal.orgId,
-      principal.userId,
-      `/queues/${name}/subscriptions/${subscriptionName}`,
-      "update",
-    ))
-  )
-    throw new PermissionDeniedError();
-  return { queue, subscription };
+  return queue;
 }

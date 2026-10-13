@@ -12,8 +12,9 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import type {
   ClaimResponse,
-  DeliveryListResponse,
-  DeliveryResponse,
+  JobListResponse,
+  JobResponse,
+  NotifyResponse,
   EnqueueResponse,
 } from "@lastsaas/shared";
 
@@ -234,7 +235,6 @@ async function smoke(provider: "sqlite" | "postgres"): Promise<void> {
     );
     const orgId = org.organization.id;
     await cli("queues", "create", "smoke", "--schema", '{"message":"string"}');
-    await cli("queues", "subscriptions", "create", "smoke", "worker");
     const enqueued = await cli<EnqueueResponse>(
       "queues",
       "enqueue",
@@ -242,41 +242,63 @@ async function smoke(provider: "sqlite" | "postgres"): Promise<void> {
       "--payload",
       '{"message":"built smoke"}',
     );
-    assert.equal(enqueued.entries.length, 1);
-    assert.equal(enqueued.delivery_count, 1);
+    assert.equal(enqueued.jobs.length, 1);
     const claimed = await cli<ClaimResponse>(
       "queues",
       "claim",
       "smoke",
-      "worker",
       "--limit",
       "1",
     );
     assert.equal(claimed.claims.length, 1);
     const claim = claimed.claims[0]!;
-    assert.equal(claim.entry_id, enqueued.entries[0]!.id);
+    assert.equal(claim.job_id, enqueued.jobs[0]!.id);
     assert.deepEqual(claim.payload, { message: "built smoke" });
-    const ack = await cli<DeliveryResponse>(
+    const ack = await cli<JobResponse>(
       "queues",
       "ack",
       "smoke",
-      claim.delivery_id,
+      claim.job_id,
       "--lease-token",
       claim.lease_token,
     );
-    assert.equal(ack.delivery.state, "succeeded");
-    const settled: DeliveryListResponse = await (
-      await request(
-        `/v1/orgs/${orgId}/queues/smoke/deliveries?subscription=worker&state=succeeded`,
-        { headers: { authorization: `Bearer ${token}` } },
-      )
+    assert.equal(ack.job.state, "succeeded");
+    const settled: JobListResponse = await (
+      await request(`/v1/orgs/${orgId}/queues/smoke/jobs?state=succeeded`, {
+        headers: { authorization: `Bearer ${token}` },
+      })
     ).json();
     assert.equal(settled.items.length, 1);
-    assert.equal(settled.items[0]!.id, claim.delivery_id);
+    assert.equal(settled.items[0]!.id, claim.job_id);
     assert.equal(settled.items[0]!.state, "succeeded");
     assert.equal(settled.items[0]!.lease_expires_at, null);
+    const notification = await cli<NotifyResponse>(
+      "notify",
+      "--subject",
+      "Built notification",
+      "--message",
+      "Smoke check complete",
+    );
+    assert.equal(notification.kind, "immediate");
+    if (notification.kind !== "immediate")
+      throw new Error("Expected immediate notification");
+    assert.equal(notification.queued_count, 1);
+    const reminder = await cli<NotifyResponse>(
+      "notify",
+      "--subject",
+      "Built reminder",
+      "--at",
+      "2030-01-01T09:00:00Z",
+      "--dedupe-key",
+      "built-reminder",
+    );
+    assert.equal(reminder.kind, "scheduled");
+    if (reminder.kind !== "scheduled")
+      throw new Error("Expected scheduled notification");
+    assert.equal(reminder.schedule.subject, "Built reminder");
+    await cli("notifications", "schedules", "cancel", reminder.schedule.id);
     console.log(
-      `${provider}: compiled CLI whoami, org create, queue/subscription create, enqueue, claim, ack and public API settled confirmation passed`,
+      `${provider}: compiled CLI whoami, org create, queue create, enqueue, claim, ack, notify, schedule cancellation and public API settled confirmation passed`,
     );
   } finally {
     server.kill("SIGTERM");

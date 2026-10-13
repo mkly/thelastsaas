@@ -89,9 +89,6 @@ for (const transport of ["REST", "MCP"] as const) {
           schema: { title: "string" },
         },
       });
-      await services.prisma.queueSubscription.create({
-        data: { id: "sub", queueId: "jobs", name: "workers" },
-      });
       services.auth = {
         api: {
           getSession: async ({ headers }: { headers: Headers }) => {
@@ -161,7 +158,6 @@ for (const transport of ["REST", "MCP"] as const) {
       return Promise.all([
         services.prisma.record.count(),
         services.prisma.queueEntry.count(),
-        services.prisma.queueDelivery.count(),
         services.prisma.auditLog.count(),
         services.prisma.transactionRequest.count(),
       ]);
@@ -201,7 +197,7 @@ for (const transport of ["REST", "MCP"] as const) {
       expect(changed.body.status).toBe("ok");
       expect(changed.body.results[0].record.data.title).toBe("${results.0.id}");
       expect(changed.body.results[1]).toEqual({ op: "record.delete", id });
-      expect(await counts()).toEqual([0, 1, 1, 4, 1]);
+      expect(await counts()).toEqual([0, 1, 4, 1]);
       expect(
         JSON.stringify(await services.prisma.auditLog.findMany()),
       ).not.toContain(sentinel);
@@ -218,7 +214,7 @@ for (const transport of ["REST", "MCP"] as const) {
       );
       expect(failed.body.error).toBe("PermissionDeniedError");
       if (transport === "REST") expect(failed.status).toBe(403);
-      expect(await counts()).toEqual([0, 0, 0, 0, 0]);
+      expect(await counts()).toEqual([0, 0, 0, 0]);
       // Preserve the distinct field-denial envelope without rebuilding the
       // service's 25-operation and rollback matrix at each transport.
       await grant("create", { fields: ["title"] });
@@ -232,7 +228,7 @@ for (const transport of ["REST", "MCP"] as const) {
       const fieldDenied = await call({ operations: [create] }, "worker");
       expect(fieldDenied.body.error).toBe("FieldPermissionDeniedError");
       if (transport === "REST") expect(fieldDenied.status).toBe(403);
-      expect(await counts()).toEqual([0, 0, 0, 0, 0]);
+      expect(await counts()).toEqual([0, 0, 0, 0]);
     });
     test("row/field constraints and revocation apply to idempotent replay", async () => {
       await grant("create");
@@ -279,7 +275,7 @@ for (const transport of ["REST", "MCP"] as const) {
       expect((await call(input, "worker")).body.error).toBe(
         "PermissionDeniedError",
       );
-      expect(await counts()).toEqual([1, 0, 0, 1, 1]);
+      expect(await counts()).toEqual([1, 0, 1, 1]);
     });
     test("idempotency is scoped to authenticated principal; identity overrides and foreign resources fail", async () => {
       await grant("create");
@@ -332,7 +328,7 @@ for (const transport of ["REST", "MCP"] as const) {
       }
       const malformed = await call({}, "admin", "{broken");
       expect(malformed.status).toBe(400);
-      expect(await counts()).toEqual([0, 0, 0, 0, 0]);
+      expect(await counts()).toEqual([0, 0, 0, 0]);
     });
     test("standard ingress limits bound JSON and streamed requests", async () => {
       const input = { operations: [create] };
@@ -378,7 +374,7 @@ for (const transport of ["REST", "MCP"] as const) {
           status: "error",
           error: "RequestTooLarge",
         });
-        expect(await counts()).toEqual([0, 0, 0, 0, 0]);
+        expect(await counts()).toEqual([0, 0, 0, 0]);
       } finally {
         server.stop(true);
       }
@@ -445,7 +441,7 @@ for (const transport of ["REST", "MCP"] as const) {
           expect(response.structuredContent).toMatchObject({
             error: "Unauthorized",
           });
-          expect(await counts()).toEqual([0, 0, 0, 0, 0]);
+          expect(await counts()).toEqual([0, 0, 0, 0]);
         } finally {
           await Promise.allSettled([client.close(), server.close()]);
         }

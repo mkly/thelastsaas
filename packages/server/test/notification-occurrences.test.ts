@@ -85,6 +85,7 @@ describe("atomic notification occurrences", () => {
   test("independent workers racing the same cursor publish each occurrence once", async () => {
     const { prisma, url, processor, create } = await fixture();
     const row = await create({
+      subject: "Race",
       message: "Race",
       recurrence:
         "DTSTART;TZID=UTC:20261010T100000\nRRULE:FREQ=MINUTELY;COUNT=3",
@@ -122,6 +123,7 @@ describe("atomic notification occurrences", () => {
   test("cursor failure rolls back domain fanout and job publication", async () => {
     const { prisma, queue, processor, create } = await fixture();
     const row = await create({
+      subject: "Rollback",
       message: "Rollback",
       deliver_at: first.toISOString(),
       audience: { kind: "all" },
@@ -145,7 +147,6 @@ describe("atomic notification occurrences", () => {
     );
     expect(await prisma.notification.count()).toBe(0);
     expect(await prisma.queueEntry.count()).toBe(0);
-    expect(await prisma.queueDelivery.count()).toBe(0);
     expect(
       await prisma.notificationSchedule.findUniqueOrThrow({
         where: { id: row.id },
@@ -162,6 +163,7 @@ describe("atomic notification occurrences", () => {
   test("each committed occurrence refreshes dynamic audiences and current grants", async () => {
     const { prisma, queue, create } = await fixture();
     const row = await create({
+      subject: "Dynamic",
       message: "Dynamic",
       recurrence:
         "DTSTART;TZID=UTC:20261010T100000\nRRULE:FREQ=MINUTELY;COUNT=3",
@@ -220,6 +222,7 @@ describe("atomic notification occurrences", () => {
   test("fixed recipients keep IDs and departed self owners cannot materialize", async () => {
     const { prisma, processor, create } = await fixture();
     const fixed = await create({
+      subject: "Fixed",
       message: "Fixed",
       deliver_at: first.toISOString(),
       audience: { kind: "users", users: ["alice@example.com"] },
@@ -239,6 +242,7 @@ describe("atomic notification occurrences", () => {
       }),
     ).toMatchObject({ userId: "alice", createdByUserId: "owner" });
     const self = await create({
+      subject: "Self",
       message: "Self",
       deliver_at: first.toISOString(),
     });
@@ -257,6 +261,7 @@ describe("atomic notification occurrences", () => {
   test("cancellation after selection is observed under the occurrence lock", async () => {
     const { prisma, queue, create } = await fixture();
     const row = await create({
+      subject: "Cancelled",
       message: "Cancelled",
       deliver_at: first.toISOString(),
     });

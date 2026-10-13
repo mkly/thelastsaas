@@ -1,7 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import type { JsonObject } from "@lastsaas/shared";
 
-/** One backend queue per application subscription. Libraries own delivery state. */
+/** One backend queue per application work queue. Libraries own delivery state. */
 export interface JobPolicy {
   attempts: number;
   leaseSeconds: number;

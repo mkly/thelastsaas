@@ -34,7 +34,7 @@ secret IDs, and the destination's active key version. Existing secrets with the
 same name cause a conflict; restore never overwrites them. Missing/wrong keys,
 tampered ciphertext or authenticated identity metadata, duplicate names and
 other import failures roll back the entire import. No partial secret restore is
-committed. Ordinary legacy dumps still import without any keys.
+committed. Exports without secrets can be imported without encryption keys.
 
 An imported secret remains subject to the usual separate metadata and reveal
 permissions: `read /secrets/<name>` does not grant

@@ -2,7 +2,7 @@ import {
   AutomationConflictError,
   AutomationNotFoundError,
   ackRequestSchema,
-  deliveryIdSchema,
+  jobIdSchema,
   extendRequestSchema,
   nackRequestSchema,
   genId,
@@ -15,9 +15,10 @@ import {
   authorizeQueueAction,
   resolveQueueConsumerGrants,
 } from "./permissions";
+import { claimTokenHash } from "./claim";
 import { parseQueueRequest } from "./config";
-import { unitJobs, subscriptionQueue, subscriptionPolicy } from "../jobs";
-import { serializeQueueDelivery } from "./read";
+import { unitJobs, workQueue, queuePolicy } from "../jobs";
+import { serializeQueueJob } from "./read";
 import type { AutomationContext } from "@lastsaas/shared";
 
 export function createQueueSettlementService(
@@ -34,8 +35,8 @@ export function createQueueSettlementService(
     action: "ack" | "nack" | "extend" | "cancel" | "redrive",
     input?: { token: string; error?: string },
   ) {
-    parseQueueRequest(deliveryIdSchema, id);
-    const { row, jobs } = await withUnitOfWork(
+    parseQueueRequest(jobIdSchema, id);
+    const { row, config, jobs } = await withUnitOfWork(
       { prisma, provider },
       async (unit) => {
         const queue = await authorizeQueueAction(
@@ -44,47 +45,64 @@ export function createQueueSettlementService(
           name,
           action === "cancel" || action === "redrive" ? "manage" : "read",
         );
-        const row = await unit.db.queueDelivery.findFirst({
+        const row = await unit.db.queueEntry.findFirst({
           where: { id, queueId: queue.id },
-          include: { subscription: true },
         });
         if (!row) throw new AutomationNotFoundError();
         if (action !== "cancel" && action !== "redrive")
-          await resolveQueueConsumerGrants(
-            unit.db,
-            context,
-            name,
-            row.subscription.name,
-          );
-        return { row, jobs: unitJobs(unit) };
+          await resolveQueueConsumerGrants(unit.db, context, name);
+        return { row, config: queue, jobs: unitJobs(unit) };
       },
     );
-    const queue = subscriptionQueue(row.subscriptionId);
+    const queue = workQueue(row.queueId);
     await jobs.flush();
     const prior = await jobs.get(queue, id);
     if (!prior) throw new AutomationNotFoundError();
-    if (action === "ack") await jobs.complete(queue, id, input!.token);
+    if (
+      input &&
+      (row.claimedBy !== context.userId ||
+        row.claimTokenHash !== claimTokenHash(input.token) ||
+        row.nativeClaimToken === null ||
+        prior.state !== "leased" ||
+        !prior.expiresAt ||
+        Date.parse(prior.expiresAt) <= Date.now())
+    )
+      throw new AutomationConflictError("Job claim is no longer valid");
+    if (action === "ack") await jobs.complete(queue, id, row.nativeClaimToken!);
     if (action === "nack")
-      await jobs.fail(queue, id, input!.token, input!.error);
+      await jobs.fail(queue, id, row.nativeClaimToken!, input!.error);
     if (action === "extend")
       await jobs.heartbeat(
         queue,
         id,
-        input!.token,
-        subscriptionPolicy(row.subscription),
+        row.nativeClaimToken!,
+        queuePolicy(config),
       );
     if (action === "cancel") {
       if (!["ready", "leased"].includes(prior.state))
         throw new AutomationConflictError(
-          "Only unfinished deliveries can be cancelled",
+          "Only unfinished jobs can be cancelled",
         );
       await jobs.cancel(queue, id);
     }
     if (action === "redrive") {
       if (prior.state !== "dead")
-        throw new AutomationConflictError(
-          "Only dead deliveries can be redriven",
-        );
+        throw new AutomationConflictError("Only dead jobs can be redriven");
+      const cleared = await prisma.queueEntry.updateMany({
+        where: {
+          id,
+          claimTokenHash: row.claimTokenHash,
+          claimedAttempt: row.claimedAttempt,
+        },
+        data: {
+          claimedAttempt: 0,
+          claimedBy: null,
+          claimTokenHash: null,
+          nativeClaimToken: null,
+        },
+      });
+      if (cleared.count !== 1)
+        throw new AutomationConflictError("Job claim has changed");
       await jobs.retry(queue, id);
     }
     await prisma.auditLog.create({
@@ -92,14 +110,14 @@ export function createQueueSettlementService(
         id: genId(),
         orgId: context.orgId,
         userId: context.userId,
-        action: `${action}_queue_delivery`,
-        resourceType: "queue_delivery",
+        action: `${action}_queue_job`,
+        resourceType: "queue_job",
         resourceId: id,
-        details: { queue_id: row.queueId, subscription_id: row.subscriptionId },
+        details: { queue_id: row.queueId },
       },
     });
     const result = await jobs.get(queue, id);
-    return serializeQueueDelivery(
+    return serializeQueueJob(
       row,
       result ?? {
         ...prior,

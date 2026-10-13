@@ -143,12 +143,6 @@ export async function validateScheduleDestination(
   const schema = queue.schema as Schema;
   parseRequest(queuePayloadSchema(schema), payload);
   if (!queue.enabled) throw new AutomationConflictError("Queue is disabled");
-  if (
-    !(await unit.db.queueSubscription.count({
-      where: { queueId: queue.id, enabled: true },
-    }))
-  )
-    throw new AutomationConflictError("Queue has no enabled subscriptions");
   return queue;
 }
 

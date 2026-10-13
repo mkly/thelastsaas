@@ -19,15 +19,15 @@ can be mixed in a selected-people audience (up to 200 references per request).
 ## Send and schedule
 
 ```sh
-saas notifications queue --subject "Build ready" --message "Please review" \
-  --to alice@example.com --to <user-id> --channel email --dedupe-key build-42
+saas notify --subject "Build ready" --message "Please review" \
+  --to alice@example.com --to <user-id> --dedupe-key build-42
 
-saas notifications schedules once --at 2026-10-15T09:00:00Z \
-  --message "All hands" --to-all --channel email
+saas notify --at 2026-10-15T09:00:00Z \
+  --subject "All hands" --to-all
 
-saas notifications schedules recurring \
+saas notify \
   --recurrence $'DTSTART;TZID=UTC:20261015T090000\nRRULE:FREQ=WEEKLY' \
-  --message "Weekly engineering update" --to-role engineering --channel email
+  --subject "Weekly engineering update" --to-role engineering
 
 saas notifications schedules list
 saas notifications schedules cancel <schedule-id>
@@ -37,11 +37,18 @@ Select the organization with the global `--org` option or your saved CLI
 configuration. One-shot schedules take an ISO timestamp; recurring schedules
 use the same recurrence format as collection recurrence fields.
 
-REST accepts `audience` on `POST /v1/orgs/:orgId/notifications/queue` and
-`POST /v1/orgs/:orgId/notifications/schedules`. MCP accepts it on
-`notifications_queue`, `notification_schedules_create_once`, and
-`notification_schedules_create_recurring`. These entry points share the same
-audience resolution, authorization, and scheduling helpers.
+REST uses `POST /v1/orgs/:orgId/notifications/notify`; MCP uses `notify`.
+Both accept `{audience?,subject,message?,type?,data?,dedupe_key?,timing?}`.
+Omit timing to send now; use `{kind:"once",at:"2030-01-01T09:00:00Z"}` or
+`{kind:"recurring",recurrence:"DTSTART:20300101T090000Z\nRRULE:FREQ=WEEKLY"}`
+to schedule. CLI `--at` and `--recurrence` are mutually exclusive.
+
+Immediate responses have `kind: "immediate"`, notification `ids`, and
+recipient/queued/skipped counts. Scheduled responses have `kind: "scheduled"`
+and a `schedule` with its ID, subject and next occurrence. Acceptance means the
+request is stored; external delivery happens in the background. A retry with
+the same sender-scoped schedule key returns the same schedule. Reusing that key
+with different content, timing or audience is rejected.
 
 ## Destination permissions
 
@@ -80,34 +87,28 @@ grant cancels a team schedule when it next runs. A departed sender cancels
 any owned schedule, including self reminders.
 
 Each recipient gets an independent delivery row, with separate read state and
-delivery retries. Once queued, the recipient list is fixed; pending team
+delivery retries. Once queued, the recipient list is fixed; pending
 deliveries recheck membership, sender permissions, current email address, and
 preferences before dispatch. A delivery that is no longer authorized is
 cancelled. A schedule's creator lists and cancels the schedule; each recipient
 lists, reads, and deletes their own notifications. Cancelling a schedule stops
 future occurrences; it does not retract notifications already queued.
 
-For other recipients, in-app and email preferences constrain the sender's
-requested channels. Self retains the explicitly requested delivery behavior.
-`--channel email` requests email; schedules default to the console channel.
-Recipients with no requested channel enabled are skipped. Queue responses
-include `ids`, `recipient_count`, `queued_count`, and `skipped_count`; `id` is
-`null` unless exactly one notification is queued, so read `ids` for team sends.
-Counts include existing rows returned by a deduplicated retry. Use a stable
-`dedupe_key` for immediate request retries; keys are scoped to the sender and
-recipient within the organization, so other senders cannot collide with them.
-Scheduled occurrences deduplicate by schedule, occurrence, and recipient.
-Schedule responses include `audience`; `recipient` is the single destination
-user ID, or `null` for role, everyone, and multi-person audiences.
+In-app and email preferences apply to every recipient, including yourself.
+The server selects delivery channels; senders do not choose channel names.
+Muted recipients are skipped. Preferences are checked again before delivery,
+and successful external channels are skipped on retries. Delivery does not mark
+a notification read. Console is the development delivery adapter when SMTP is
+not configured.
 
-Each occurrence locks its schedule, resolves its audience and rechecks current
-owner authority in the same transaction as recipient rows, publication and cursor
-advancement. After downtime recurring schedules publish once for missed work and
-advance past the current time. Competing schedulers recheck the locked cursor.
+Scheduled messages contain fixed content. They do not run an AI assistant.
+For recurring research or analysis, use an assistant's scheduler or an external
+worker, then call `notify` with the result. Notification processing uses private
+backend queues; ordinary work-queue consumers cannot claim these deliveries.
 
-## Delivery jobs
-
-pg-boss or Bunqueue owns notification leases and retries. Notification rows retain
-inbox/read state and per-channel results. Successful channels are skipped on retry;
-a crash between sending and recording success can still redeliver. Queue completion
-does not mark the inbox notification read. See [backend operations](job-backends.md).
+```sh
+saas notifications list --unread
+saas notifications read <notification-id>
+saas notifications preferences show
+saas notifications preferences set-default --in-app on --email off
+```

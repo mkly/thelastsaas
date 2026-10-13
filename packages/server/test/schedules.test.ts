@@ -89,9 +89,6 @@ async function fixture() {
       },
     ],
   });
-  await prisma.queueSubscription.create({
-    data: { id: "workers", queueId: "jobs", name: "workers" },
-  });
   const service = createScheduleService(prisma, provider);
   const grant = (
     userId: string,
@@ -157,7 +154,7 @@ describe(`schedule management (${provider})`, () => {
     await service.delete(creator, row.id);
     expect(await prisma.queueSchedule.count()).toBe(0);
     expect(await prisma.queueEntry.count()).toBe(0);
-    expect(await prisma.queueDelivery.count()).toBe(0);
+    expect(await prisma.queueEntry.count()).toBe(0);
     const audits = await prisma.auditLog.findMany({
       orderBy: { createdAt: "asc" },
     });
@@ -342,13 +339,9 @@ describe(`schedule management (${provider})`, () => {
       where: { id: "jobs" },
       data: { enabled: true },
     });
-    await prisma.queueSubscription.update({
-      where: { id: "workers" },
-      data: { enabled: false },
-    });
-    await expect(
-      service.update(editor, row.id, { enabled: true }),
-    ).rejects.toMatchObject({ code: "AutomationConflictError" });
+    expect(
+      (await service.update(editor, row.id, { enabled: true })).status,
+    ).toBe("active");
     expect(
       (await prisma.queueSchedule.findUniqueOrThrow({ where: { id: row.id } }))
         .payload,

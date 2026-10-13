@@ -77,13 +77,6 @@ describe("trigger REST and MCP transports", () => {
           schema: { title: "string", count: "number" },
         },
       });
-      await services.prisma.queueSubscription.create({
-        data: {
-          id: `${orgId}-workers`,
-          queueId: `${orgId}-jobs`,
-          name: "workers",
-        },
-      });
     }
     for (const userId of ["admin", "worker", "foreign"]) {
       await services.prisma.user.create({

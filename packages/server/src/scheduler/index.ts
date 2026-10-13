@@ -15,7 +15,6 @@ import { withUnitOfWork } from "../db/unit-of-work";
 import { notificationDeliveryInput } from "../db/notifications";
 import { parseRecurrence } from "../lib/recurrence";
 import { log } from "../logger";
-import { deriveNotificationSubject } from "../notifications/channels";
 import type { NotificationQueue } from "../notifications/queue";
 import { maintainQueues } from "../queues/maintenance";
 import { createScheduleMaterializer } from "../schedules/materialize";
@@ -37,14 +36,6 @@ function dataObject(value: Prisma.JsonValue | null): object | undefined {
     : undefined;
 }
 
-function channels(value: string): string[] | undefined {
-  const parsed = value
-    .split(",")
-    .map((channel) => channel.trim())
-    .filter(Boolean);
-  return parsed.length ? parsed : undefined;
-}
-
 export interface BackgroundScheduler {
   readonly name: "sqlite" | "pg-boss";
   start(): Promise<void>;
@@ -60,8 +51,7 @@ interface ScheduleRow {
   type: string;
   message: string;
   data: Prisma.JsonValue | null;
-  inApp: boolean;
-  channel: string;
+  subject: string;
   deliverAt: Date | null;
   recurrence: string | null;
   nextOccurrenceAt: Date | null;
@@ -222,7 +212,6 @@ export class NotificationScheduleProcessor {
     recipients: NotificationRecipient[],
   ): Promise<void> {
     const data = dataObject(row.data);
-    const deliveryChannels = channels(row.channel);
     for (const recipient of recipients) {
       const input = notificationDeliveryInput(
         row.orgId,
@@ -231,10 +220,8 @@ export class NotificationScheduleProcessor {
         {
           type: row.type,
           message: row.message,
-          subject: deriveNotificationSubject(row.message),
+          subject: row.subject,
           ...(data ? { data } : {}),
-          inApp: row.inApp,
-          ...(deliveryChannels ? { channel: deliveryChannels.join(",") } : {}),
           dedupeKey: `notification-schedule:${row.id}:${occurrenceAt.toISOString()}`,
         },
       );

@@ -1,4 +1,6 @@
 import {
+  notifySchema,
+  type NotifyResponse,
   type Notification,
   type NotificationSchedule,
   type NotificationAudience,
@@ -159,44 +161,6 @@ function addAudienceOptions(command: Command): Command {
     .option("--to-all", "Notify all human organization members, including you");
 }
 
-interface DeliveryOptions extends AudienceOptions {
-  message: string;
-  type: string;
-  data?: string;
-  inApp?: string;
-  channel?: string;
-  dedupeKey?: string;
-}
-
-function deliveryBody(
-  options: DeliveryOptions,
-  dependencies: NotificationsCommandDependencies,
-): Record<string, unknown> {
-  return {
-    ...audienceBody(options),
-    message: options.message,
-    type: options.type,
-    ...(options.data
-      ? { data: dependencies.parseJson(options.data, "--data") }
-      : {}),
-    ...(options.inApp === undefined
-      ? {}
-      : { in_app: toggle(options.inApp, "--in-app") }),
-    ...(options.channel ? { channel: options.channel } : {}),
-    ...(options.dedupeKey ? { dedupe_key: options.dedupeKey } : {}),
-  };
-}
-
-function addDeliveryOptions(command: Command): Command {
-  return addAudienceOptions(command)
-    .requiredOption("--message <text>", "Notification message")
-    .option("--type <type>", "Notification type", "direct_notification")
-    .option("--data <json>", "Notification payload as JSON")
-    .option("--in-app <state>", "Whether to expose it in-app")
-    .option("--channel <name>", "Delivery channel")
-    .option("--dedupe-key <key>", "Stable delivery deduplication key");
-}
-
 export function registerNotifications(
   program: Command,
   dependencies: NotificationsCommandDependencies = defaultDependencies,
@@ -286,78 +250,65 @@ export function registerNotifications(
       ),
     );
 
-  addAudienceOptions(notifications.command("queue"))
-    .description("Queue a notification for immediate delivery")
-    .option("--dedupe-key <key>", "Stable delivery deduplication key")
-    .requiredOption("--subject <text>", "Email subject")
-    .option("--message <text>", "In-app notification message")
-    .option("--text <text>", "Plain-text email body")
-    .option("--html <html>", "HTML email body")
-    .option("--data <json>", "Notification payload as JSON")
-    .option("--type <type>", "Notification type", "direct_notification")
-    .option("--in-app <state>", "Whether to expose it in-app")
-    .option("--channel <name>", "Delivery channel")
+  addAudienceOptions(program.command("notify"))
+    .description(
+      "Notify people now or on a schedule using their channel preferences",
+    )
+    .requiredOption("--subject <text>", "Notification subject")
+    .option("--message <text>", "Notification body (defaults to subject)")
+    .option("--type <type>", "Notification type")
+    .option("--data <json>", "Notification payload")
+    .option("--dedupe-key <key>", "Retry key scoped to your account")
+    .option("--at <datetime>", "Send once at a UTC timestamp")
+    .option("--recurrence <content>", "RFC 5545 DTSTART/RRULE/EXDATE content")
     .action(
       withErrorHandling(
         async (
-          commandOptions: AudienceOptions & {
-            dedupeKey?: string;
+          input: AudienceOptions & {
             subject: string;
             message?: string;
-            text?: string;
-            html?: string;
+            type?: string;
             data?: string;
-            type: string;
-            inApp?: string;
-            channel?: string;
+            dedupeKey?: string;
+            at?: string;
+            recurrence?: string;
           },
           command: Command,
         ) => {
-          const options = globalOptions(command);
-          const { client, orgId } = dependencies.getOrgClient(options);
-          const response = await getOperationsApi(client).v1.orgs[
-            ":orgId"
-          ].notifications.queue.$post({
-            param: { orgId },
-            json: {
-              ...audienceBody(commandOptions),
-              ...(commandOptions.dedupeKey
-                ? { dedupe_key: commandOptions.dedupeKey }
-                : {}),
-              subject: commandOptions.subject,
-              type: commandOptions.type,
-              ...(commandOptions.message
-                ? { message: commandOptions.message }
-                : {}),
-              ...(commandOptions.text ? { text: commandOptions.text } : {}),
-              ...(commandOptions.html ? { html: commandOptions.html } : {}),
-              ...(commandOptions.data
+          if (input.at && input.recurrence)
+            throw new CliError("Choose either --at or --recurrence.");
+          const body = notifySchema.safeParse({
+            ...audienceBody(input),
+            subject: input.subject,
+            message: input.message,
+            type: input.type,
+            ...(input.data
+              ? { data: dependencies.parseJson(input.data, "--data") }
+              : {}),
+            dedupe_key: input.dedupeKey,
+            ...(input.at
+              ? { timing: { kind: "once", at: input.at } }
+              : input.recurrence
                 ? {
-                    data: dependencies.parseJson(commandOptions.data, "--data"),
+                    timing: { kind: "recurring", recurrence: input.recurrence },
                   }
                 : {}),
-              ...(commandOptions.inApp === undefined
-                ? {}
-                : { in_app: toggle(commandOptions.inApp, "--in-app") }),
-              ...(commandOptions.channel
-                ? { channel: commandOptions.channel }
-                : {}),
-            },
           });
-          const result = await dependencies.handleResponse<{
-            status: "ok";
-            id: string | null;
-            ids: string[];
-            queued_count: number;
-            skipped_count: number;
-            message: string;
-          }>(response);
+          if (!body.success)
+            throw new CliError("Invalid notification content or timing.");
+          const options = globalOptions(command);
+          const { client, orgId } = dependencies.getOrgClient(options);
+          const result = await dependencies.handleResponse<NotifyResponse>(
+            await getOperationsApi(client).v1.orgs[
+              ":orgId"
+            ].notifications.notify.$post({ param: { orgId }, json: body.data }),
+          );
           dependencies.writeOutput(
             result,
             options,
-            result.id
-              ? `${result.message} (${result.id})`
-              : `${result.message}: ${result.queued_count} queued, ${result.skipped_count} skipped`,
+            result.kind === "scheduled"
+              ? `Scheduled notification ${result.schedule.id}`
+              : `Notification queued: ${result.queued_count} recipients, ${result.skipped_count} skipped`,
           );
         },
       ),
@@ -390,77 +341,6 @@ export function registerNotifications(
         );
       }),
     );
-
-  addDeliveryOptions(
-    schedules
-      .command("once")
-      .description("Schedule one notification")
-      .requiredOption("--at <datetime>", "ISO-8601 delivery time"),
-  ).action(
-    withErrorHandling(
-      async (
-        commandOptions: DeliveryOptions & { at: string },
-        command: Command,
-      ) => {
-        const options = globalOptions(command);
-        const { client, orgId } = dependencies.getOrgClient(options);
-        const response = await getOperationsApi(client).v1.orgs[
-          ":orgId"
-        ].notifications.schedules.$post({
-          param: { orgId },
-          json: {
-            ...deliveryBody(commandOptions, dependencies),
-            deliver_at: commandOptions.at,
-          },
-        });
-        const result = await dependencies.handleResponse<
-          NotificationSchedule & { status: "ok" }
-        >(response);
-        dependencies.writeOutput(
-          result,
-          options,
-          `Scheduled one-shot notification ${result.id}`,
-        );
-      },
-    ),
-  );
-
-  addDeliveryOptions(
-    schedules
-      .command("recurring")
-      .description("Schedule recurring notifications")
-      .requiredOption(
-        "--recurrence <content>",
-        "RFC 5545 DTSTART/RRULE/EXDATE content",
-      ),
-  ).action(
-    withErrorHandling(
-      async (
-        commandOptions: DeliveryOptions & { recurrence: string },
-        command: Command,
-      ) => {
-        const options = globalOptions(command);
-        const { client, orgId } = dependencies.getOrgClient(options);
-        const response = await getOperationsApi(client).v1.orgs[
-          ":orgId"
-        ].notifications.schedules.$post({
-          param: { orgId },
-          json: {
-            ...deliveryBody(commandOptions, dependencies),
-            recurrence: commandOptions.recurrence,
-          },
-        });
-        const result = await dependencies.handleResponse<
-          NotificationSchedule & { status: "ok" }
-        >(response);
-        dependencies.writeOutput(
-          result,
-          options,
-          `Scheduled recurring notification ${result.id}`,
-        );
-      },
-    ),
-  );
 
   schedules
     .command("cancel <id>")

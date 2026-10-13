@@ -6,7 +6,7 @@ import {
   payloadSchema,
   resourceNameSchema,
 } from "./automation";
-import { subscriptionCreateSchema } from "./queue";
+import { queuePolicyShape } from "./queue";
 import { scheduleTimingSchema } from "./schedules";
 import { triggerCreateSchema } from "./triggers";
 
@@ -22,12 +22,10 @@ export const portableAutomationShape = {
         schema: dynamicSchemaSchema,
         schema_version: z.number().int().positive(),
         enabled: z.boolean(),
+        ...queuePolicyShape,
         ...timestamps,
       }),
     )
-    .optional(),
-  queue_subscriptions: z
-    .array(subscriptionCreateSchema.extend({ id, queue_id: id, ...timestamps }))
     .optional(),
   queue_schedules: z
     .array(

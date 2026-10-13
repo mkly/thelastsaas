@@ -242,11 +242,7 @@ export interface DirectNotificationInput {
   type?: string;
   message?: string;
   subject: string;
-  text?: string;
-  html?: string;
   data?: object;
-  inApp?: boolean;
-  channel?: string;
   dedupeKey?: string;
   audience?: NotificationAudience;
 }
@@ -258,23 +254,13 @@ export function notificationDeliveryInput(
   input: DirectNotificationInput,
 ): QueueNotificationInput | null {
   const type = input.type ?? "direct_notification";
-  const message = input.message ?? input.text ?? input.subject;
-  let inApp = input.inApp ?? true;
-  let channels = input.channel
-    ? input.channel
-        .split(",")
-        .map((channel) => channel.trim())
-        .filter(Boolean)
-    : undefined;
-  if (recipient.id !== senderId) {
-    const preferred = applyRecipientPreferences(
-      recipient.notificationPreferences,
-      type,
-      { inApp, channels },
-    );
-    if (preferred.muted) return null;
-    ({ inApp, channels } = preferred);
-  }
+  const message = input.message ?? input.subject;
+  const { inApp, channels, muted } = applyRecipientPreferences(
+    recipient.notificationPreferences,
+    type,
+    { inApp: true },
+  );
+  if (muted) return null;
   return {
     orgId,
     userId: recipient.id,
@@ -288,8 +274,7 @@ export function notificationDeliveryInput(
       ...normalizeNotificationMessage({
         to: recipient.email,
         subject: input.subject,
-        text: input.text ?? message,
-        ...(input.html ? { html: input.html } : {}),
+        text: message,
       }),
       ...(channels ? { channels } : {}),
     },
@@ -328,7 +313,7 @@ export async function queueNotifications(
     { timeout: 30_000 },
   );
   return {
-    // A single delivery keeps the original one-ID response; fanouts use ids.
+    // Include the single ID as a convenience for a one-recipient audience.
     id: ids.length === 1 ? ids[0]! : null,
     ids,
     recipient_count: recipients.length,

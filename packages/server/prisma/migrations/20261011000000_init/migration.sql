@@ -370,13 +370,12 @@ CREATE TABLE "notification_schedules" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "org_id" TEXT NOT NULL,
     "user_id" TEXT NOT NULL,
-    "audience" JSONB,
+    "audience" JSONB NOT NULL,
     "dedupe_key" TEXT NOT NULL,
     "type" TEXT NOT NULL,
+    "subject" TEXT NOT NULL,
     "message" TEXT NOT NULL,
     "data" JSONB,
-    "in_app" BOOLEAN NOT NULL DEFAULT true,
-    "channel" TEXT NOT NULL DEFAULT 'console',
     "deliver_at" DATETIME,
     "recurrence" TEXT,
     "next_occurrence_at" DATETIME,
@@ -480,22 +479,11 @@ CREATE TABLE "queues" (
     "enabled" BOOLEAN NOT NULL DEFAULT true,
     "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" DATETIME NOT NULL,
-    CONSTRAINT "queues_org_id_fkey" FOREIGN KEY ("org_id") REFERENCES "organization" ("id") ON DELETE CASCADE ON UPDATE CASCADE
-);
-
--- CreateTable
-CREATE TABLE "queue_subscriptions" (
-    "id" TEXT NOT NULL PRIMARY KEY,
-    "queue_id" TEXT NOT NULL,
-    "name" TEXT NOT NULL,
-    "enabled" BOOLEAN NOT NULL DEFAULT true,
     "max_attempts" INTEGER NOT NULL DEFAULT 3,
     "retry_delay_seconds" INTEGER NOT NULL DEFAULT 30,
     "lease_seconds" INTEGER NOT NULL DEFAULT 60,
     "retention_days" INTEGER NOT NULL DEFAULT 7,
-    "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updated_at" DATETIME NOT NULL,
-    CONSTRAINT "queue_subscriptions_queue_id_fkey" FOREIGN KEY ("queue_id") REFERENCES "queues" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+    CONSTRAINT "queues_org_id_fkey" FOREIGN KEY ("org_id") REFERENCES "organization" ("id") ON DELETE CASCADE ON UPDATE CASCADE
 );
 
 -- CreateTable
@@ -509,19 +497,12 @@ CREATE TABLE "queue_entries" (
     "idempotency_key" TEXT,
     "idempotency_hash" TEXT,
     "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "claimed_by" TEXT,
+    "claim_token_hash" TEXT,
+    "native_claim_token" TEXT,
+    "claimed_attempt" INTEGER NOT NULL DEFAULT 0,
     CONSTRAINT "queue_entries_queue_id_fkey" FOREIGN KEY ("queue_id") REFERENCES "queues" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT "queue_entries_producer_user_id_fkey" FOREIGN KEY ("producer_user_id") REFERENCES "user" ("id") ON DELETE SET NULL ON UPDATE CASCADE
-);
-
--- CreateTable
-CREATE TABLE "queue_deliveries" (
-    "id" TEXT NOT NULL PRIMARY KEY,
-    "queue_id" TEXT NOT NULL,
-    "entry_id" TEXT NOT NULL,
-    "subscription_id" TEXT NOT NULL,
-    "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT "queue_deliveries_queue_id_entry_id_fkey" FOREIGN KEY ("queue_id", "entry_id") REFERENCES "queue_entries" ("queue_id", "id") ON DELETE CASCADE ON UPDATE CASCADE,
-    CONSTRAINT "queue_deliveries_queue_id_subscription_id_fkey" FOREIGN KEY ("queue_id", "subscription_id") REFERENCES "queue_subscriptions" ("queue_id", "id") ON DELETE CASCADE ON UPDATE CASCADE
 );
 
 -- CreateTable
@@ -757,7 +738,7 @@ CREATE INDEX "notification_schedules_org_id_user_id_status_idx" ON "notification
 CREATE UNIQUE INDEX "notification_schedules_org_id_id_key" ON "notification_schedules"("org_id", "id");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "notification_schedules_org_id_dedupe_key_key" ON "notification_schedules"("org_id", "dedupe_key");
+CREATE UNIQUE INDEX "notification_schedules_org_id_user_id_dedupe_key_key" ON "notification_schedules"("org_id", "user_id", "dedupe_key");
 
 -- CreateIndex
 CREATE INDEX "casbin_rule_org_id_ptype_idx" ON "casbin_rule"("org_id", "ptype");
@@ -805,15 +786,6 @@ CREATE UNIQUE INDEX "queues_org_id_name_key" ON "queues"("org_id", "name");
 CREATE UNIQUE INDEX "queues_org_id_id_key" ON "queues"("org_id", "id");
 
 -- CreateIndex
-CREATE INDEX "queue_subscriptions_queue_id_enabled_idx" ON "queue_subscriptions"("queue_id", "enabled");
-
--- CreateIndex
-CREATE UNIQUE INDEX "queue_subscriptions_queue_id_name_key" ON "queue_subscriptions"("queue_id", "name");
-
--- CreateIndex
-CREATE UNIQUE INDEX "queue_subscriptions_queue_id_id_key" ON "queue_subscriptions"("queue_id", "id");
-
--- CreateIndex
 CREATE INDEX "queue_entries_queue_id_created_at_id_idx" ON "queue_entries"("queue_id", "created_at", "id");
 
 -- CreateIndex
@@ -821,12 +793,6 @@ CREATE UNIQUE INDEX "queue_entries_queue_id_id_key" ON "queue_entries"("queue_id
 
 -- CreateIndex
 CREATE UNIQUE INDEX "queue_entries_queue_id_idempotency_key_key" ON "queue_entries"("queue_id", "idempotency_key");
-
--- CreateIndex
-CREATE INDEX "queue_deliveries_queue_id_created_at_id_idx" ON "queue_deliveries"("queue_id", "created_at", "id");
-
--- CreateIndex
-CREATE UNIQUE INDEX "queue_deliveries_entry_id_subscription_id_key" ON "queue_deliveries"("entry_id", "subscription_id");
 
 -- CreateIndex
 CREATE INDEX "transaction_requests_expires_at_idx" ON "transaction_requests"("expires_at");

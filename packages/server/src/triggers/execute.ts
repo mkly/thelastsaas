@@ -215,12 +215,7 @@ export async function executeRecordTriggers(
           .success
       )
         throw new SchemaValidationError(["Invalid trigger payload"]);
-      if (
-        !validated.queue.enabled ||
-        !(await unit.db.queueSubscription.count({
-          where: { queueId: validated.queue.id, enabled: true },
-        }))
-      )
+      if (!validated.queue.enabled)
         throw new SchemaValidationError(["Trigger destination unavailable"]);
     } catch (error) {
       if (!invalidRule(error)) throw error;

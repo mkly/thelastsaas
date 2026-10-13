@@ -76,13 +76,6 @@ async function fixture() {
       schema: { title: "string", record: "string", event: "string" },
     },
   });
-  await prisma.queueSubscription.createMany({
-    data: ["primary", "secondary"].map((name) => ({
-      id: crypto.randomUUID(),
-      queueId: queue.id,
-      name,
-    })),
-  });
   for (const action of ["create", "read"])
     await addPolicy(
       prisma,
@@ -113,9 +106,6 @@ async function fixture() {
   const counts = async () => ({
     records: await prisma.record.count({ where: { orgId: context.orgId } }),
     entries: await prisma.queueEntry.count({ where: { queueId: queue.id } }),
-    deliveries: await prisma.queueDelivery.count({
-      where: { queueId: queue.id },
-    }),
     requests: await prisma.transactionRequest.count({
       where: { orgId: context.orgId },
     }),
@@ -141,7 +131,7 @@ async function fixture() {
 }
 
 describe(`record/trigger/queue integration (${provider})`, () => {
-  test("a later invalid operation rolls back trigger fanout and the retry receipt together", async () => {
+  test("a later invalid operation rolls back trigger publication and the retry receipt together", async () => {
     const f = await fixture();
     const before = await f.counts();
     await expect(
@@ -163,12 +153,12 @@ describe(`record/trigger/queue integration (${provider})`, () => {
     expect(await f.counts()).toMatchObject({
       records: 1,
       entries: 2,
-      deliveries: 4,
+
       requests: 1,
     });
   });
 
-  test("independent keyed callers commit real trigger fanout once and canonical retries return the same IDs", async () => {
+  test("independent keyed callers commit real trigger publication once and canonical retries return the same IDs", async () => {
     const f = await fixture();
     const other = new PrismaClient({ datasourceUrl: f.url });
     cleanups.push(() => other.$disconnect());
@@ -182,7 +172,7 @@ describe(`record/trigger/queue integration (${provider})`, () => {
     expect(before).toMatchObject({
       records: 1,
       entries: 2,
-      deliveries: 4,
+
       requests: 1,
     });
     const created = results[0]!.results[0]!;
@@ -197,15 +187,6 @@ describe(`record/trigger/queue integration (${provider})`, () => {
         { title: "Direct" },
       ]),
     );
-    for (const entry of entries) {
-      const deliveries = await f.prisma.queueDelivery.findMany({
-        where: { entryId: entry.id },
-      });
-      expect(deliveries).toHaveLength(2);
-      expect(
-        new Set(deliveries.map((delivery) => delivery.subscriptionId)).size,
-      ).toBe(2);
-    }
     const canonicalRetry: TransactionRequest = {
       ...f.request,
       operations: [
@@ -251,7 +232,7 @@ describe(`record/trigger/queue integration (${provider})`, () => {
     expect(await f.counts()).toMatchObject({
       records: 2,
       entries: 2,
-      deliveries: 4,
+
       requests: 0,
     });
     const entries = await f.prisma.queueEntry.findMany({
@@ -277,7 +258,7 @@ describe(`record/trigger/queue integration (${provider})`, () => {
     expect(await f.counts()).toMatchObject({
       records: 4,
       entries: 2,
-      deliveries: 4,
+
       requests: 0,
     });
     expect(
@@ -294,7 +275,6 @@ describe(`record/trigger/queue integration (${provider})`, () => {
     expect(await f.counts()).toMatchObject({
       records: 5,
       entries: 2,
-      deliveries: 4,
     });
   });
 });

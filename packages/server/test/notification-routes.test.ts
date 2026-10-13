@@ -125,15 +125,13 @@ describe("notification routes", () => {
     };
     const app = createRouterApp({ prisma, notificationQueue: { enqueue } });
 
-    const response = await app.request("/v1/orgs/org_1/notifications/queue", {
+    const response = await app.request("/v1/orgs/org_1/notifications/notify", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         type: "build_alert",
         subject: "Build finished",
-        text: "The build passed.",
-        channel: "email",
-        in_app: false,
+        message: "The build passed.",
         dedupe_key: "build:42",
       }),
     });
@@ -144,13 +142,12 @@ describe("notification routes", () => {
         orgId: "org_1",
         userId: "user_1",
         type: "build_alert",
-        inApp: false,
+        inApp: true,
         dedupeKey: JSON.stringify(["direct", "user_1", "build:42"]),
         delivery: expect.objectContaining({
           to: "user@example.com",
           subject: "Build finished",
           text: "The build passed.",
-          channels: ["email"],
         }),
       }),
       prisma,

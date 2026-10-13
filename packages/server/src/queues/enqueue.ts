@@ -18,7 +18,7 @@ import { queryProvider } from "../db/provider";
 import { withUnitOfWork, type UnitOfWork } from "../db/unit-of-work";
 import { lockQueue, parseQueueRequest } from "./config";
 import { authorizeQueueAction } from "./permissions";
-import { unitJobs, subscriptionPolicy, subscriptionQueue } from "../jobs";
+import { unitJobs, queuePolicy, workQueue } from "../jobs";
 
 /** Omitted availability is a stable immediate marker, never the current clock. */
 function requestHash(entry: EnqueueEntry) {
@@ -54,12 +54,6 @@ async function persistBatch(
   input: EnqueueRequest,
 ): Promise<EnqueueResult> {
   if (!queue.enabled) throw new AutomationConflictError("Queue is disabled");
-  const subscriptions = await unit.db.queueSubscription.findMany({
-    where: { queueId: queue.id, enabled: true },
-  });
-  if (!subscriptions.length)
-    throw new AutomationConflictError("Queue has no enabled subscriptions");
-
   const now = new Date();
   const keys = input.entries.flatMap((entry) =>
     entry.idempotency_key === undefined ? [] : [entry.idempotency_key],
@@ -121,31 +115,19 @@ async function persistBatch(
         createdAt: now,
       },
     });
-    for (const subscription of subscriptions) {
-      const id = crypto.randomUUID();
-      await unit.db.queueDelivery.create({
+    await unitJobs(unit).send(
+      {
+        id: row.id,
+        queue: workQueue(queue.id),
         data: {
-          id,
-          queueId: queue.id,
-          entryId: row.id,
-          subscriptionId: subscription.id,
+          schema_version: queue.schemaVersion,
+          payload: candidate.input.payload,
         },
-      });
-      await unitJobs(unit).send(
-        {
-          id,
-          queue: subscriptionQueue(subscription.id),
-          data: {
-            entry_id: row.id,
-            schema_version: row.schemaVersion,
-            payload: candidate.input.payload,
-          },
-          availableAt: row.availableAt.toISOString(),
-          policy: subscriptionPolicy(subscription),
-        },
-        unit.db,
-      );
-    }
+        availableAt: row.availableAt.toISOString(),
+        policy: queuePolicy(queue),
+      },
+      unit.db,
+    );
     await unit.db.auditLog.create({
       data: {
         id: genId(),
@@ -154,20 +136,12 @@ async function persistBatch(
         action: "enqueue_queue_entry",
         resourceType: "queue_entry",
         resourceId: row.id,
-        details: { queue_id: queue.id, delivery_count: subscriptions.length },
+        details: { queue_id: queue.id, job_count: 1 },
       },
     });
     rows.push(row);
   }
-  return {
-    entries: rows.map(receipt),
-    delivery_count: await unit.db.queueDelivery.count({
-      where: {
-        queueId: queue.id,
-        entryId: { in: [...new Set(rows.map((r) => r.id))] },
-      },
-    }),
-  };
+  return { jobs: rows.map(receipt) };
 }
 
 export type QueueEnqueueService = Pick<

@@ -15,3 +15,5 @@ export * from "./secrets";
 export * from "./transactions";
 
 export * from "./portable-automation";
+
+export * from "./notify";

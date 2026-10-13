@@ -9,7 +9,7 @@ generator client {
 
 generator kysely {
   provider = "prisma-kysely"
-  output = "../src/db/generated"
+  output   = "../src/db/generated"
   fileName = "types.ts"
 }
 
@@ -502,13 +502,12 @@ model NotificationSchedule {
   id               String         @id
   orgId            String         @map("org_id")
   userId           String         @map("user_id")
-  audience         Json?
+  audience         Json
   dedupeKey        String         @map("dedupe_key")
   type             String
+  subject          String
   message          String
   data             Json?
-  inApp            Boolean        @default(true) @map("in_app")
-  channel          String         @default("console")
   deliverAt        DateTime?      @map("deliver_at")
   recurrence       String?
   nextOccurrenceAt DateTime?      @map("next_occurrence_at")
@@ -522,7 +521,7 @@ model NotificationSchedule {
   notifications    Notification[]
 
   @@unique([orgId, id])
-  @@unique([orgId, dedupeKey])
+  @@unique([orgId, userId, dedupeKey])
   @@index([status, deliverAt])
   @@index([status, nextOccurrenceAt])
   @@index([orgId, userId, status])
@@ -591,14 +590,14 @@ model McpOrganization {
 }
 
 model FileUpload {
-  id String @id
-  orgId String
-  userId String
-  tokenHash String @unique
-  status String @default("pending")
-  filename String?
-  path String?
-  mimeType String?
+  id        String   @id
+  orgId     String
+  userId    String
+  tokenHash String   @unique
+  status    String   @default("pending")
+  filename  String?
+  path      String?
+  mimeType  String?
   sizeBytes Int?
   expiresAt DateTime
   createdAt DateTime @default(now())
@@ -630,19 +629,22 @@ model Secret {
 // --- Durable queues ---
 
 model Queue {
-  id            String              @id
-  orgId         String              @map("org_id")
-  name          String
-  schema        Json
-  schemaVersion Int                 @default(1) @map("schema_version")
-  enabled       Boolean             @default(true)
-  createdAt     DateTime            @default(now()) @map("created_at")
-  updatedAt     DateTime            @updatedAt @map("updated_at")
-  org           Organization        @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  subscriptions QueueSubscription[]
-  entries       QueueEntry[]
-  schedules     QueueSchedule[]
-  triggers      CollectionTrigger[]
+  id                String              @id
+  orgId             String              @map("org_id")
+  name              String
+  schema            Json
+  schemaVersion     Int                 @default(1) @map("schema_version")
+  enabled           Boolean             @default(true)
+  createdAt         DateTime            @default(now()) @map("created_at")
+  updatedAt         DateTime            @updatedAt @map("updated_at")
+  org               Organization        @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  maxAttempts       Int                 @default(3) @map("max_attempts")
+  retryDelaySeconds Int                 @default(30) @map("retry_delay_seconds")
+  leaseSeconds      Int                 @default(60) @map("lease_seconds")
+  retentionDays     Int                 @default(7) @map("retention_days")
+  entries           QueueEntry[]
+  schedules         QueueSchedule[]
+  triggers          CollectionTrigger[]
 
   @@unique([orgId, name])
   @@unique([orgId, id])
@@ -650,62 +652,30 @@ model Queue {
   @@map("queues")
 }
 
-model QueueSubscription {
-  id            String          @id
-  queueId       String          @map("queue_id")
-  name          String
-  enabled       Boolean         @default(true)
-  maxAttempts   Int             @default(3) @map("max_attempts")
-  retryDelaySeconds Int         @default(30) @map("retry_delay_seconds")
-  leaseSeconds  Int             @default(60) @map("lease_seconds")
-  retentionDays Int             @default(7) @map("retention_days")
-  createdAt     DateTime        @default(now()) @map("created_at")
-  updatedAt     DateTime        @updatedAt @map("updated_at")
-  queue         Queue           @relation(fields: [queueId], references: [id], onDelete: Cascade)
-  deliveries    QueueDelivery[]
-
-  @@unique([queueId, name])
-  @@unique([queueId, id])
-  @@index([queueId, enabled])
-  @@map("queue_subscriptions")
-}
-
 // Payload, schema version and producer identity are written only at enqueue.
 // A nullable key permits independent unkeyed entries; keyed requests also store
 // their canonical content hash for conflict detection during idempotency replay.
 model QueueEntry {
-  id              String          @id
-  queueId         String          @map("queue_id")
-  payload         Json
-  schemaVersion   Int             @map("schema_version")
-  producerUserId  String?         @map("producer_user_id")
-  availableAt     DateTime        @default(now()) @map("available_at")
-  idempotencyKey  String?         @map("idempotency_key")
-  idempotencyHash String?         @map("idempotency_hash")
-  createdAt       DateTime        @default(now()) @map("created_at")
-  queue           Queue           @relation(fields: [queueId], references: [id], onDelete: Cascade)
-  producer        User?           @relation(fields: [producerUserId], references: [id], onDelete: SetNull)
-  deliveries      QueueDelivery[]
+  id               String   @id
+  queueId          String   @map("queue_id")
+  payload          Json
+  schemaVersion    Int      @map("schema_version")
+  producerUserId   String?  @map("producer_user_id")
+  availableAt      DateTime @default(now()) @map("available_at")
+  idempotencyKey   String?  @map("idempotency_key")
+  idempotencyHash  String?  @map("idempotency_hash")
+  createdAt        DateTime @default(now()) @map("created_at")
+  queue            Queue    @relation(fields: [queueId], references: [id], onDelete: Cascade)
+  producer         User?    @relation(fields: [producerUserId], references: [id], onDelete: SetNull)
+  claimedBy        String?  @map("claimed_by")
+  claimTokenHash   String?  @map("claim_token_hash")
+  nativeClaimToken String?  @map("native_claim_token")
+  claimedAttempt   Int      @default(0) @map("claimed_attempt")
 
   @@unique([queueId, id])
   @@unique([queueId, idempotencyKey])
   @@index([queueId, createdAt, id])
   @@map("queue_entries")
-}
-
-model QueueDelivery {
-  id               String            @id
-  queueId          String            @map("queue_id")
-  entryId          String            @map("entry_id")
-  subscriptionId   String            @map("subscription_id")
-  createdAt        DateTime          @default(now()) @map("created_at")
-  // Composite references prevent cross-queue (and therefore cross-org) fanout.
-  entry            QueueEntry        @relation(fields: [queueId, entryId], references: [queueId, id], onDelete: Cascade)
-  subscription     QueueSubscription @relation(fields: [queueId, subscriptionId], references: [queueId, id], onDelete: Cascade)
-
-  @@unique([entryId, subscriptionId])
-  @@index([queueId, createdAt, id])
-  @@map("queue_deliveries")
 }
 
 model TransactionRequest {
@@ -746,7 +716,7 @@ model QueueSchedule {
   creator          User         @relation(fields: [createdBy], references: [id], onDelete: Cascade)
   queue            Queue        @relation(fields: [orgId, queueId], references: [orgId, id], onDelete: Cascade)
 
-  occurrences      QueueScheduleOccurrence[]
+  occurrences QueueScheduleOccurrence[]
 
   @@unique([orgId, id])
   @@index([status, nextOccurrenceAt, id])

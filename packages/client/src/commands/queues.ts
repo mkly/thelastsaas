@@ -1,20 +1,13 @@
 import {
-  deliveryListSchema,
-  entryListSchema,
+  jobListSchema,
   pageRequestSchema,
   queueCreateSchema,
   queueUpdateSchema,
   resourceNameSchema,
-  subscriptionCreateSchema,
-  subscriptionUpdateSchema,
-  type DeliveryListResponse,
-  type EntryListResponse,
+  type JobListResponse,
   type Queue,
   type QueueListResponse,
   type QueueResponse,
-  type QueueSubscription,
-  type SubscriptionListResponse,
-  type SubscriptionResponse,
 } from "@lastsaas/shared";
 import type { Command } from "commander";
 import { readFile } from "node:fs/promises";
@@ -25,7 +18,7 @@ import {
   defaultOperationsCommandDependencies,
   type OperationsCommandDependencies,
 } from "./operations-client";
-import { registerQueueDeliveries } from "./queue-deliveries";
+import { registerQueueJobs } from "./queue-jobs";
 
 interface Validator<T> {
   safeParse(value: unknown): { success: true; data: T } | { success: false };
@@ -64,7 +57,7 @@ function enabled(value: string | undefined): boolean | undefined {
   throw new CliError("--enabled must be on or off.");
 }
 
-interface SchemaOptions {
+interface SchemaOptions extends SettingsOptions {
   schema?: string;
   schemaFile?: string;
   enabled?: string;
@@ -111,10 +104,7 @@ function pageOptions(command: Command): Command {
     .option("--cursor <cursor>", "Continue from next_cursor");
 }
 function queueDetails(queue: Queue): string {
-  return `${queue.name} (${queue.id})\n  Enabled: ${queue.enabled}\n  Schema version: ${queue.schema_version}\n  Schema: ${JSON.stringify(queue.schema)}`;
-}
-function subscriptionDetails(subscription: QueueSubscription): string {
-  return `${subscription.name} (${subscription.id})\n  Enabled: ${subscription.enabled}\n  Max attempts: ${subscription.max_attempts}\n  Lease seconds: ${subscription.lease_seconds}\n  Retry delay seconds: ${subscription.retry_delay_seconds}\n  Retention days: ${subscription.retention_days}`;
+  return `${queue.name} (${queue.id})\n  Enabled: ${queue.enabled}\n  Max attempts: ${queue.max_attempts}\n  Lease seconds: ${queue.lease_seconds}\n  Retry delay seconds: ${queue.retry_delay_seconds}\n  Retention days: ${queue.retention_days}\n  Schema version: ${queue.schema_version}\n  Schema: ${JSON.stringify(queue.schema)}`;
 }
 function pageDetails<T>(
   result: { items: T[]; next_cursor: string | null },
@@ -135,7 +125,7 @@ interface SettingsOptions {
 }
 function settingsOptions(command: Command): Command {
   return command
-    .option("--enabled <on/off>", "Enable or disable the subscription")
+    .option("--enabled <on/off>", "Enable or disable the queue")
     .option("--max-attempts <n>", "Attempt limit (1..100, default 3)")
     .option("--lease-seconds <n>", "Lease duration (10..3600, default 60)")
     .option(
@@ -168,80 +158,71 @@ export function registerQueues(
 ): void {
   const queues = program
     .command("queues")
-    .description("Manage queues, subscriptions and delivery processing");
+    .description("Manage queues and jobs");
   queues.addHelpText(
     "after",
     `
-Queue create requires write on /queues. Configuration and subscriptions require
-manage on /queues/<name>; queue deletion requires delete. Inspection requires
-current read authority. Manage alone does not grant payload access.
-Schema edits require zero retained entries. New subscriptions receive future
-entries only. Separate subscriptions broadcast; workers on one share work.
+Queue creation requires write on /queues. Configuration requires manage;
+queue deletion requires delete. Inspection requires read. Manage alone does not grant payload access.
+Schema edits require zero retained jobs. Workers compete for jobs directly.
 Lists return one page; use next_cursor with --cursor to continue.
-Enqueue requires create on the queue. Claim/ack/nack/extend require current read
-and update on the queue plus update on the subscription. Cancel/redrive require
-manage. Claim explicitly prints lease tokens; use --lease-token for settlement
-after processing. --token authenticates the client. No command auto-acks work.
+Enqueue requires create. Claim/ack/nack/extend require read and update on the queue.
+Cancel/redrive require manage. Claim prints lease tokens; use --lease-token for settlement
+from the same account after processing. --token authenticates the client. No command auto-acks work.
 `,
   );
 
   for (const operation of ["create", "update"] as const) {
-    queues
-      .command(`${operation} <queue>`)
-      .description(
-        operation === "create"
-          ? "Create a queue"
-          : "Change schema or enabled state",
-      )
-      .option("-s, --schema <json>", "Queue schema as JSON")
-      .option("--schema-file <path>", "Read a JSON queue schema from a file")
-      .option("--enabled <on/off>", "Enable or disable the queue")
-      .action(
-        withErrorHandling(
-          async (queue: string, input: SchemaOptions, command: Command) => {
-            name(queue);
-            const schema = await schemaInput(input);
-            if (operation === "create" && schema === undefined)
-              throw new CliError(
-                "Supply --schema or --schema-file to create a queue.",
-              );
-            const changes = {
-              ...(schema === undefined ? {} : { schema }),
-              ...(input.enabled === undefined
-                ? {}
-                : { enabled: enabled(input.enabled) }),
-            };
-            const options = getGlobalOptions(command);
-            const { client, orgId } = dependencies.getOrgClient(options);
-            const api = client.v1.orgs[":orgId"].queues;
-            const response =
-              operation === "create"
-                ? await api.$post({
-                    param: { orgId },
-                    json: validate(
-                      queueCreateSchema,
-                      { name: queue, ...changes },
-                      "Invalid queue schema or settings.",
-                    ),
-                  })
-                : await api[":name"].$patch({
-                    param: { orgId, name: queue },
-                    json: validate(
-                      queueUpdateSchema,
-                      changes,
-                      "Supply a valid --schema, --schema-file or --enabled change.",
-                    ),
-                  });
-            const result =
-              await dependencies.handleResponse<QueueResponse>(response);
-            dependencies.writeOutput(
-              result,
-              options,
-              queueDetails(result.queue),
+    settingsOptions(
+      queues
+        .command(`${operation} <queue>`)
+        .description(
+          operation === "create"
+            ? "Create a queue"
+            : "Change queue schema or processing settings",
+        )
+        .option("-s, --schema <json>", "Queue schema as JSON")
+        .option("--schema-file <path>", "Read a JSON queue schema from a file"),
+    ).action(
+      withErrorHandling(
+        async (queue: string, input: SchemaOptions, command: Command) => {
+          name(queue);
+          const schema = await schemaInput(input);
+          if (operation === "create" && schema === undefined)
+            throw new CliError(
+              "Supply --schema or --schema-file to create a queue.",
             );
-          },
-        ),
-      );
+          const changes = {
+            ...(schema === undefined ? {} : { schema }),
+            ...settings(input),
+          };
+          const options = getGlobalOptions(command);
+          const { client, orgId } = dependencies.getOrgClient(options);
+          const api = client.v1.orgs[":orgId"].queues;
+          const response =
+            operation === "create"
+              ? await api.$post({
+                  param: { orgId },
+                  json: validate(
+                    queueCreateSchema,
+                    { name: queue, ...changes },
+                    "Invalid queue schema or settings.",
+                  ),
+                })
+              : await api[":name"].$patch({
+                  param: { orgId, name: queue },
+                  json: validate(
+                    queueUpdateSchema,
+                    changes,
+                    "Supply at least one valid queue setting.",
+                  ),
+                });
+          const result =
+            await dependencies.handleResponse<QueueResponse>(response);
+          dependencies.writeOutput(result, options, queueDetails(result.queue));
+        },
+      ),
+    );
   }
   pageOptions(
     queues.command("list").description("List visible queue metadata"),
@@ -278,7 +259,7 @@ after processing. --token authenticates the client. No command auto-acks work.
     );
   queues
     .command("delete <queue>")
-    .description("Delete a queue with no unfinished deliveries")
+    .description("Delete a queue with no unfinished jobs")
     .option("--confirm", "Confirm deletion (required)")
     .action(
       withErrorHandling(
@@ -306,148 +287,40 @@ after processing. --token authenticates the client. No command auto-acks work.
       ),
     );
 
-  const subscriptions = queues
-    .command("subscriptions")
-    .description("Manage independent queue subscriptions");
-  for (const operation of ["create", "update"] as const) {
-    settingsOptions(
-      subscriptions
-        .command(`${operation} <queue> <subscription>`)
-        .description(
-          `${operation === "create" ? "Create" : "Update"} a subscription`,
-        ),
-    ).action(
-      withErrorHandling(
-        async (
-          queue: string,
-          subscription: string,
-          input: SettingsOptions,
-          command: Command,
-        ) => {
-          name(queue);
-          name(subscription);
-          const changes = settings(input);
-          const options = getGlobalOptions(command);
-          const { client, orgId } = dependencies.getOrgClient(options);
-          const api = client.v1.orgs[":orgId"].queues[":name"].subscriptions;
-          const response =
-            operation === "create"
-              ? await api.$post({
-                  param: { orgId, name: queue },
-                  json: validate(
-                    subscriptionCreateSchema,
-                    { name: subscription, ...changes },
-                    "Invalid subscription settings: attempts 1..100, lease 10..3600, retry delay 0..3600, retention 1..365.",
-                  ),
-                })
-              : await api[":subscription"].$patch({
-                  param: { orgId, name: queue, subscription },
-                  json: validate(
-                    subscriptionUpdateSchema,
-                    changes,
-                    "Supply at least one valid subscription setting: attempts 1..100, lease 10..3600, retry delay 0..3600, retention 1..365.",
-                  ),
-                });
-          const result =
-            await dependencies.handleResponse<SubscriptionResponse>(response);
-          dependencies.writeOutput(
-            result,
-            options,
-            subscriptionDetails(result.subscription),
-          );
-        },
-      ),
-    );
-  }
-  pageOptions(
-    subscriptions
-      .command("list <queue>")
-      .description("List subscription configuration"),
-  ).action(
-    withErrorHandling(
-      async (queue: string, input: PageOptions, command: Command) => {
-        name(queue);
-        const query = pageQuery(page(input));
-        const options = getGlobalOptions(command);
-        const { client, orgId } = dependencies.getOrgClient(options);
-        const result =
-          await dependencies.handleResponse<SubscriptionListResponse>(
-            await client.v1.orgs[":orgId"].queues[":name"].subscriptions.$get({
-              param: { orgId, name: queue },
-              query,
-            }),
-          );
-        dependencies.writeOutput(
-          result,
-          options,
-          pageDetails(result, subscriptionDetails),
-        );
-      },
-    ),
-  );
-  subscriptions
-    .command("delete <queue> <subscription>")
-    .description("Delete a subscription with no unfinished deliveries")
-    .option("--confirm", "Confirm deletion (required)")
-    .action(
-      withErrorHandling(
-        async (
-          queue: string,
-          subscription: string,
-          input: { confirm?: boolean },
-          command: Command,
-        ) => {
-          name(queue);
-          name(subscription);
-          if (!input.confirm)
-            throw new CliError("Pass --confirm to delete this subscription.");
-          const options = getGlobalOptions(command);
-          const { client, orgId } = dependencies.getOrgClient(options);
-          const result = await dependencies.handleResponse(
-            await client.v1.orgs[":orgId"].queues[":name"].subscriptions[
-              ":subscription"
-            ].$delete({ param: { orgId, name: queue, subscription } }),
-          );
-          dependencies.writeOutput(
-            result,
-            options,
-            `Deleted subscription '${subscription}' from '${queue}'.`,
-          );
-        },
-      ),
-    );
-
   pageOptions(
     queues
-      .command("entries <queue>")
-      .description("Inspect entries with whole-queue read access"),
+      .command("jobs <queue>")
+      .description("Inspect job payloads and processing state"),
   )
     .option("--where <json>", "Filter payloads with the Where DSL")
+    .option("--state <state>", "ready, leased, succeeded, dead or cancelled")
     .action(
       withErrorHandling(
         async (
           queue: string,
-          input: PageOptions & { where?: string },
+          input: PageOptions & { where?: string; state?: string },
           command: Command,
         ) => {
           name(queue);
           const parsed = validate(
-            entryListSchema,
+            jobListSchema,
             {
               ...page(input),
+              ...(input.state === undefined ? {} : { state: input.state }),
               ...(input.where === undefined
                 ? {}
                 : { where: parseJson(input.where, "--where") }),
             },
-            "Invalid queue entry filter.",
+            "Invalid job filter.",
           );
           const options = getGlobalOptions(command);
           const { client, orgId } = dependencies.getOrgClient(options);
-          const result = await dependencies.handleResponse<EntryListResponse>(
-            await client.v1.orgs[":orgId"].queues[":name"].entries.$get({
+          const result = await dependencies.handleResponse<JobListResponse>(
+            await client.v1.orgs[":orgId"].queues[":name"].jobs.$get({
               param: { orgId, name: queue },
               query: {
                 ...pageQuery(parsed),
+                ...(parsed.state === undefined ? {} : { state: parsed.state }),
                 ...(parsed.where === undefined
                   ? {}
                   : { where: JSON.stringify(parsed.where) }),
@@ -462,58 +335,5 @@ after processing. --token authenticates the client. No command auto-acks work.
         },
       ),
     );
-  pageOptions(
-    queues
-      .command("deliveries <queue>")
-      .description("Inspect visible delivery metadata"),
-  )
-    .option("--subscription <name>", "Filter by subscription name")
-    .option("--state <state>", "ready, leased, succeeded, dead or cancelled")
-    .action(
-      withErrorHandling(
-        async (
-          queue: string,
-          input: PageOptions & { subscription?: string; state?: string },
-          command: Command,
-        ) => {
-          name(queue);
-          const parsed = validate(
-            deliveryListSchema,
-            {
-              ...page(input),
-              ...(input.subscription === undefined
-                ? {}
-                : { subscription: input.subscription }),
-              ...(input.state === undefined ? {} : { state: input.state }),
-            },
-            "Invalid subscription name or delivery state.",
-          );
-          const options = getGlobalOptions(command);
-          const { client, orgId } = dependencies.getOrgClient(options);
-          const result =
-            await dependencies.handleResponse<DeliveryListResponse>(
-              await client.v1.orgs[":orgId"].queues[":name"].deliveries.$get({
-                param: { orgId, name: queue },
-                query: {
-                  ...pageQuery(parsed),
-                  ...(parsed.subscription === undefined
-                    ? {}
-                    : { subscription: parsed.subscription }),
-                  ...(parsed.state === undefined
-                    ? {}
-                    : { state: parsed.state }),
-                },
-              }),
-            );
-          dependencies.writeOutput(
-            result,
-            options,
-            pageDetails(result, (delivery) =>
-              JSON.stringify(delivery, null, 2),
-            ),
-          );
-        },
-      ),
-    );
-  registerQueueDeliveries(queues, dependencies);
+  registerQueueJobs(queues, dependencies);
 }
