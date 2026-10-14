@@ -7,12 +7,13 @@ import {
   idempotencyKeySchema,
   jsonByteLength,
   jsonObjectSchema,
-  resourceNameSchema,
   type AutomationContext,
   type JsonValue,
 } from "./automation";
-import { enqueueEntrySchema, type EnqueueResult } from "./queue";
 import type { CollectionRecord } from "./types";
+
+export const TRANSACTION_OPERATIONS_HINT =
+  "Transaction operations must be record.create, record.update, or record.delete";
 
 export const transactionOperationSchema = z.discriminatedUnion("op", [
   z.strictObject({
@@ -31,11 +32,6 @@ export const transactionOperationSchema = z.discriminatedUnion("op", [
     collection: collectionNameSchema,
     id: automationIdSchema,
   }),
-  z.strictObject({
-    op: z.literal("queue.enqueue"),
-    queue: resourceNameSchema,
-    entry: enqueueEntrySchema,
-  }),
 ]);
 export const transactionRequestSchema = z
   .strictObject({
@@ -53,8 +49,7 @@ export type TransactionOperation = z.infer<typeof transactionOperationSchema>;
 export type TransactionRequest = z.infer<typeof transactionRequestSchema>;
 export type TransactionOperationResult =
   | { op: "record.create" | "record.update"; record: CollectionRecord }
-  | { op: "record.delete"; id: string }
-  | { op: "queue.enqueue"; result: EnqueueResult };
+  | { op: "record.delete"; id: string };
 export interface TransactionResult {
   results: TransactionOperationResult[];
 }

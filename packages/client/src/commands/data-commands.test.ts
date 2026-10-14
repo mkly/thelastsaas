@@ -80,6 +80,7 @@ describe("data command registration", () => {
         .find((command) => command.name() === "records")
         ?.commands.map((command) => command.name()),
     ).toEqual([
+      "history",
       "insert",
       "get",
       "update",
@@ -166,6 +167,84 @@ describe("collection commands", () => {
 });
 
 describe("record commands", () => {
+  test("queries collection and record history with shared filters and preserves the response", async () => {
+    const result = {
+      status: "ok",
+      items: [
+        {
+          id: "history_1",
+          record_id: "record_1",
+          operation: "delete",
+          before: { title: "Old" },
+          after: null,
+        },
+      ],
+      next_cursor: "next",
+    };
+    responseBodies.push(result);
+    const program = createProgram([
+      (root) => registerRecords(root, dependencies),
+    ]);
+    await program.parseAsync([
+      "bun",
+      "saas",
+      "--json",
+      "--org",
+      "org_alpha",
+      "records",
+      "history",
+      "tasks",
+      "record_1",
+      "--since",
+      "2026-10-01T00:00:00Z",
+      "--until",
+      "2026-10-14T00:00:00Z",
+      "--change-set-id",
+      "change_1",
+      "--limit",
+      "2",
+      "--cursor",
+      "current",
+    ]);
+    const url = new URL(requests[0]!.url);
+    expect(url.pathname).toBe("/v1/orgs/org_alpha/collections/tasks/history");
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      record_id: "record_1",
+      since: "2026-10-01T00:00:00Z",
+      until: "2026-10-14T00:00:00Z",
+      change_set_id: "change_1",
+      limit: "2",
+      cursor: "current",
+    });
+    expect(outputs[0]).toMatchObject({
+      value: result,
+      options: { json: true },
+    });
+    await createProgram([
+      (root) => registerRecords(root, dependencies),
+    ]).parseAsync(["bun", "saas", "records", "history", "tasks"]);
+    expect(new URL(requests[1]!.url).searchParams.has("record_id")).toBe(false);
+  });
+
+  test("rejects invalid history bounds locally and reports server cursor errors", async () => {
+    const args = ["bun", "saas", "records", "history", "tasks"];
+    const run = (...extra: string[]) =>
+      createProgram([(root) => registerRecords(root, dependencies)]).parseAsync(
+        [...args, ...extra],
+      );
+    await expect(run("--limit", "101")).rejects.toThrow();
+    await expect(
+      run("--since", "2026-10-14T00:00:00Z", "--until", "2026-10-01T00:00:00Z"),
+    ).rejects.toThrow("since must be before until");
+    expect(requests).toHaveLength(0);
+    responseBodies.push({
+      status: "error",
+      error: "InvalidQueryError",
+      message: "Invalid query",
+    });
+    await expect(run("--cursor", "invalid")).rejects.toThrow("Invalid query");
+  });
+
   test("builds an occurs_between query alongside ordinary filters", async () => {
     responseBodies.push({ status: "ok", records: [], total: 0 });
     const program = createProgram([

@@ -264,10 +264,17 @@ export async function insertRecordInTransaction(
     },
   });
   const mutation = createMutation(row, collectionName);
-  await publishRecordMutation(context, orgId, mutation, {
-    before: null,
-    after: row,
-  });
+  await publishRecordMutation(
+    context,
+    orgId,
+    mutation,
+    {
+      before: null,
+      after: row,
+    },
+    collection.id,
+    createdBy,
+  );
   return {
     record: serializedRecord(row, collectionName, fieldFilter),
     mutation,
@@ -359,10 +366,17 @@ export async function insertRecordsInTransaction(
   for (const data of creates) {
     const row = await db.record.create({ data });
     const mutation = createMutation(row, collectionName);
-    await publishRecordMutation(context, orgId, mutation, {
-      before: null,
-      after: row,
-    });
+    await publishRecordMutation(
+      context,
+      orgId,
+      mutation,
+      {
+        before: null,
+        after: row,
+      },
+      collection.id,
+      createdBy,
+    );
     mutations.push(mutation);
   }
   return {
@@ -442,6 +456,7 @@ export async function updateRecord(
   rowFilter?: Where | null,
   fieldFilter?: ResolvedFieldFilter | null,
   grants?: RecordGrants,
+  actorId = "system",
 ) {
   return withUnitOfWork(
     { prisma, provider: queryProvider(prisma) },
@@ -455,6 +470,7 @@ export async function updateRecord(
         rowFilter,
         fieldFilter,
         grants,
+        actorId,
       );
       return record;
     },
@@ -471,6 +487,7 @@ export async function updateRecordInTransaction(
   rowFilter?: Where | null,
   fieldFilter?: ResolvedFieldFilter | null,
   grants?: RecordGrants,
+  actorId = "system",
 ) {
   const { db, provider } = context;
   const collection = await getCollectionInTransaction(
@@ -566,10 +583,17 @@ export async function updateRecordInTransaction(
           changed_fields: changedFields,
         };
   if (mutation)
-    await publishRecordMutation(context, orgId, mutation, {
-      before: existing,
-      after: { ...existing, data: after, updatedAt },
-    });
+    await publishRecordMutation(
+      context,
+      orgId,
+      mutation,
+      {
+        before: existing,
+        after: { ...existing, data: after, updatedAt },
+      },
+      collection.id,
+      actorId,
+    );
   return {
     record: serializedRecord(
       { ...existing, data: after, updatedAt },
@@ -587,6 +611,7 @@ export async function deleteRecord(
   recordId: string,
   rowFilter?: Where | null,
   grants?: RecordGrants,
+  actorId = "system",
 ): Promise<void> {
   await withUnitOfWork({ prisma, provider: queryProvider(prisma) }, (context) =>
     deleteRecordInTransaction(
@@ -596,6 +621,7 @@ export async function deleteRecord(
       recordId,
       rowFilter,
       grants,
+      actorId,
     ),
   );
 }
@@ -608,6 +634,7 @@ export async function deleteRecordInTransaction(
   recordId: string,
   rowFilter?: Where | null,
   grants?: RecordGrants,
+  actorId = "system",
 ) {
   const { db, provider } = context;
   const collection = await getCollectionInTransaction(
@@ -641,16 +668,23 @@ export async function deleteRecordInTransaction(
     after: null,
     changed_fields: Object.keys(before).sort(),
   };
-  await publishRecordMutation(context, orgId, mutation, {
-    before: {
-      id: row.id,
-      data: before,
-      createdBy: row.created_by,
-      createdAt: new Date(row.created_at),
-      updatedAt: new Date(row.updated_at),
+  await publishRecordMutation(
+    context,
+    orgId,
+    mutation,
+    {
+      before: {
+        id: row.id,
+        data: before,
+        createdBy: row.created_by,
+        createdAt: new Date(row.created_at),
+        updatedAt: new Date(row.updated_at),
+      },
+      after: null,
     },
-    after: null,
-  });
+    collection.id,
+    actorId,
+  );
   return {
     mutation,
     // Internal authorization snapshot for transaction response replay. Capture

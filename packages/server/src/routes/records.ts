@@ -274,6 +274,7 @@ export const recordsRouter = new Hono<AppEnvironment>()
         context.get("rowFilter"),
         context.get("fieldFilter"),
         context.get("recordGrants"),
+        context.get("userId"),
       );
       await context.get("audit")("update_record", "record", result.id, {
         collection: context.req.param("name")!,
@@ -293,6 +294,7 @@ export const recordsRouter = new Hono<AppEnvironment>()
         id,
         context.get("rowFilter"),
         context.get("recordGrants"),
+        context.get("userId"),
       );
       await context.get("audit")("delete_record", "record", id, {
         collection: context.req.param("name")!,

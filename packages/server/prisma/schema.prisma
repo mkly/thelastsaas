@@ -335,6 +335,7 @@ model Organization {
   secrets               Secret[]
   collectionTriggers    CollectionTrigger[]
   transactionRequests   TransactionRequest[]
+  recordHistory         RecordHistory[]
 
   @@map("organization")
 }
@@ -388,6 +389,7 @@ model Collection {
   rowFilters   RowFilter[]
   fieldFilters FieldFilter[]
   triggers     CollectionTrigger[]
+  history      RecordHistory[]
 
   @@unique([orgId, name])
   @@unique([orgId, id])
@@ -410,6 +412,29 @@ model Record {
   @@unique([orgId, id])
   @@index([orgId, collectionId])
   @@map("records")
+}
+
+// Position orders mutations even when their timestamps are identical. It stays internal.
+model RecordHistory {
+  position     Int          @id @default(autoincrement())
+  id           String       @unique
+  orgId        String       @map("org_id")
+  collectionId String       @map("collection_id")
+  recordId     String       @map("record_id")
+  operation    String
+  actorId      String       @map("actor_id")
+  changeSetId  String       @map("change_set_id")
+  before       Json?
+  after        Json?
+  createdAt    DateTime     @default(now()) @map("created_at")
+  org          Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  collection   Collection   @relation(fields: [orgId, collectionId], references: [orgId, id], onDelete: Cascade)
+
+  @@index([orgId, collectionId, position])
+  @@index([orgId, collectionId, recordId, position])
+  @@index([orgId, changeSetId])
+  @@index([createdAt])
+  @@map("record_history")
 }
 
 model RowFilter {

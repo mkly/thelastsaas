@@ -106,9 +106,7 @@ describe("automation request contracts", () => {
       [
         transactionRequestSchema,
         {
-          operations: [
-            { op: "queue.enqueue", queue: "jobs", entry: { payload: {} } },
-          ],
+          operations: [{ op: "record.create", collection: "tasks", data: {} }],
           sql: "DELETE",
         },
       ],
@@ -354,7 +352,6 @@ describe("automation request contracts", () => {
         data: { title: "changed" },
       },
       { op: "record.delete", collection: "tickets", id: "record-id" },
-      { op: "queue.enqueue", queue: "jobs", entry: { payload: {} } },
     ];
     expect(
       transactionRequestSchema.safeParse({
@@ -364,12 +361,13 @@ describe("automation request contracts", () => {
     ).toBe(true);
     for (const input of [
       { op: "sql", query: "DELETE" },
+      { op: "queue.enqueue", queue: "jobs", entry: { payload: {} } },
       { op: "record.update", collection: "tickets", data: {} },
       { op: "record.delete", collection: "tickets", id: { from_result: 0 } },
       {
-        op: "queue.enqueue",
-        queue: "jobs",
-        entry: { payload: {} },
+        op: "record.create",
+        collection: "tickets",
+        data: {},
         result_ref: 0,
       },
     ])

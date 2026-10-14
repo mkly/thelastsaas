@@ -15,7 +15,8 @@ scheduling and retention. Public lease tokens are random, hashed in storage,
 and tied to the claiming account; native tokens never leave the server.
 
 Outer services own transactions. `UnitOfWork` carries the Prisma transaction,
-database provider and registered job backend. Record mutations, trigger events,
+database provider, change-set ID and registered job backend. Record mutations,
+record history, trigger events,
 schedule occurrences, publication and audit rows share that unit. PostgreSQL
 publication joins the transaction using pg-boss's Prisma adapter. SQLite stores
 a transactional outbox, then publishes durable jobs into Bunqueue's separate
@@ -47,7 +48,7 @@ back the source write or occurrence. See [automation](automation.md).
 Organization export/import includes queue definitions, processing policies, schedules
 and triggers. Import remaps configuration references and restores producers
 paused. Pending jobs, delivery state, occurrence ledgers and transaction replay
-receipts belong to database backups. Ordinary exports omit secrets; explicit
+receipts and retained record history belong to database backups. Ordinary exports omit secrets; explicit
 encrypted backups follow [secret backup and rotation](secrets-backup.md).
 
 ## API conventions

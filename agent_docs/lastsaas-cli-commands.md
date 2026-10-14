@@ -30,6 +30,7 @@ saas collections delete <name> --confirm
 # Records (alias: r)
 saas records insert <collection> --data <json>
 saas records get <collection> <id>
+saas records history <collection> [id] [--since <utc>] [--until <utc>] [--change-set-id <id>] [--limit <n>] [--cursor <cursor>]
 saas records update <collection> <id> --data <json>
 saas records delete <collection> <id>
 saas records query <collection> [--where <json>] [--order-by <field>] [--limit <n>] [--offset <n>]
@@ -160,14 +161,14 @@ and `--retention-days` (defaults 3, 60, 30, 7 respectively).
 
 Transaction input is a UTF-8 JSON request object with an `operations` array and
 optional `idempotency_key`. Raw input and the submitted request are bounded to
-1 MiB; the array contains 1..25 `record.create`, `record.update`, `record.delete`,
-or `queue.enqueue` operations using literal IDs and payloads. The CLI submits
+1 MiB; the array contains 1..25 `record.create`, `record.update`, or `record.delete`
+operations using literal IDs and data, including across collections. The CLI submits
 one request, performs no automatic retries or result interpolation, and prints
 the response with results in input order. Each operation requires its existing
 permissions; all operations commit together or roll back together.
 `--idempotency-key` may supply an absent key or match the input key; conflicting
 keys are rejected. Keys are scoped to organization and principal and retained
-for seven days. See [transaction DTOs](../docs/queues-design.md#transactions).
+for seven days. See [transactions](../docs/automation.md#atomic-transactions).
 
 Notification queue and schedule creation commands accept one audience selector:
 repeat `--to <id-or-email>`, repeat `--to-role <existing-role>`, or `--to-all`.
@@ -203,3 +204,7 @@ checked again on settlement. See [workers](../docs/queues.md) and
 [automation](../docs/automation.md) for ACLs, retry, trigger publication and restore.
 Encryption-key rotation is a server-local command, not `saas secrets rotate`;
 see [operator rotation](../docs/secrets-backup.md#rotate-server-encryption-keys).
+
+`records history` reads 30 days of changes under current record permissions,
+including deletions. Pagination counts visible entries only. See
+[history semantics and correction](../docs/record-history.md).

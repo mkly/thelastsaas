@@ -1,5 +1,6 @@
 import {
   AUTOMATION_LIMITS,
+  TRANSACTION_OPERATIONS_HINT,
   transactionRequestSchema,
   type TransactionResponse,
 } from "@lastsaas/shared";
@@ -75,7 +76,7 @@ export function registerTransactions(
 ): void {
   const transactions = program
     .command("transactions")
-    .description("Submit bounded atomic record and queue operations");
+    .description("Submit bounded atomic record operations across collections");
 
   transactions
     .command("execute")
@@ -88,7 +89,7 @@ export function registerTransactions(
       `
 Supply exactly one of --input or --stdin (maximum 1 MiB of UTF-8 JSON).
 Input is {"operations":[...],"idempotency_key":"optional key"}, with 1..25
-record.create, record.update, record.delete or queue.enqueue operations.
+record.create, record.update, or record.delete operations.
 IDs and payloads are literal; results cannot be referenced by later operations.
 All operations commit together or roll back together. No automatic retries.
 Idempotency keys are scoped to organization and principal, retained for 7 days;
@@ -132,7 +133,7 @@ key absent from input or match the input key, but cannot replace a different key
           const parsed = transactionRequestSchema.safeParse(value);
           if (!parsed.success) {
             throw new CliError(
-              "Invalid transaction request. Use 1..25 supported literal operations, an optional nonempty idempotency key of at most 256 characters, and at most 1 MiB of UTF-8 JSON.",
+              `Invalid transaction request. ${TRANSACTION_OPERATIONS_HINT}. Use 1..25 literal operations, an optional nonempty idempotency key of at most 256 characters, and at most 1 MiB of UTF-8 JSON.`,
             );
           }
           const options = getGlobalOptions(command);

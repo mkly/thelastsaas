@@ -31,8 +31,6 @@ import {
   updateRecordInTransaction,
 } from "../db/records";
 import { withUnitOfWork, type UnitOfWork } from "../db/unit-of-work";
-import { createQueueEnqueueService } from "../queues/enqueue";
-import { authorizeQueueAction } from "../queues/permissions";
 
 const retentionMs = 7 * 24 * 60 * 60 * 1000;
 
@@ -97,7 +95,7 @@ async function recordGrants(
 
 // Full snapshots are internal authorization inputs, separate from saved projected
 // responses. Conditions may refer to fields absent from the original response.
-type Visibility = Array<CollectionRecord | null>;
+type Visibility = CollectionRecord[];
 
 async function replay(
   unit: UnitOfWork,
@@ -109,12 +107,6 @@ async function replay(
   const results: TransactionOperationResult[] = [];
   for (const [index, operation] of operations.entries()) {
     const result = response.results[index]!;
-    if (operation.op === "queue.enqueue") {
-      // Receipts reveal no payload; recheck current queue create authority.
-      await authorizeQueueAction(unit.db, context, operation.queue, "create");
-      results.push(result);
-      continue;
-    }
     const snapshot = visibility[index]!;
     const { collection, grants } = await recordGrants(
       unit,
@@ -158,12 +150,13 @@ export function createTransactionService(
   prisma: PrismaClient,
   provider = queryProvider(prisma),
 ): TransactionService {
-  const enqueue = createQueueEnqueueService(prisma, provider);
   return {
     async execute(context, input) {
       const parsed = transactionRequestSchema.safeParse(input);
       if (!parsed.success)
-        throw new SchemaValidationError(["Invalid transaction request"]);
+        throw new SchemaValidationError([
+          "Invalid transaction request: only record.create, record.update, and record.delete operations",
+        ]);
       const { operations, idempotency_key: key } = parsed.data;
       const hash =
         key === undefined
@@ -206,19 +199,6 @@ export function createTransactionService(
               const results: TransactionOperationResult[] = [];
               const visibility: Visibility = [];
               for (const operation of operations) {
-                if (operation.op === "queue.enqueue") {
-                  results.push({
-                    op: operation.op,
-                    result: await enqueue.enqueueInTransaction(
-                      context,
-                      unit,
-                      operation.queue,
-                      { entries: [operation.entry] },
-                    ),
-                  });
-                  if (key !== undefined) visibility.push(null);
-                  continue;
-                }
                 const action = operation.op.split(".")[1]!;
                 const { grants } = await recordGrants(
                   unit,
@@ -235,6 +215,7 @@ export function createTransactionService(
                     operation.id,
                     undefined,
                     grants,
+                    context.userId,
                   );
                   id = operation.id;
                   results.push({ op: operation.op, id });
@@ -261,6 +242,7 @@ export function createTransactionService(
                           undefined,
                           undefined,
                           grants,
+                          context.userId,
                         );
                   id = record.id;
                   results.push({ op: operation.op, record });

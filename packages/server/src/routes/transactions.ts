@@ -1,6 +1,7 @@
 import { jsonRequest } from "../lib/transport";
 import {
   AUTOMATION_LIMITS,
+  TRANSACTION_OPERATIONS_HINT,
   errorResponse,
   transactionRequestSchema,
 } from "@lastsaas/shared";
@@ -22,22 +23,26 @@ export const transactionsRouter = new Hono<AppEnvironment>()
         ),
     }),
   )
-  .post("/", jsonRequest(transactionRequestSchema), async (context) => {
-    try {
-      const input = context.req.valid("json");
-      const { prisma } = context.get("services");
-      const userId = context.get("userId");
-      const user = await prisma.user.findUnique({
-        where: { id: userId },
-        select: { email: true },
-      });
-      const result = await createTransactionService(prisma).execute(
-        { orgId: context.get("orgId"), userId, userEmail: user?.email ?? "" },
-        input,
-      );
-      return context.json({ status: "ok" as const, ...result });
-    } catch (error) {
-      const { body, status } = transactionTransportError(error);
-      return context.json(body, status);
-    }
-  });
+  .post(
+    "/",
+    jsonRequest(transactionRequestSchema, TRANSACTION_OPERATIONS_HINT),
+    async (context) => {
+      try {
+        const input = context.req.valid("json");
+        const { prisma } = context.get("services");
+        const userId = context.get("userId");
+        const user = await prisma.user.findUnique({
+          where: { id: userId },
+          select: { email: true },
+        });
+        const result = await createTransactionService(prisma).execute(
+          { orgId: context.get("orgId"), userId, userEmail: user?.email ?? "" },
+          input,
+        );
+        return context.json({ status: "ok" as const, ...result });
+      } catch (error) {
+        const { body, status } = transactionTransportError(error);
+        return context.json(body, status);
+      }
+    },
+  );

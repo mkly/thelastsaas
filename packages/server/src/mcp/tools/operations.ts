@@ -852,7 +852,7 @@ function registerSystemTools(server: McpServer, context: McpToolContext): void {
           context.services.prisma,
           requireOrganization(context),
           portableData as ExportData,
-          { keyring: context.config.secretKeyring },
+          { keyring: context.config.secretKeyring, actorId: context.userId },
         );
         await audit(context, "import_data", "system", null, {
           ...result,

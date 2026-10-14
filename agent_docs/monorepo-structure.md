@@ -55,3 +55,8 @@ families. Registration is in client `src/commands.ts` and server `src/app.ts` /
 `src/mcp/registry.ts`. `scripts/rotate-secrets.ts` is local operator tooling.
 After editing `skills/lastsaas/SKILL.md`, run `bun run embed:skill` in the host
 worktree; never hand-edit client `skill.generated.ts`.
+
+Record history DTOs live in shared `record-history.ts`. Server
+`db/record-history-storage.ts` appends and expires snapshots; `db/record-history.ts`
+authorizes and projects queries. `routes/record-history.ts`, MCP `records_history`,
+and CLI `records history` use the same query service and shared schema.

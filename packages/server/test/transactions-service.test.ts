@@ -85,6 +85,16 @@ async function fixture() {
   for (const action of ["create", "update", "delete", "read"])
     await grant("/collections/tasks", action);
   await grant("/queues/jobs", "create");
+  await prisma.collection.create({
+    data: {
+      id: crypto.randomUUID(),
+      orgId,
+      name: "notes",
+      schema: { title: "string" },
+    },
+  });
+  await grant("/collections/notes", "create");
+  await grant("/collections/notes", "read");
   const service = createTransactionService(prisma, provider);
   const execute = (input: TransactionRequest) =>
     service.execute(context, input);
@@ -113,10 +123,10 @@ const create = {
   collection: "tasks",
   data: { title: "Work", owner: "me", secret: "private" },
 } as const;
-const enqueue = {
-  op: "queue.enqueue",
-  queue: "jobs",
-  entry: { payload: { title: "Work" } },
+const note = {
+  op: "record.create",
+  collection: "notes",
+  data: { title: "Note" },
 } as const;
 function createdId(result: TransactionResult) {
   const operation = result.results[0]!;
@@ -126,16 +136,16 @@ function createdId(result: TransactionResult) {
 }
 
 describe(`bounded transactions (${provider})`, () => {
-  test("mixed writes commit in order with metadata-only transactional audits", async () => {
+  test("cross-collection writes commit in order with metadata-only transactional audits", async () => {
     const { execute, counts, prisma, context } = await fixture();
-    const result = await execute({ operations: [create, enqueue] });
+    const result = await execute({ operations: [create, note] });
     expect(result.results.map((r) => r.op)).toEqual([
       "record.create",
-      "queue.enqueue",
+      "record.create",
     ]);
     expect(await counts()).toEqual({
-      records: 1,
-      entries: 1,
+      records: 2,
+      entries: 0,
 
       audits: 2,
       requests: 0,
@@ -147,12 +157,12 @@ describe(`bounded transactions (${provider})`, () => {
     expect(JSON.stringify(audits)).not.toContain('"payload"');
   });
 
-  test("a later schema failure rolls back messages, writes, audits and dedup results", async () => {
+  test("a later schema failure rolls back record writes, audits and dedup results", async () => {
     const { execute, counts } = await fixture();
     await expect(
       execute({
         idempotency_key: "invalid",
-        operations: [create, enqueue, { ...create, data: { title: 1 } }],
+        operations: [create, note, { ...create, data: { title: 1 } }],
       }),
     ).rejects.toThrow("Schema validation");
     expect(await counts()).toEqual({
@@ -164,9 +174,9 @@ describe(`bounded transactions (${provider})`, () => {
     });
   });
 
-  test("a denied operation rolls back preceding record and enqueue writes", async () => {
+  test("a denied operation rolls back preceding record writes", async () => {
     const { execute, counts, prisma, context } = await fixture();
-    await prisma.queue.create({
+    await prisma.collection.create({
       data: {
         id: crypto.randomUUID(),
         orgId: context.orgId,
@@ -176,7 +186,7 @@ describe(`bounded transactions (${provider})`, () => {
     });
     await expect(
       execute({
-        operations: [create, enqueue, { ...enqueue, queue: "other" }],
+        operations: [create, note, { ...note, collection: "other" }],
       }),
     ).rejects.toThrow("Permission denied");
     expect((await counts()).audits).toBe(0);
@@ -206,7 +216,6 @@ describe(`bounded transactions (${provider})`, () => {
           id,
           data: { title: "Allowed" },
         },
-        enqueue,
       ],
     });
     expect(updated.results[0]).toMatchObject({
@@ -241,7 +250,7 @@ describe(`bounded transactions (${provider})`, () => {
     expect((await counts()).records).toBe(0);
   });
 
-  test("create and queue payload restrictions are checked for each operation", async () => {
+  test("create restrictions are checked for each operation", async () => {
     const { prisma, context, execute, grant, counts } = await fixture();
     await removePolicy(
       prisma,
@@ -262,16 +271,16 @@ describe(`bounded transactions (${provider})`, () => {
       prisma,
       context.orgId,
       context.userId,
-      "/queues/jobs",
+      "/collections/notes",
       "create",
     );
     await expect(
-      execute({ operations: [{ ...create, data: { owner: "me" } }, enqueue] }),
+      execute({ operations: [{ ...create, data: { owner: "me" } }, note] }),
     ).rejects.toMatchObject({ code: "PermissionDeniedError" });
     expect((await counts()).records).toBe(0);
   });
 
-  test("foreign record IDs, queues and nonmembers cannot cross organization scope", async () => {
+  test("foreign record IDs, collections and nonmembers cannot cross organization scope", async () => {
     const { prisma, context, foreignId, collection, execute, service, counts } =
       await fixture();
     const foreignCollection = await prisma.collection.create({
@@ -290,11 +299,11 @@ describe(`bounded transactions (${provider})`, () => {
         data: { title: "foreign" },
       },
     });
-    await prisma.queue.create({
+    await prisma.collection.create({
       data: {
         id: crypto.randomUUID(),
         orgId: foreignId,
-        name: "foreignJobs",
+        name: "foreignNotes",
         schema: { title: "string" },
       },
     });
@@ -314,7 +323,9 @@ describe(`bounded transactions (${provider})`, () => {
       ).rejects.toThrow("not found");
     }
     await expect(
-      execute({ operations: [create, { ...enqueue, queue: "foreignJobs" }] }),
+      execute({
+        operations: [create, { ...note, collection: "foreignNotes" }],
+      }),
     ).rejects.toThrow("not found");
     await expect(
       service.execute(
@@ -343,6 +354,12 @@ describe(`bounded transactions (${provider})`, () => {
       },
       { operations: [create], orgId: "foreign" },
       { operations: [{ op: "sql", query: "DELETE FROM records" }] },
+      {
+        operations: [
+          create,
+          { op: "queue.enqueue", queue: "jobs", entry: { payload: {} } },
+        ],
+      },
     ])
       await expect(execute(input as TransactionRequest)).rejects.toThrow(
         "Invalid transaction request",
@@ -360,7 +377,7 @@ describe(`bounded transactions (${provider})`, () => {
     const { execute, counts, prisma, context } = await fixture();
     const request: TransactionRequest = {
       idempotency_key: "retry",
-      operations: [create, enqueue],
+      operations: [create, note],
     };
     const first = await execute(request);
     const before = await counts();
@@ -368,7 +385,7 @@ describe(`bounded transactions (${provider})`, () => {
       ...request,
       operations: [
         { ...create, data: { secret: "private", owner: "me", title: "Work" } },
-        enqueue,
+        note,
       ],
     });
     expect(second).toEqual(first);
@@ -380,7 +397,7 @@ describe(`bounded transactions (${provider})`, () => {
       7 * 24 * 60 * 60 * 1000,
     );
     try {
-      await execute({ ...request, operations: [enqueue, create] });
+      await execute({ ...request, operations: [note, create] });
       throw new Error("Expected conflict");
     } catch (error) {
       expect(error).toMatchObject({ code: "AutomationConflictError" });
@@ -425,12 +442,12 @@ describe(`bounded transactions (${provider})`, () => {
     await expect(execute(request)).rejects.toThrow("not found");
   });
 
-  test("delete replay evaluates original metadata; create-only enqueue replay needs no payload read", async () => {
+  test("delete replay evaluates original metadata", async () => {
     const { prisma, context, execute, grant, counts } = await fixture();
     const id = createdId(await execute({ operations: [create] }));
     const request: TransactionRequest = {
       idempotency_key: "deleted",
-      operations: [{ op: "record.delete", collection: "tasks", id }, enqueue],
+      operations: [{ op: "record.delete", collection: "tasks", id }, note],
     };
     const result = await execute(request);
     const before = await counts();
@@ -449,8 +466,9 @@ describe(`bounded transactions (${provider})`, () => {
       prisma,
       context.orgId,
       context.userId,
-      "/queues/jobs",
-      "create",
+      "/collections/tasks",
+      "delete",
+      { where: { created_by: context.userId } },
     );
     await expect(execute(request)).rejects.toThrow("Permission denied");
     expect(await counts()).toEqual(before);
@@ -472,7 +490,7 @@ describe(`bounded transactions (${provider})`, () => {
       where: { orgId: context.orgId },
       data: { principalId: "other" },
     });
-    await execute({ ...request, operations: [enqueue] });
+    await execute({ ...request, operations: [note] });
     expect((await counts()).requests).toBe(2);
   });
 
@@ -481,15 +499,15 @@ describe(`bounded transactions (${provider})`, () => {
     const other = new PrismaClient({ datasourceUrl: url });
     cleanups.push(() => other.$disconnect());
     const second = createTransactionService(other, provider);
-    const request = { idempotency_key: "race", operations: [create, enqueue] };
+    const request = { idempotency_key: "race", operations: [create, note] };
     const results = await Promise.all([
       execute(request),
       second.execute(context, request),
     ]);
     expect(results[0]).toEqual(results[1]);
     expect(await counts()).toEqual({
-      records: 1,
-      entries: 1,
+      records: 2,
+      entries: 0,
 
       audits: 2,
       requests: 1,

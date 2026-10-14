@@ -23,11 +23,6 @@ const operations = [
     data: { title: "$results[0].record.id" },
   },
   { op: "record.delete", collection: "tasks", id: "literal_delete_id" },
-  {
-    op: "queue.enqueue",
-    queue: "jobs",
-    entry: { payload: { task_id: "literal_id" } },
-  },
 ];
 const result = {
   status: "ok",
@@ -35,7 +30,6 @@ const result = {
     { op: "record.create", record: { id: "new_id", data: { title: "é\n" } } },
     { op: "record.update", record: { id: "literal_id" } },
     { op: "record.delete", id: "literal_delete_id" },
-    { op: "queue.enqueue", result: { entries: [], delivery_count: 1 } },
   ],
 };
 
@@ -250,18 +244,14 @@ describe("transaction CLI", () => {
         { operations, extra: privateValue },
         { operations, organization_id: "foreign" },
         { operations: [{ op: "sql", sql: privateValue }] },
+        {
+          operations: [
+            { op: "queue.enqueue", queue: "jobs", entry: { payload: {} } },
+          ],
+        },
         { operations: [{ ...operations[2], id: { result: 0 } }] },
         {
           operations: [{ op: "record.update", collection: "tasks", data: {} }],
-        },
-        {
-          operations: [
-            {
-              op: "queue.enqueue",
-              queue: "jobs",
-              entry: { payload: { text: "é".repeat(32769) } },
-            },
-          ],
         },
         { operations, idempotency_key: "" },
         { operations, idempotency_key: "k".repeat(257) },

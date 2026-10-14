@@ -23,7 +23,10 @@ MCP resolves its selected organization at request start.
 ## Data primitives
 
 Collections own dynamic schemas. Records store schema-validated JSON plus
-native database timestamps and creator identity. The recursive Where DSL is
+native database timestamps and creator identity. Record mutations append full
+before/after snapshots in the same transaction to a separate 30-day history.
+History reads apply current row and field permissions to saved versions, including
+deleted records. The audit log and idempotency receipts have independent retention. The recursive Where DSL is
 shared by record queries and row filters, avoiding a second condition language.
 
 Casbin policies provide the coarse gate. Row filters narrow visible records;

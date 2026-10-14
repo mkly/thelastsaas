@@ -101,7 +101,10 @@ export const systemRouter = new Hono<AppEnvironment>()
         context.get("services").prisma,
         context.get("orgId"),
         portableData as ExportData,
-        { keyring: context.get("config")?.secretKeyring ?? null },
+        {
+          keyring: context.get("config")?.secretKeyring ?? null,
+          actorId: context.get("userId"),
+        },
       );
     } catch (error) {
       // A dump can carry a collection the schema validator rejects; that is a

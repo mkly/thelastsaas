@@ -105,6 +105,9 @@ async function fixture() {
   });
   const counts = async () => ({
     records: await prisma.record.count({ where: { orgId: context.orgId } }),
+    history: await prisma.recordHistory.count({
+      where: { orgId: context.orgId },
+    }),
     entries: await prisma.queueEntry.count({ where: { queueId: queue.id } }),
     requests: await prisma.transactionRequest.count({
       where: { orgId: context.orgId },
@@ -118,11 +121,6 @@ async function fixture() {
         op: "record.create",
         collection: "tasks",
         data: { title: "From record", private: "DO NOT PUBLISH" },
-      },
-      {
-        op: "queue.enqueue",
-        queue: "jobs",
-        entry: { payload: { title: "Direct" } },
       },
     ],
   };
@@ -152,8 +150,8 @@ describe(`record/trigger/queue integration (${provider})`, () => {
     await f.service.execute(f.context, f.request);
     expect(await f.counts()).toMatchObject({
       records: 1,
-      entries: 2,
-
+      entries: 1,
+      history: 1,
       requests: 1,
     });
   });
@@ -171,8 +169,8 @@ describe(`record/trigger/queue integration (${provider})`, () => {
     const before = await f.counts();
     expect(before).toMatchObject({
       records: 1,
-      entries: 2,
-
+      entries: 1,
+      history: 1,
       requests: 1,
     });
     const created = results[0]!.results[0]!;
@@ -184,7 +182,6 @@ describe(`record/trigger/queue integration (${provider})`, () => {
     expect(entries.map((entry) => entry.payload)).toEqual(
       expect.arrayContaining([
         { title: "From record", record: created.record.id, event: "create" },
-        { title: "Direct" },
       ]),
     );
     const canonicalRetry: TransactionRequest = {
@@ -195,7 +192,6 @@ describe(`record/trigger/queue integration (${provider})`, () => {
           collection: "tasks",
           data: { private: "DO NOT PUBLISH", title: "From record" },
         },
-        f.request.operations[1]!,
       ],
     };
     expect(await competing.execute(f.context, canonicalRetry)).toEqual(
@@ -204,7 +200,12 @@ describe(`record/trigger/queue integration (${provider})`, () => {
     await expect(
       competing.execute(f.context, {
         ...f.request,
-        operations: [f.request.operations[0]!],
+        operations: [
+          {
+            ...f.request.operations[0]!,
+            data: { title: "Changed" },
+          } as TransactionRequest["operations"][number],
+        ],
       }),
     ).rejects.toMatchObject({ code: "AutomationConflictError" });
     expect(await f.counts()).toEqual(before);
@@ -232,7 +233,7 @@ describe(`record/trigger/queue integration (${provider})`, () => {
     expect(await f.counts()).toMatchObject({
       records: 2,
       entries: 2,
-
+      history: 2,
       requests: 0,
     });
     const entries = await f.prisma.queueEntry.findMany({

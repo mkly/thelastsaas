@@ -27,7 +27,7 @@ export function registerTransactionTools(
     "transactions_execute",
     {
       description:
-        "Execute 1–25 ordered record.create {collection,data}, record.update {collection,id,data}, record.delete {collection,id}, or queue.enqueue {queue,entry} operations atomically. Uses current organization and permissions. Maximum 1 MiB; literal IDs/payloads only, no SQL, code or result interpolation. Optional idempotency_key retains the response for seven days; changed content conflicts. Any failure rolls back every operation.",
+        "Execute 1–25 ordered record.create {collection,data}, record.update {collection,id,data}, or record.delete {collection,id} operations atomically. Uses current organization and permissions. Maximum 1 MiB; literal IDs/payloads only, no SQL, code or result interpolation. Optional idempotency_key retains the response for seven days; changed content conflicts. Any failure rolls back every operation.",
       // Keep the advertised schema compact and permissive; the frozen strict
       // validator runs in the callback, yielding redacted errors for both transports.
       inputSchema: z.looseObject({

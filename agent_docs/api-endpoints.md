@@ -51,6 +51,8 @@ DELETE /v1/orgs/:orgId/collections/:name?confirm=true collection:delete
 # Records
 POST   /v1/orgs/:orgId/collections/:name/records
 POST   /v1/orgs/:orgId/collections/:name/records/batch
+GET    /v1/orgs/:orgId/collections/:name/history
+GET    /v1/orgs/:orgId/collections/:name/records/:id/history
 GET    /v1/orgs/:orgId/collections/:name/records/:id
 PATCH  /v1/orgs/:orgId/collections/:name/records/:id
 DELETE /v1/orgs/:orgId/collections/:name/records/:id
@@ -102,7 +104,7 @@ GET    /v1/orgs/:orgId/triggers        filters by /triggers/:id:read
 GET    /v1/orgs/:orgId/triggers/:id    read
 PATCH  /v1/orgs/:orgId/triggers/:id    update
 DELETE /v1/orgs/:orgId/triggers/:id    delete
-POST   /v1/orgs/:orgId/transactions   each operation's record/queue gates
+POST   /v1/orgs/:orgId/transactions   each operation's record gates
 
 # Casbin policies and data filters
 GET    /v1/orgs/:orgId/permissions
@@ -193,3 +195,10 @@ Schedule creation uses `{queue,payload,timing,enabled?}`, where timing is
 are PATCH `{enabled:false/true}`. Transaction bodies contain 1..25 `operations`
 and optional `idempotency_key`, bounded to 1 MiB. See [automation examples](../docs/automation.md).
 Secret key rotation is local operator tooling, with no REST route.
+
+History routes use current collection read grants, row conditions and field
+projection on each stored version. Query parameters are `record_id`,
+`change_set_id`, UTC `since` (inclusive), UTC `until` (exclusive), `limit`
+(1..100, default 50), and `cursor`. The record route supplies `record_id` from
+its path. Responses contain `items` and `next_cursor`; see
+[record history](../docs/record-history.md).

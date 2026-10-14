@@ -1,3 +1,4 @@
+import { pruneRecordHistory } from "../db/record-history-storage";
 import { postgresJobSchema } from "../jobs";
 import { InvalidQueryError, PermissionDeniedError } from "@lastsaas/shared";
 import { Prisma, type PrismaClient } from "@prisma/client";
@@ -259,6 +260,7 @@ abstract class BaseBackgroundScheduler implements BackgroundScheduler {
       where: { expiresAt: { lte: now } },
     });
     await maintainQueues(this.prisma, now);
+    await pruneRecordHistory(this.prisma, now);
     // A failed queue producer must not stall independent notification delivery.
     // Log fixed metadata only: persistence diagnostics may contain payload values.
     const general = await this.materializer

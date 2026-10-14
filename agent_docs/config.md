@@ -15,8 +15,8 @@ production.
 | `NODE_ENV`                   | `development`                             | `development`, `test`, or `production`                |
 | `PORT`                       | `8787`                                    | HTTP listen port                                      |
 | `DATABASE_URL`               | `file:./data/lastsaas.db`                 | SQLite file or PostgreSQL connection URL              |
-| `CACHE_MAX_BYTES`            | `33554432` (32 MiB)                     | Metadata cache budget; `0` disables caching           |
-| `CACHE_TTL_SECONDS`          | `3600` (one hour)                       | Metadata cache entry lifetime                        |
+| `CACHE_MAX_BYTES`            | `33554432` (32 MiB)                       | Metadata cache budget; `0` disables caching           |
+| `CACHE_TTL_SECONDS`          | `3600` (one hour)                         | Metadata cache entry lifetime                         |
 | `BETTER_AUTH_SECRET`         | development-only value                    | BetterAuth signing secret; required in production     |
 | `BETTER_AUTH_URL`            | `http://localhost:$PORT`                  | Public origin; required in production                 |
 | `GOOGLE_CLIENT_ID`           | empty                                     | Optional Google OAuth client; pair with its secret    |
@@ -77,7 +77,7 @@ edits become visible when entries expire.
 
 For multiple server processes sharing a database, set `CACHE_MAX_BYTES=0`:
 invalidation is local to each process, so another process could retain revoked
-permissions until expiry. No shared cache backend is implemented.
+permissions until expiry.
 
 ## Secret encryption
 

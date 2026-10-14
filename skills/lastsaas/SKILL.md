@@ -88,6 +88,32 @@ are `eq`, `not`, `gt`, `lt`, `gte`, `lte`, `contains`, `in`, `is_null`,
 such as `_id`, `_created_at`, and `_updated_at` may be available alongside
 schema fields.
 
+## Inspect record history
+
+```bash
+saas --json records history contacts
+saas --json records history contacts <record-id> --limit 25
+saas --json records history contacts --since 2026-10-01T00:00:00Z --until 2026-10-14T00:00:00Z
+saas --json records history contacts --change-set-id <change-set-id>
+saas --json records history contacts --cursor <next-cursor>
+```
+
+History covers the last 30 days, including deleted records. It returns `items`
+and `next_cursor`, newest mutation first. `--limit` is 1..100 (default 50).
+`--since` is inclusive and `--until` exclusive; use UTC timestamps. Keep filters
+unchanged when following a cursor.
+
+Each entry has `id`, `record_id`, `operation`, `actor_id`, `created_at`,
+`change_set_id`, projected `before`/`after` data, and changed fields in `changes`.
+Current read grants apply separately to each saved version. An omitted version
+is inaccessible; `null` means the record did not exist on that side. Updates
+confined to hidden fields are omitted. Correlation never widens permissions.
+
+Read the live record and inspect authorized history before making a correction.
+Use ordinary update/insert/delete commands or a record transaction; a correction
+receives its own history entry. Inserting a replacement for a deleted record
+creates a new ID. The permanent audit log is separate from this retained history.
+
 ## Recurrence values and window queries
 
 A `recurrence` value is RFC 5545 content with exactly these logical lines:
@@ -430,10 +456,9 @@ can create cycles; choose business guards deliberately.
 
 A transaction file is `{operations:[...],idempotency_key?:"..."}` with 1..25
 ordered operations and <=1 MiB. Operations are record.create `{op,collection,data}`,
-record.update `{op,collection,id,data}`, record.delete `{op,collection,id}`, or
-queue.enqueue `{op,queue,entry:{payload,...}}`. Use literal IDs/payloads; there
-is no result interpolation. Permissions, record writes, queue messages, triggers
-and audits commit or roll back together. Same-key retries within seven days are
+record.update `{op,collection,id,data}`, or record.delete `{op,collection,id}`.
+Use literal IDs and data, including across collections. Record writes, history,
+trigger publications and audits commit or roll back together. Same-key retries within seven days are
 scoped to organization+principal; conflicting content returns 409 and replays
 check current result visibility. CLI sends once without automatic retry.
 

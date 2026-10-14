@@ -1,3 +1,5 @@
+import { appendRecordHistory } from "./record-history-storage";
+import { withUnitOfWork, type UnitOfWork } from "./unit-of-work";
 import {
   decodeGrantOptions,
   encodeGrantOptions,
@@ -252,7 +254,7 @@ export async function importData(
   prisma: PrismaClient,
   orgId: string,
   input: ExportData,
-  options: Pick<SecretBackupOptions, "keyring"> = {},
+  options: Pick<SecretBackupOptions, "keyring"> & { actorId?: string } = {},
 ): Promise<ImportResult> {
   // The DB entry point validates too: MCP and direct callers must get exactly
   // the same atomic boundary as HTTP imports.
@@ -267,8 +269,16 @@ export async function importData(
     if (errors.length) throw new SchemaValidationError(errors);
   }
   validateAutomation(data, queryProvider(prisma));
-  const result = await prisma.$transaction(
-    (db) => importInTransaction(db, orgId, data, options.keyring ?? null),
+  const result = await withUnitOfWork(
+    { prisma, provider: queryProvider(prisma) },
+    (unit) =>
+      importInTransaction(
+        unit,
+        orgId,
+        data,
+        options.keyring ?? null,
+        options.actorId ?? "import",
+      ),
     { timeout: 60_000 },
   );
   await invalidateMetadata(
@@ -280,11 +290,13 @@ export async function importData(
 }
 
 async function importInTransaction(
-  prisma: Prisma.TransactionClient,
+  unit: UnitOfWork,
   orgId: string,
   data: ExportData,
   keyring: SecretKeyring | null,
+  actorId: string,
 ): Promise<ImportResult> {
+  const prisma = unit.db;
   const importedSecrets = await importSecrets(
     prisma,
     orgId,
@@ -333,7 +345,7 @@ async function importInTransaction(
           .findUnique({ where: { id }, select: { id: true } })
           .then(Boolean),
       );
-      await prisma.record.create({
+      const row = await prisma.record.create({
         data: {
           id,
           orgId,
@@ -344,6 +356,15 @@ async function importInTransaction(
           updatedAt: new Date(r.updated_at),
         },
       });
+      await appendRecordHistory(
+        unit,
+        orgId,
+        collection.id,
+        id,
+        actorId,
+        "create",
+        { before: null, after: row },
+      );
       recordIds.set(r.id, id);
       importedRecords++;
     }

@@ -245,6 +245,15 @@ reading list, include `[{"resource":"/collections/reading_list","action":"read"}
 The grants are applied when the recipient accepts; no existing account is needed
 to send the invitation. `invitations_list` includes the pending grants.
 
+## Record history
+
+`records_history` accepts `collection`, optional `record_id`, `change_set_id`,
+UTC `since`/`until`, `limit` (1..100, default 50), and `cursor`. It returns the
+last 30 days of permitted changes, including deleted records, with the same
+`items`/`next_cursor` response as REST and `saas records history`.
+Current row and field permissions filter each saved version independently.
+See [history semantics and corrections](record-history.md).
+
 ## Durable queues and automation
 
 Tools use the current selected organization and the same membership, payload

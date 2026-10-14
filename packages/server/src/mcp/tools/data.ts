@@ -2,11 +2,13 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Hono } from "hono";
 import { z } from "zod";
+import { recordHistoryQuerySchema } from "@lastsaas/shared";
 
 import { createAuditWriter } from "../../db/audit";
 import type { AppEnvironment } from "../../env";
 import { collectionsRouter } from "../../routes/collections";
 import { recordsRouter } from "../../routes/records";
+import { recordHistoryRouter } from "../../routes/record-history";
 import type { McpToolContext } from "../context";
 
 const jsonObjectSchema = z.record(z.string(), z.unknown());
@@ -86,6 +88,7 @@ function createRouteCaller(context: McpToolContext) {
   });
   app.route("/collections", collectionsRouter);
   app.route("/collections/:name/records", recordsRouter);
+  app.route("/collections/:name", recordHistoryRouter);
 
   return async (
     method: "GET" | "POST" | "PATCH" | "DELETE",
@@ -110,6 +113,27 @@ export function registerDataTools(
   context: McpToolContext,
 ): void {
   const callRoute = createRouteCaller(context);
+
+  server.registerTool(
+    "records_history",
+    {
+      description:
+        "Read up to 30 days of record changes, newest first, using current collection, row, and field permissions. Includes deleted records. Filter by record_id, change_set_id, since (inclusive), or until (exclusive); continue with next_cursor. Before/after versions are independently permission-filtered. Correct records through ordinary write tools.",
+      inputSchema: recordHistoryQuerySchema.safeExtend({
+        collection: z.string().min(1),
+      }),
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async ({ collection, ...query }) => {
+      const params = new URLSearchParams(
+        Object.entries(query).map(([key, value]) => [key, String(value)]),
+      );
+      return callRoute(
+        "GET",
+        `/collections/${pathPart(collection)}/history?${params}`,
+      );
+    },
+  );
 
   server.registerTool(
     "collections_list",

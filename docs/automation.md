@@ -125,7 +125,7 @@ Prepare a request file and submit it once:
 
 ```json
 {
-  "idempotency_key": "ticket-and-job-42",
+  "idempotency_key": "ticket-and-note-42",
   "operations": [
     {
       "op": "record.update",
@@ -134,9 +134,9 @@ Prepare a request file and submit it once:
       "data": { "title": "urgent report" }
     },
     {
-      "op": "queue.enqueue",
-      "queue": "jobs",
-      "entry": { "payload": { "job_id": "job-42", "title": "Index report" } }
+      "op": "record.create",
+      "collection": "notes",
+      "data": { "title": "Escalated ticket 42" }
     }
   ]
 }
@@ -147,15 +147,15 @@ saas --json transactions execute --input transaction.json
 ```
 
 REST `POST /v1/orgs/:orgId/transactions` and MCP `transactions_execute` take the
-same request. Use 1..25 ordered `record.create`, `record.update`, `record.delete`
-or `queue.enqueue` operations, capped at 1 MiB of transaction JSON. REST ingress
+same request. Use 1..25 ordered `record.create`, `record.update`, or `record.delete`
+operations across collections, capped at 1 MiB of transaction JSON. REST ingress
 also limits the raw body to 1 MiB. MCP limits the whole JSON-RPC envelope to
 16 MiB and applies the transaction limit to parsed tool arguments.
-Each operation uses existing row/field permissions. All writes, messages,
+Each operation uses existing row/field permissions. Record writes, history,
 trigger publications and transactional audits commit or roll back together.
 Each operation takes literal IDs and payloads.
-If the update above already has a matching trigger, it also publishes that
-trigger's message; avoid an extra explicit enqueue if only one message is wanted.
+Matching record triggers publish their queue messages within the same transaction.
+[Record history](record-history.md) correlates its mutations with one `change_set_id`.
 
 Idempotency keys are scoped to organization and principal, retained seven days.
 The background scheduler removes expired receipts, including keys never reused.

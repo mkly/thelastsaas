@@ -1,4 +1,5 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
+import { genId } from "@lastsaas/shared";
 import type { DbProvider } from "./query/adapters/types";
 
 /** Prisma and compiled SQL must use this same transaction and explicit dialect. */
@@ -6,6 +7,7 @@ import { jobsFor } from "../jobs";
 import type { JobBackend } from "../jobs/types";
 
 export interface UnitOfWork {
+  changeSetId?: string;
   readonly jobs?: JobBackend;
   readonly db: Prisma.TransactionClient;
   readonly provider: DbProvider;
@@ -30,6 +32,7 @@ export async function withUnitOfWork<T>(
   return source.prisma.$transaction(
     (db) =>
       operation({
+        changeSetId: genId(),
         db,
         provider: source.provider,
         jobs: jobsFor(source.prisma),

@@ -26,10 +26,10 @@ const create: TransactionOperation = {
   collection: "tasks",
   data: { title: "Work", owner: "worker@example.com", secret: sentinel },
 };
-const enqueue: TransactionOperation = {
-  op: "queue.enqueue",
-  queue: "jobs",
-  entry: { payload: { title: "Work" } },
+const note: TransactionOperation = {
+  op: "record.create",
+  collection: "notes",
+  data: { title: "Note" },
 };
 
 for (const transport of ["REST", "MCP"] as const) {
@@ -79,6 +79,14 @@ for (const transport of ["REST", "MCP"] as const) {
           orgId: "one",
           name: "tasks",
           schema: { title: "string", owner: "string", secret: "string" },
+        },
+      });
+      await services.prisma.collection.create({
+        data: {
+          id: "notes",
+          orgId: "one",
+          name: "notes",
+          schema: { title: "string" },
         },
       });
       await services.prisma.queue.create({
@@ -172,15 +180,15 @@ for (const transport of ["REST", "MCP"] as const) {
         options,
       );
     }
-    test("ordered mixed operations and literal IDs commit with stable envelopes", async () => {
+    test("ordered cross-collection operations and literal IDs commit with stable envelopes", async () => {
       const initial = await call({
-        operations: [create, enqueue],
-        idempotency_key: "mixed",
+        operations: [create, note],
+        idempotency_key: "cross-collection",
       });
       expect(initial.body.status).toBe("ok");
       expect(initial.body.results.map((r: { op: string }) => r.op)).toEqual([
         "record.create",
-        "queue.enqueue",
+        "record.create",
       ]);
       const id = initial.body.results[0].record.id;
       const changed = await call({
@@ -197,7 +205,7 @@ for (const transport of ["REST", "MCP"] as const) {
       expect(changed.body.status).toBe("ok");
       expect(changed.body.results[0].record.data.title).toBe("${results.0.id}");
       expect(changed.body.results[1]).toEqual({ op: "record.delete", id });
-      expect(await counts()).toEqual([0, 1, 4, 1]);
+      expect(await counts()).toEqual([1, 0, 4, 1]);
       expect(
         JSON.stringify(await services.prisma.auditLog.findMany()),
       ).not.toContain(sentinel);
@@ -209,7 +217,7 @@ for (const transport of ["REST", "MCP"] as const) {
       await grant("create");
       await grant("read");
       const failed = await call(
-        { operations: [create, enqueue], idempotency_key: "denial" },
+        { operations: [create, note], idempotency_key: "denial" },
         "worker",
       );
       expect(failed.body.error).toBe("PermissionDeniedError");
@@ -262,7 +270,7 @@ for (const transport of ["REST", "MCP"] as const) {
       ).toBe("AutomationConflictError");
       if (transport === "REST")
         expect(
-          (await call({ ...input, operations: [enqueue] }, "worker")).status,
+          (await call({ ...input, operations: [note] }, "worker")).status,
         ).toBe(409);
       await removePolicy(
         services.prisma,
@@ -309,6 +317,12 @@ for (const transport of ["REST", "MCP"] as const) {
         { operations: [{ op: "sql", query: sentinel }] },
         {
           operations: [
+            create,
+            { op: "queue.enqueue", queue: "jobs", entry: { payload: {} } },
+          ],
+        },
+        {
+          operations: [
             {
               op: "record.update",
               collection: "tasks",
@@ -326,6 +340,15 @@ for (const transport of ["REST", "MCP"] as const) {
           failed.body.error,
         );
       }
+      const queueOperation = await call({
+        operations: [
+          create,
+          { op: "queue.enqueue", queue: "jobs", entry: { payload: {} } },
+        ],
+      });
+      expect(queueOperation.body.message).toContain(
+        "record.create, record.update, or record.delete",
+      );
       const malformed = await call({}, "admin", "{broken");
       expect(malformed.status).toBe(400);
       expect(await counts()).toEqual([0, 0, 0, 0]);

@@ -8,6 +8,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import { loadConfig } from "../src/config";
+import { createApp } from "../src/app";
 import type { McpToolContext } from "../src/mcp/context";
 import { registerDataTools } from "../src/mcp/tools/data";
 import { closeServices, createServices } from "../src/services";
@@ -32,13 +33,27 @@ async function createHarness() {
   await services.prisma.user.createMany({
     data: [
       { id: "user_admin", email: "admin@example.com", name: "Admin" },
-      { id: "user_reader", email: "reader@example.com", name: "Reader" },
+      {
+        id: "user_reader",
+        email: "reader@example.com",
+        name: "Reader",
+        kind: "service",
+      },
       { id: "user_denied", email: "denied@example.com", name: "Denied" },
       { id: "user_other", email: "other@example.com", name: "Other" },
     ],
   });
   await services.prisma.organization.create({
     data: { id: "org_test", name: "Test Org", slug: "test-org" },
+  });
+  await services.prisma.member.createMany({
+    data: ["user_admin", "user_reader", "user_denied", "user_other"].map(
+      (userId) => ({
+        id: `member_${userId}`,
+        userId,
+        organizationId: "org_test",
+      }),
+    ),
   });
   await services.prisma.collection.create({
     data: {
@@ -152,7 +167,7 @@ async function createHarness() {
     return client;
   }
 
-  return { createClient };
+  return { createClient, services, config };
 }
 
 function resultShape(result: unknown): {
@@ -166,6 +181,152 @@ function resultShape(result: unknown): {
 }
 
 describe("MCP data tools", () => {
+  test("REST and MCP return identical filtered history, including deleted records and errors", async () => {
+    const { createClient, services, config } = await createHarness();
+    const admin = await createClient("user_admin");
+    const reader = await createClient("user_reader");
+    services.auth = {
+      api: {
+        getSession: async ({ headers }: { headers: Headers }) => {
+          const id = headers.get("x-test-user");
+          return id
+            ? { session: { id: `session_${id}` }, user: { id, name: id } }
+            : null;
+        },
+        verifyApiKey: async ({ body }: { body: { key: string } }) => ({
+          valid: body.key === "reader-key",
+          key: {
+            referenceId: "user_reader",
+            metadata: { organizationId: "org_test" },
+          },
+        }),
+      },
+    } as unknown as typeof services.auth;
+    const app = createApp({ config, services, logRequests: false });
+    for (const id of ["record_own", "record_other"]) {
+      expect(
+        resultShape(
+          await admin.callTool({
+            name: "records_update",
+            arguments: {
+              collection: "entries",
+              id,
+              data: { title: "Changed", secret: "private-sentinel" },
+            },
+          }),
+        ).isError,
+      ).toBeUndefined();
+    }
+    expect(
+      resultShape(
+        await admin.callTool({
+          name: "records_delete",
+          arguments: {
+            collection: "entries",
+            id: "record_own",
+          },
+        }),
+      ).isError,
+    ).toBeUndefined();
+    const base = "/v1/orgs/org_test/collections/entries";
+    const rest = (path: string, user = "user_reader") =>
+      app.request(`${base}${path}`, { headers: { "x-test-user": user } });
+    const mcp = resultShape(
+      await reader.callTool({
+        name: "records_history",
+        arguments: { collection: "entries" },
+      }),
+    );
+    const response = await rest("/history");
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toEqual(mcp.structuredContent);
+    const tokenHistory = () =>
+      app.request("/v1/mcp", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer reader-key",
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: {
+            name: "records_history",
+            arguments: { collection: "entries" },
+          },
+        }),
+      });
+    const agentResponse = await tokenHistory();
+    expect(agentResponse.status).toBe(200);
+    expect((await agentResponse.json()).result.structuredContent).toEqual(body);
+    expect(body.items).toHaveLength(2);
+    expect(body.items[0]).toMatchObject({
+      operation: "delete",
+      record_id: "record_own",
+      actor_id: "user_admin",
+      before: { title: "Changed" },
+      after: null,
+    });
+    expect(body.items[1]).toMatchObject({
+      operation: "update",
+      changes: { title: { before: "Visible", after: "Changed" } },
+    });
+    expect(JSON.stringify(body)).not.toContain("secret");
+    expect(JSON.stringify(body)).not.toContain("record_other");
+    expect(await (await rest("/records/record_own/history")).json()).toEqual(
+      body,
+    );
+    const page = resultShape(
+      await reader.callTool({
+        name: "records_history",
+        arguments: { collection: "entries", limit: 1 },
+      }),
+    );
+    expect(await (await rest("/history?limit=1")).json()).toEqual(
+      page.structuredContent,
+    );
+    const cursor = String(page.structuredContent!.next_cursor);
+    const next = resultShape(
+      await reader.callTool({
+        name: "records_history",
+        arguments: { collection: "entries", limit: 1, cursor },
+      }),
+    );
+    expect(
+      await (
+        await rest(`/history?limit=1&cursor=${encodeURIComponent(cursor)}`)
+      ).json(),
+    ).toEqual(next.structuredContent);
+    const invalid = resultShape(
+      await reader.callTool({
+        name: "records_history",
+        arguments: { collection: "entries", cursor: "invalid" },
+      }),
+    );
+    expect(invalid.isError).toBe(true);
+    const invalidRest = await rest("/history?cursor=invalid");
+    expect(invalidRest.status).toBe(400);
+    expect(await invalidRest.json()).toEqual(invalid.structuredContent);
+    const denied = await createClient("user_denied");
+    const forbidden = resultShape(
+      await denied.callTool({
+        name: "records_history",
+        arguments: { collection: "entries" },
+      }),
+    );
+    expect(forbidden.isError).toBe(true);
+    const forbiddenRest = await rest("/history", "user_denied");
+    expect(forbiddenRest.status).toBe(403);
+    expect(await forbiddenRest.json()).toEqual(forbidden.structuredContent);
+    await services.prisma.member.deleteMany({
+      where: { userId: "user_reader" },
+    });
+    expect((await tokenHistory()).status).toBe(403);
+  });
+
   test("registers every collection and record command", async () => {
     const { createClient } = await createHarness();
     const client = await createClient("user_admin");
@@ -182,6 +343,7 @@ describe("MCP data tools", () => {
       "records_count",
       "records_delete",
       "records_get",
+      "records_history",
       "records_insert",
       "records_query",
       "records_update",

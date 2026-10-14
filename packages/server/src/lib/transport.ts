@@ -10,19 +10,25 @@ import { log } from "../logger";
 
 /** Paths and issue codes help clients repair input without returning submitted values. */
 class RequestValidationError extends SchemaValidationError {}
-export function parseRequest<T>(schema: z.ZodType<T>, input: unknown): T {
+export function parseRequest<T>(
+  schema: z.ZodType<T>,
+  input: unknown,
+  hint?: string,
+): T {
   const result = schema.safeParse(input);
-  if (!result.success) throw validationError(result.error.issues);
+  if (!result.success) throw validationError(result.error.issues, hint);
   return result.data;
 }
 function validationError(
   issues: readonly { path: PropertyKey[]; code: string }[],
+  hint?: string,
 ) {
-  return new RequestValidationError(
-    issues.map(
+  return new RequestValidationError([
+    ...issues.map(
       (issue) => `${issue.path.join(".") || "request"}: ${issue.code}`,
     ),
-  );
+    ...(hint ? [hint] : []),
+  ]);
 }
 export function errorKind(error: unknown) {
   if (!(error instanceof Error)) return "UnknownError";
@@ -53,11 +59,11 @@ export function transportError(error: unknown) {
     status: 500 as const,
   };
 }
-export function jsonRequest<S extends z.ZodType>(schema: S) {
+export function jsonRequest<S extends z.ZodType>(schema: S, hint?: string) {
   return zValidator("json", schema, (result, c) => {
     if (!result.success) {
       const { body, status } = transportError(
-        validationError(result.error.issues),
+        validationError(result.error.issues, hint),
       );
       return c.json(body, status);
     }

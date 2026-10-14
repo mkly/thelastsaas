@@ -1,4 +1,9 @@
-import type { AggregateRequest, Where } from "@lastsaas/shared";
+import {
+  recordHistoryQuerySchema,
+  type RecordHistoryResult,
+  type AggregateRequest,
+  type Where,
+} from "@lastsaas/shared";
 import type { Command } from "commander";
 
 import { parseJson, withErrorHandling } from "../api-client";
@@ -63,6 +68,62 @@ export function registerRecords(
     .command("records")
     .alias("r")
     .description("Manage records in a collection");
+
+  records
+    .command("history <collection> [id]")
+    .description(
+      "Read the last 30 days of permitted record changes, including deletions",
+    )
+    .option("--since <timestamp>", "Inclusive time range start")
+    .option("--until <timestamp>", "Exclusive time range end")
+    .option("--change-set-id <id>", "Filter changes from one atomic operation")
+    .option("--limit <n>", "Maximum visible changes", "50")
+    .option("--cursor <cursor>", "Continue with next_cursor")
+    .action(
+      withErrorHandling(
+        async (
+          collection: string,
+          id: string | undefined,
+          opts: {
+            since?: string;
+            until?: string;
+            changeSetId?: string;
+            limit: string;
+            cursor?: string;
+          },
+          command: Command,
+        ) => {
+          const parsed = recordHistoryQuerySchema.safeParse({
+            record_id: id,
+            since: opts.since,
+            until: opts.until,
+            change_set_id: opts.changeSetId,
+            limit: Number(opts.limit),
+            cursor: opts.cursor,
+          });
+          if (!parsed.success)
+            throw new CliError(
+              parsed.error.issues.map((issue) => issue.message).join("; "),
+            );
+          const options = globalOptions(command);
+          const { client, orgId } = dependencies.getOrgClient(options);
+          const query = Object.fromEntries(
+            Object.entries(parsed.data)
+              .filter(([, value]) => value !== undefined)
+              .map(([key, value]) => [key, String(value)]),
+          );
+          const response = await client.v1.orgs[":orgId"].collections[
+            ":name"
+          ].history.$get({
+            param: { orgId, name: collection },
+            query,
+          });
+          const result =
+            await dependencies.handleResponse<RecordHistoryResult>(response);
+          dependencies.writeOutput(result, options);
+        },
+      ),
+    );
 
   records
     .command("insert <collection>")

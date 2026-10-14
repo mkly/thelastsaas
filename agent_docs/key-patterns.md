@@ -57,6 +57,20 @@ Malformed request bodies return 400, missing resources return 404, and denied
 fields or policies return 403. CLI handlers convert failed responses to
 `CliError` so command exit codes remain nonzero and predictable.
 
+## Record history
+
+Capture validated, persisted snapshots through `publishRecordMutation` inside
+its `UnitOfWork`. Imports append creation history using the same storage helper.
+Keep one `changeSetId` per unit and one history row per actual mutation; semantic
+no-ops and idempotent replays produce none. Internal monotonic positions order
+mutations, including equal timestamps. Do not expose positions in public cursors.
+
+`queryRecordHistory` is the shared read service. Evaluate current record grants
+on each saved version, then project permitted fields. Omit updates affecting only
+hidden fields; paginate visible results, with no hidden-entry totals. Read-time
+cutoffs and bounded scheduler cleanup enforce 30-day retention independently of
+the permanent audit log. See [record history](../docs/record-history.md).
+
 ## Queues and transactional producers
 
 Queue payloads reject unknown fields and reuse collection field types, including
