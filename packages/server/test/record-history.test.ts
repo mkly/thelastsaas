@@ -153,6 +153,7 @@ describe(`record history (${provider})`, () => {
   test("adding history storage preserves existing records, permissions and audit entries", async () => {
     const f = await fixture();
     // Reproduce the schema immediately before history was introduced.
+    await f.prisma.$executeRawUnsafe('DROP TABLE "record_history_files"');
     await f.prisma.$executeRawUnsafe('DROP TABLE "record_history"');
     const original = await f.prisma.record.create({
       data: {

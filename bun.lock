@@ -14,7 +14,7 @@
     },
     "packages/client": {
       "name": "@lastsaas/client",
-      "version": "0.3.2",
+      "version": "0.3.3",
       "bin": {
         "saas": "./src/index.ts",
       },
@@ -29,7 +29,7 @@
     },
     "packages/server": {
       "name": "@lastsaas/server",
-      "version": "0.3.2",
+      "version": "0.3.3",
       "dependencies": {
         "@better-auth/api-key": "1.7.1",
         "@better-auth/mcp": "1.7.1",

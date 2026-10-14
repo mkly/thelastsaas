@@ -1,3 +1,7 @@
+import { describeRelationships } from "../db/record-expansion";
+import { recordPrincipal } from "../db/record-links";
+import { RelationshipConflictError } from "@lastsaas/shared";
+import { fieldDefinitionSchema } from "@lastsaas/shared";
 import {
   CollectionExistsError,
   CollectionNotFoundError,
@@ -23,10 +27,6 @@ import {
   requireCollectionPermission,
 } from "../middleware/permission";
 
-const fieldDefinitionSchema = z.union([
-  z.string(),
-  z.object({ type: z.string(), description: z.string().optional() }).strict(),
-]);
 const collectionSchema = z.record(z.string(), fieldDefinitionSchema);
 const createBodySchema = z
   .object({
@@ -74,6 +74,8 @@ function collectionError(
   context: Context<AppEnvironment>,
   error: unknown,
 ): Response {
+  if (error instanceof RelationshipConflictError)
+    return context.json(error.toResponse(), 409);
   if (error instanceof CollectionNotFoundError) {
     return context.json(error.toResponse(), 404);
   }
@@ -159,7 +161,20 @@ export const collectionsRouter = new Hono<AppEnvironment>()
         context.get("orgId"),
         context.req.param("name"),
       );
-      return context.json({ status: "ok" as const, ...collection });
+      const relationships = await describeRelationships(
+        context.get("services").prisma,
+        await recordPrincipal(
+          context.get("services").prisma,
+          context.get("orgId"),
+          context.get("userId"),
+        ),
+        context.req.param("name"),
+      );
+      return context.json({
+        status: "ok" as const,
+        ...collection,
+        relationships,
+      });
     } catch (error) {
       return collectionError(context, error);
     }

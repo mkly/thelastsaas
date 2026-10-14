@@ -111,6 +111,7 @@ stable tool identifiers.
 | `records get`               | `records_get`               |
 | `records update`            | `records_update`            |
 | `records delete`            | `records_delete`            |
+| `records related`           | `records_related`           |
 | `records query`             | `records_query`             |
 | `records count`             | `records_count`             |
 | `records batch`             | `records_batch`             |
@@ -317,3 +318,19 @@ See [secret backup and rotation](secrets-backup.md).
 Queue consumers need whole-queue read/update grants. Claims include complete
 payloads, so use separate queues for different access boundaries. Collection
 row and field restrictions remain in effect for record operations.
+
+## Relationships and record attachments
+
+Use `ref:companies` for a single reference, or
+`{"type":"ref:companies","multiple":true}` for an ordered list. Collection
+descriptions include relationship discovery. `records_get` and `records_query`
+accept `expand:["company","company.parent"]`; `records_related` finds reverse
+links through `source_collection` and `field`. Filters support `some`, `none`,
+`every`, and list-ID `has`. All targets retain their own row/field permissions.
+
+Use an `attachments` field for ordered file IDs. Pass
+`attachment:{collection,record_id,field}` to `files_upload_link` or
+`files_prepare_upload` to append the upload directly to the record. Record reads
+include file metadata under `attachments`. Ordinary record updates set attachment
+lists; `files_download_link` authorizes current and retained-history attachment
+access. See [relationships](relationships.md) and [attachments](attachments.md).

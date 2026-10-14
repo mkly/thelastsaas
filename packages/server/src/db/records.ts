@@ -1,8 +1,12 @@
+import { synchronizeRecordLinks } from "./record-links";
+import { relationshipPredicates } from "./relationship-query";
+import type { Principal } from "./query/compile";
 import { isDeepStrictEqual } from "node:util";
 import { sql, queryBuilder, queryRows } from "./query/kysely";
 import {
   InvalidQueryError,
   RecordNotFoundError,
+  RelationshipConflictError,
   PermissionDeniedError,
   SchemaValidationError,
   extractFieldType,
@@ -263,6 +267,15 @@ export async function insertRecordInTransaction(
       updatedAt: now,
     },
   });
+  await synchronizeRecordLinks(
+    context,
+    orgId,
+    row.id,
+    schema,
+    null,
+    normalized,
+    createdBy,
+  );
   const mutation = createMutation(row, collectionName);
   await publishRecordMutation(
     context,
@@ -346,6 +359,16 @@ export async function insertRecordsInTransaction(
         );
         assertGrantedWrite(grants, matches, matches, Object.keys(data));
       }
+      await synchronizeRecordLinks(
+        context,
+        orgId,
+        id,
+        schema,
+        null,
+        normalized,
+        createdBy,
+        true,
+      );
       creates.push({
         id,
         orgId,
@@ -365,6 +388,15 @@ export async function insertRecordsInTransaction(
   // The supplied context owns atomicity; never open a nested transaction.
   for (const data of creates) {
     const row = await db.record.create({ data });
+    await synchronizeRecordLinks(
+      context,
+      orgId,
+      row.id,
+      schema,
+      null,
+      dataObject(row.data),
+      createdBy,
+    );
     const mutation = createMutation(row, collectionName);
     await publishRecordMutation(
       context,
@@ -562,6 +594,15 @@ export async function updateRecordInTransaction(
     throw new PermissionDeniedError(
       "Record changed during update; retry the request",
     );
+  await synchronizeRecordLinks(
+    context,
+    orgId,
+    recordId,
+    schema,
+    dataObject(existing.data),
+    normalized,
+    actorId,
+  );
   const previous = dataObject(existing.data) as JsonObject;
   const after = normalized as JsonObject;
   const changedFields = [
@@ -650,6 +691,16 @@ export async function deleteRecordInTransaction(
   );
   rejectDeferredFilters(compiled.postFilters);
   const scoped = applyOrgScope(orgId, collection.id, compiled.expression);
+  // Target locks coordinate delete checks with FK-backed reference insertion.
+  const targets = await queryRows<{ id: string }>(
+    db,
+    provider,
+    sql`SELECT id FROM records WHERE id = ${recordId} AND ${scoped} ${provider === "postgresql" ? sql`FOR UPDATE` : sql``}`,
+  );
+  if (!targets.length) throw new RecordNotFoundError(recordId);
+  await db.recordReference.deleteMany({ where: { orgId, sourceId: recordId } });
+  if (await db.recordReference.count({ where: { orgId, targetId: recordId } }))
+    throw new RelationshipConflictError();
   const rows = await queryRows<QueryRow>(
     db,
     provider,
@@ -713,17 +764,29 @@ export async function queryRecords(
   rowFilter?: Where | null,
   fieldFilter?: ResolvedFieldFilter | null,
   grants?: RecordGrants,
+  principal?: Principal,
 ) {
   const provider = queryProvider(prisma);
   const collection = await getCollection(prisma, orgId, collectionName);
   const schema = schemaFromCollection(collection);
+  const relations = await relationshipPredicates(
+    prisma,
+    provider,
+    orgId,
+    schema,
+    where,
+    principal,
+  );
   const referenced = new Set<string>();
   const isAllowed = (field: string) => {
     referenced.add(field);
     return grants ? true : isFieldReadable(field, fieldFilter);
   };
   // Collect query/sort references before deriving the permitted input rows.
-  compileWhere(where, schema, provider, { isFieldAllowed: isAllowed });
+  compileWhere(where, schema, provider, {
+    isFieldAllowed: isAllowed,
+    relationshipPredicates: relations,
+  });
   const order = compileOrderBy(orderBy, schema, provider, {
     isFieldAllowed: isAllowed,
   });
@@ -732,6 +795,7 @@ export async function queryRecords(
     ? grantProjection(grants, schema, provider)
     : undefined;
   const compiled = compileWhere(where, schema, provider, {
+    relationshipPredicates: relations,
     extraWhere: rowFilter,
     isFieldAllowed: isAllowed,
   });
@@ -830,6 +894,7 @@ export async function countRecords(
   rowFilter?: Where | null,
   fieldFilter?: ResolvedFieldFilter | null,
   grants?: RecordGrants,
+  principal?: Principal,
 ): Promise<number> {
   const result = await queryRecords(
     prisma,
@@ -842,6 +907,7 @@ export async function countRecords(
     rowFilter,
     fieldFilter,
     grants,
+    principal,
   );
   return result.total;
 }
@@ -854,9 +920,18 @@ export async function aggregateRecords(
   rowFilter?: Where | null,
   fieldFilter?: ResolvedFieldFilter | null,
   grants?: RecordGrants,
+  principal?: Principal,
 ) {
   const provider = queryProvider(prisma);
   const collection = await getCollection(prisma, orgId, collectionName);
+  const relations = await relationshipPredicates(
+    prisma,
+    provider,
+    orgId,
+    schemaFromCollection(collection),
+    request.where,
+    principal,
+  );
   const referenced = new Set<string>();
   if (grants) {
     compileAggregate(
@@ -866,6 +941,7 @@ export async function aggregateRecords(
       orgId,
       collection.id,
       {
+        relationshipPredicates: relations,
         isFieldAllowed: (field) => {
           referenced.add(field);
           return true;
@@ -881,6 +957,7 @@ export async function aggregateRecords(
     orgId,
     collection.id,
     {
+      relationshipPredicates: relations,
       extraWhere: rowFilter,
       isFieldAllowed: (field) =>
         grants ? true : isFieldReadable(field, fieldFilter),

@@ -1,3 +1,4 @@
+import { registerDatabaseProvider } from "../src/db/provider";
 import { describe, expect, mock, test } from "bun:test";
 import type { File as PrismaFile } from "@prisma/client";
 import { Hono } from "hono";
@@ -81,6 +82,7 @@ class FakeFiles {
           filename: String(data.filename),
           mimeType: data.mimeType ? String(data.mimeType) : null,
           sizeBytes: Number(data.sizeBytes),
+          standalone: true,
           collectionId: null,
           recordId: null,
           uploadedBy: String(data.uploadedBy),
@@ -133,6 +135,12 @@ function createFilesApp(storage: Storage, maxUploadSize = 50 * 1024 * 1024) {
     context.set("services", {
       prisma: {
         file: files.model,
+        $transaction: async (fn: (db: unknown) => Promise<unknown>) =>
+          fn(context.get("services").prisma),
+        recordAttachment: { count: async () => 0 },
+        recordHistoryFile: { count: async () => 0 },
+        user: { findUnique: async () => ({ email: "test@example.com" }) },
+        member: { findUnique: async () => ({ id: "member" }) },
         casbinRule: {
           findMany: async () => [
             {
@@ -152,6 +160,7 @@ function createFilesApp(storage: Storage, maxUploadSize = 50 * 1024 * 1024) {
       },
       storage,
     } as never);
+    registerDatabaseProvider(context.get("services").prisma, "file:fake.db");
     context.set("orgId", "org_1");
     context.set("userId", "user_1");
     context.set("audit", async () => undefined);

@@ -1,10 +1,12 @@
+import { authorizeFileRead } from "./db/attachment-access";
+import { recordPrincipal } from "./db/record-links";
+import { queryProvider } from "./db/provider";
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { FileMissingError } from "@lastsaas/shared";
+import { FileMissingError, PermissionDeniedError } from "@lastsaas/shared";
 import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
 import type { AppConfig } from "./config";
 import type { AppServices } from "./services";
-import { checkPermission } from "./db/casbin";
 import { getFile } from "./db/files";
 
 export const DOWNLOAD_TTL_SECONDS = 300;
@@ -26,27 +28,23 @@ export function downloadDisposition(filename: string): string {
   return `attachment; filename="${fallback}"; filename*=UTF-8''${encoded}`;
 }
 
-async function authorizedFile(
+export async function authorizedFile(
   services: AppServices,
   orgId: string,
   userId: string,
   fileId: string,
 ) {
-  const member = await services.prisma.member.findUnique({
-    where: { organizationId_userId: { organizationId: orgId, userId } },
-  });
-  if (
-    !member ||
-    !(await checkPermission(services.prisma, orgId, userId, "/files", "read"))
-      .allowed
-  )
-    throw new HTTPException(403, {
-      message:
-        "You do not have permission to download files from this organization",
-    });
   try {
+    await authorizeFileRead(
+      services.prisma,
+      queryProvider(services.prisma),
+      await recordPrincipal(services.prisma, orgId, userId),
+      fileId,
+    );
     return await getFile(services.prisma, orgId, fileId);
   } catch (error) {
+    if (error instanceof PermissionDeniedError)
+      throw new HTTPException(403, { message: error.message });
     if (error instanceof FileMissingError)
       throw new HTTPException(404, { message: "File not found" });
     throw error;

@@ -89,6 +89,46 @@ are \`eq\`, \`not\`, \`gt\`, \`lt\`, \`gte\`, \`lte\`, \`contains\`, \`in\`, \`i
 such as \`_id\`, \`_created_at\`, and \`_updated_at\` may be available alongside
 schema fields.
 
+## Relationships and record attachments
+
+Use \`"company":"ref:companies"\` for a single reference and
+\`"partners":{"type":"ref:companies","multiple":true}\` for an ordered list.
+New targets must be readable records in the named collection and organization.
+Collection descriptions show inbound/outbound relationship fields. Remove incoming
+links before deleting their target; a conflict does not disclose hidden blockers.
+
+\`\`\`sh
+saas records get contacts <id> --expand company,company.parent
+saas records query contacts --where '{"company":{"some":{"name":"Acme"}}}' --expand company
+saas records query contacts --where '{"partners":{"has":"<company-id>"}}'
+saas records related companies <company-id> --source contacts --field company
+saas collections update-schema deals --add '{"contracts":"attachments"}'
+saas files upload proposal.pdf --collection deals --record <deal-id> --field contracts
+saas records get deals <deal-id>
+saas records update deals <deal-id> --data '{"contracts":["<file-b>","<file-a>"]}'
+saas files download <file-id> --output proposal.pdf
+\`\`\`
+
+MCP \`records_get\`/\`records_query\` accept \`expand\` arrays; \`records_related\` accepts
+\`collection\`, \`id\`, \`source_collection\`, and \`field\`. \`some\`, \`none\`, and \`every\`
+filter readable related targets before pagination. Empty readable sets satisfy
+\`every\`. Nested paths/conditions have a four-level bound; narrower queries handle
+large graphs. Expanded data appears under \`expand\`; raw IDs remain in \`data\`.
+Unavailable targets are null, including unreadable targets.
+
+An attachment field contains up to 100 unique ordered file IDs. Record reads
+include authorized metadata under \`attachments\`. To upload from chat, call
+\`files_upload_link\` with \`attachment:{collection,record_id,field}\`; for direct
+bytes use \`files_prepare_upload\` with the same destination and then
+\`files_complete_upload\`. The destination requires record-field update permission,
+and completion appends the ID. Do not pass file contents through the conversation.
+
+Set the field's ID list to attach, detach, replace, or reorder attachments. New
+attachments must be readable by the actor; attaching shares bytes with readers
+of that destination field. Private record uploads do not appear in the general
+file library. Record history preserves attachment access under current row/field
+permissions for its retention window; detaching does not delete bytes.
+
 ## Inspect record history
 
 \`\`\`bash

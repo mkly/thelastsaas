@@ -1,3 +1,5 @@
+import { expandSchema, relatedRecordsSchema } from "@lastsaas/shared";
+import { fieldDefinitionSchema } from "@lastsaas/shared";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Hono } from "hono";
@@ -12,10 +14,6 @@ import { recordHistoryRouter } from "../../routes/record-history";
 import type { McpToolContext } from "../context";
 
 const jsonObjectSchema = z.record(z.string(), z.unknown());
-const fieldDefinitionSchema = z.union([
-  z.string(),
-  z.object({ type: z.string(), description: z.string().optional() }).strict(),
-]);
 const collectionSchema = z.record(z.string(), fieldDefinitionSchema);
 const whereSchema = z.record(z.string(), z.unknown());
 const aggregateMetricSchema = z.union([
@@ -148,7 +146,8 @@ export function registerDataTools(
   server.registerTool(
     "collections_create",
     {
-      description: "Create a collection with a schema.",
+      description:
+        'Create a collection with a schema. References use "ref:collection_name", multiple references use {"type":"ref:collection_name","multiple":true}, and file attachment lists use "attachments". Reference and attachment values are IDs.',
       inputSchema: z
         .object({
           name: z.string().min(1),
@@ -169,7 +168,8 @@ export function registerDataTools(
   server.registerTool(
     "collections_describe",
     {
-      description: "Describe a collection and its schema.",
+      description:
+        "Describe a collection, its schema, and permitted inbound/outbound relationship fields.",
       inputSchema: z.object({ name: z.string().min(1) }).strict(),
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
@@ -236,23 +236,29 @@ export function registerDataTools(
   server.registerTool(
     "records_get",
     {
-      description: "Get a record by collection and ID.",
+      description:
+        "Get a record by collection and ID, including attachment metadata. Expand reference paths such as company.owner to include permitted related records under expand; data keeps the IDs.",
       inputSchema: z
-        .object({ collection: z.string().min(1), id: z.string().min(1) })
+        .object({
+          collection: z.string().min(1),
+          id: z.string().min(1),
+          expand: expandSchema.optional(),
+        })
         .strict(),
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
-    async ({ collection, id }) =>
+    async ({ collection, id, expand }) =>
       callRoute(
         "GET",
-        `/collections/${pathPart(collection)}/records/${pathPart(id)}`,
+        `/collections/${pathPart(collection)}/records/${pathPart(id)}${expand?.length ? `?expand=${encodeURIComponent(expand.join(","))}` : ""}`,
       ),
   );
 
   server.registerTool(
     "records_update",
     {
-      description: "Update fields on an existing record.",
+      description:
+        "Update fields on an existing record. Set reference IDs or ordered attachment ID lists to link, detach, replace, or reorder. New targets must be readable. Attaching a file shares it with readers of that record field.",
       inputSchema: z
         .object({
           collection: z.string().min(1),
@@ -293,10 +299,12 @@ export function registerDataTools(
   server.registerTool(
     "records_query",
     {
-      description: "Query records with filters, sorting, and pagination.",
+      description:
+        'Query records with filters, sorting, pagination, attachment metadata, and optional reference expansion. Use {"partners":{"has":"id"}} for list membership, or {"company":{"some":{"name":"Acme"}}} to filter related records. some/none/every consider only readable targets.',
       inputSchema: z
         .object({
           collection: z.string().min(1),
+          expand: expandSchema.optional(),
           where: whereSchema.optional(),
           order_by: z.string().optional(),
           limit: z.number().int().min(1).max(1000).optional(),
@@ -309,6 +317,26 @@ export function registerDataTools(
       callRoute(
         "POST",
         `/collections/${pathPart(collection)}/records/query`,
+        query,
+      ),
+  );
+
+  server.registerTool(
+    "records_related",
+    {
+      description:
+        "Find records linking to this record through a named reference field. Honors source and target permissions and supports filters, expansion and pagination.",
+      inputSchema: relatedRecordsSchema.omit({ where: true }).extend({
+        where: whereSchema.optional(),
+        collection: z.string().min(1),
+        id: z.string().min(1),
+      }),
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    ({ collection, id, ...query }) =>
+      callRoute(
+        "POST",
+        `/collections/${pathPart(collection)}/records/${pathPart(id)}/related`,
         query,
       ),
   );

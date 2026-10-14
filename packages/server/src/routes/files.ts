@@ -1,3 +1,12 @@
+import { HTTPException } from "hono/http-exception";
+import {
+  attachmentDestinationSchema,
+  LastSaasError,
+  RelationshipConflictError,
+  AUTOMATION_ERROR_STATUS,
+} from "@lastsaas/shared";
+import { authorizedFile } from "../file-downloads";
+import { z } from "zod";
 import { createDownloadLink } from "../file-downloads";
 import {
   createUpload,
@@ -276,19 +285,53 @@ const writeFiles = requirePermission("write", () => "/files");
 const deleteFiles = requirePermission("delete", () => "/files");
 
 export const fileRouter = new Hono<AppEnvironment>()
-  .post("/uploads/link", writeFiles, async (context) => {
+  .onError((error, context) => {
+    if (error instanceof HTTPException)
+      return context.json(
+        errorResponse(
+          error.status === 404
+            ? "FileMissingError"
+            : error.status === 403
+              ? "PermissionDeniedError"
+              : "ValidationError",
+          error.message,
+        ),
+        error.status,
+      );
+    if (error instanceof RelationshipConflictError)
+      return context.json(error.toResponse(), 409);
+    if (error instanceof LastSaasError)
+      return context.json(
+        error.toResponse(),
+        AUTOMATION_ERROR_STATUS[
+          error.code as keyof typeof AUTOMATION_ERROR_STATUS
+        ] ?? 500,
+      );
+    throw error;
+  })
+  .post("/uploads/link", async (context) => {
+    const input = z
+      .object({ attachment: attachmentDestinationSchema.optional() })
+      .strict()
+      .safeParse(await context.req.json().catch(() => ({})));
+    if (!input.success)
+      return context.json(
+        errorResponse("ValidationError", "Invalid attachment destination"),
+        400,
+      );
     const { upload_id, browser_url, expires_at } = await createUpload(
       context.get("services"),
       context.get("config"),
       context.get("orgId"),
       context.get("userId"),
+      input.data.attachment,
     );
     return context.json(
       { status: "ok", upload_id, browser_url, expires_at },
       201,
     );
   })
-  .post("/uploads", writeFiles, async (context) => {
+  .post("/uploads", async (context) => {
     const input = uploadMetadataSchema.safeParse(
       await context.req.json().catch(() => null),
     );
@@ -304,6 +347,7 @@ export const fileRouter = new Hono<AppEnvironment>()
       config,
       context.get("orgId"),
       context.get("userId"),
+      input.data.attachment,
     );
     return context.json(
       {
@@ -319,7 +363,7 @@ export const fileRouter = new Hono<AppEnvironment>()
       201,
     );
   })
-  .get("/uploads/:id", writeFiles, async (context) => {
+  .get("/uploads/:id", async (context) => {
     const upload = await getUpload(
       context.get("services"),
       context.req.param("id"),
@@ -336,7 +380,7 @@ export const fileRouter = new Hono<AppEnvironment>()
       file_id: upload.status === "complete" ? upload.id : null,
     });
   })
-  .post("/uploads/:id/complete", writeFiles, async (context) => {
+  .post("/uploads/:id/complete", async (context) => {
     const services = context.get("services");
     const upload = await getUpload(services, context.req.param("id"), {
       orgId: context.get("orgId"),
@@ -411,7 +455,7 @@ export const fileRouter = new Hono<AppEnvironment>()
     );
     return context.json({ status: "ok" as const, files });
   })
-  .post("/:id/download-link", readFiles, async (context) => {
+  .post("/:id/download-link", async (context) => {
     return context.json({
       status: "ok",
       ...(await createDownloadLink(
@@ -423,12 +467,13 @@ export const fileRouter = new Hono<AppEnvironment>()
       )),
     });
   })
-  .get("/:id/content", readFiles, async (context) => {
-    const { prisma, storage } = context.get("services");
+  .get("/:id/content", async (context) => {
+    const { storage } = context.get("services");
     try {
-      const file = await getFile(
-        prisma,
+      const file = await authorizedFile(
+        context.get("services"),
         context.get("orgId"),
+        context.get("userId"),
         context.req.param("id"),
       );
       const content = await storage.read(
@@ -450,11 +495,12 @@ export const fileRouter = new Hono<AppEnvironment>()
       throw error;
     }
   })
-  .get("/:id", readFiles, async (context) => {
+  .get("/:id", async (context) => {
     try {
-      const file = await getFile(
-        context.get("services").prisma,
+      const file = await authorizedFile(
+        context.get("services"),
         context.get("orgId"),
+        context.get("userId"),
         context.req.param("id"),
       );
       return context.json({ status: "ok" as const, ...file });
@@ -471,8 +517,8 @@ export const fileRouter = new Hono<AppEnvironment>()
     const fileId = context.req.param("id");
     try {
       const file = await getFile(prisma, orgId, fileId);
-      await storage.delete(storageKey(orgId, file.id));
       await deleteFile(prisma, orgId, file.id);
+      await storage.delete(storageKey(orgId, file.id));
       await context.get("audit")("delete_file", "file", file.id, {
         path: file.path,
       });

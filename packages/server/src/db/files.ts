@@ -1,7 +1,13 @@
-import { FileMissingError, type File as ApiFile } from "@lastsaas/shared";
+import { queryProvider } from "./provider";
+import { sql, queryRows } from "./query/kysely";
+import {
+  FileMissingError,
+  RelationshipConflictError,
+  type File as ApiFile,
+} from "@lastsaas/shared";
 import type { File, PrismaClient } from "@prisma/client";
 
-function formatFile(file: File): ApiFile {
+export function formatFile(file: File): ApiFile {
   return {
     id: file.id,
     path: file.path,
@@ -53,6 +59,7 @@ export async function listFiles(
   const files = await prisma.file.findMany({
     where: {
       orgId,
+      standalone: true,
       ...(prefix ? { path: { startsWith: prefix } } : {}),
     },
     orderBy: { path: "asc" },
@@ -65,8 +72,24 @@ export async function deleteFile(
   orgId: string,
   fileId: string,
 ): Promise<void> {
-  const result = await prisma.file.deleteMany({
-    where: { id: fileId, orgId },
+  const provider = queryProvider(prisma);
+  await prisma.$transaction(async (db) => {
+    // FK insertions hold a key-share lock; deletion waits before checking pins.
+    if (provider === "postgresql")
+      await queryRows(
+        db,
+        provider,
+        sql`SELECT id FROM files WHERE org_id = ${orgId} AND id = ${fileId} FOR UPDATE`,
+      );
+    const [live, history] = await Promise.all([
+      db.recordAttachment.count({ where: { orgId, fileId } }),
+      db.recordHistoryFile.count({ where: { orgId, fileId } }),
+    ]);
+    if (live || history)
+      throw new RelationshipConflictError(
+        "File is attached to a record or retained by record history",
+      );
+    const result = await db.file.deleteMany({ where: { id: fileId, orgId } });
+    if (result.count !== 1) throw new FileMissingError(fileId);
   });
-  if (result.count !== 1) throw new FileMissingError(fileId);
 }

@@ -80,6 +80,7 @@ describe("data command registration", () => {
         .find((command) => command.name() === "records")
         ?.commands.map((command) => command.name()),
     ).toEqual([
+      "related",
       "history",
       "insert",
       "get",
@@ -338,5 +339,56 @@ describe("record commands", () => {
       offset: 0,
       group_by: ["state"],
     });
+  });
+});
+
+test("record relationship commands serialize expansion and reverse queries", async () => {
+  const program = createProgram([
+    (root) => registerRecords(root, dependencies),
+  ]);
+  await program.parseAsync(
+    [
+      "records",
+      "get",
+      "contacts",
+      "ada",
+      "--expand",
+      "company.parent,partners",
+    ],
+    { from: "user" },
+  );
+  expect(new URL(requests[0]!.url).searchParams.get("expand")).toBe(
+    "company.parent,partners",
+  );
+  await program.parseAsync(
+    [
+      "records",
+      "related",
+      "companies",
+      "acme",
+      "--source",
+      "contacts",
+      "--field",
+      "company",
+      "--where",
+      '{"name":"Ada"}',
+      "--order-by",
+      "-name",
+      "--expand",
+      "company",
+    ],
+    { from: "user" },
+  );
+  expect(new URL(requests[1]!.url).pathname).toEndWith(
+    "/collections/companies/records/acme/related",
+  );
+  expect(await requests[1]!.json()).toEqual({
+    source_collection: "contacts",
+    field: "company",
+    where: { name: "Ada" },
+    order_by: "-name",
+    expand: ["company"],
+    limit: 50,
+    offset: 0,
   });
 });

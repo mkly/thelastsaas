@@ -1,3 +1,4 @@
+import { LastSaasError, AUTOMATION_ERROR_STATUS } from "@lastsaas/shared";
 import { randomBytes } from "node:crypto";
 import { Hono, type Context } from "hono";
 import { HTTPException } from "hono/http-exception";
@@ -19,6 +20,13 @@ uploadRouter.use("*", async (context, next) => {
   await next();
 });
 uploadRouter.onError((error, context) => {
+  if (error instanceof LastSaasError)
+    return context.json(
+      error.toResponse(),
+      AUTOMATION_ERROR_STATUS[
+        error.code as keyof typeof AUTOMATION_ERROR_STATUS
+      ] ?? 500,
+    );
   if (error instanceof HTTPException)
     return context.json(
       { status: "error", message: error.message },
@@ -46,6 +54,7 @@ uploadRouter.get("/:id/status", async (context) => {
   return context.json({
     upload_status: upload.status,
     organization: org.name,
+    attachment: upload.attachment,
     max_size: context.get("config").maxUploadSize,
     expires_at: upload.expiresAt.toISOString(),
   });
@@ -115,7 +124,7 @@ uploadRouter.get("/:id", (context) => {
     async function start() {
       if (!token) throw new Error('This upload link is incomplete. Ask your assistant for a new link.');
       const info = await api('/status');
-      destination.textContent = 'Upload to ' + info.organization;
+      destination.textContent = 'Upload to ' + info.organization + (info.attachment ? ' · ' + info.attachment.collection + ' · ' + info.attachment.field : '');
       if (info.upload_status === 'complete') { status.textContent = 'This upload is already complete. You can return to your assistant.'; return; }
       if (info.upload_status !== 'pending') throw new Error('This link is already in use. Return to the original upload tab, or ask for a new link.');
       maxSize = info.max_size;

@@ -11,6 +11,8 @@
 import {
   InvalidQueryError,
   isPlainObject,
+  isMultipleReference,
+  extractFieldType,
   isValidFieldName,
   type AggregateMetric,
   type AggregateRequest,
@@ -39,6 +41,7 @@ export type FieldAllowlist = (
 ) => boolean;
 
 export interface CompileOptions {
+  relationshipPredicates?: Map<string, SqlFragment>;
   /** Queue predicates address JSON payload fields, including names such as id. */
   payloadOnly?: boolean;
   /** Predicate injected by policy code and ANDed with the caller's predicate. */
@@ -448,6 +451,35 @@ function compileLeaf(
       if (Object.keys(condition).length === 0)
         throw new InvalidQueryError("Filter operator object cannot be empty");
       for (const [operator, value] of Object.entries(condition)) {
+        if (["some", "none", "every"].includes(operator)) {
+          const expression = options.relationshipPredicates?.get(
+            relationshipPredicateKey(fieldName, operator, value),
+          );
+          if (!expression)
+            throw new InvalidQueryError(
+              "Relationship predicates require an authenticated record query",
+            );
+          clauses.push(expression);
+          continue;
+        }
+        if (operator === "has") {
+          if (
+            typeof value !== "string" ||
+            !(
+              isMultipleReference(schema[fieldName]!) ||
+              extractFieldType(schema[fieldName]!) === "attachments"
+            )
+          )
+            throw new InvalidQueryError(
+              "'has' requires a multiple reference or attachment field and a string ID",
+            );
+          clauses.push(
+            provider === "postgresql"
+              ? sql`COALESCE(data->${fieldName}, '[]'::jsonb) @> CAST(${JSON.stringify([value])} AS jsonb)`
+              : sql`EXISTS (SELECT 1 FROM json_each(data, ${`$.${fieldName}`}) WHERE value = ${value})`,
+          );
+          continue;
+        }
         if (operator === "occurs_between") {
           if (!conjunctive) {
             throw new InvalidQueryError(
@@ -889,4 +921,12 @@ function compileAliasOrderBy(
     );
   }
   return sql`ORDER BY ${sql.ref(alias)} ${direction} NULLS ${descending ? sql`FIRST` : sql`LAST`}`;
+}
+
+export function relationshipPredicateKey(
+  field: string,
+  operator: string,
+  value: unknown,
+): string {
+  return JSON.stringify([field, operator, value]);
 }

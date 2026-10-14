@@ -1,4 +1,9 @@
-import { genId, type RecordMutationEvent } from "@lastsaas/shared";
+import {
+  extractFieldType,
+  type Schema,
+  genId,
+  type RecordMutationEvent,
+} from "@lastsaas/shared";
 import { Prisma, type PrismaClient } from "@prisma/client";
 import type { MutationSnapshots } from "./record-mutations";
 import type { GrantRecord } from "./record-grants";
@@ -30,7 +35,7 @@ export async function appendRecordHistory(
   snapshots: MutationSnapshots,
 ): Promise<void> {
   unit.changeSetId ??= genId();
-  await unit.db.recordHistory.create({
+  const history = await unit.db.recordHistory.create({
     data: {
       id: genId(),
       orgId,
@@ -43,6 +48,31 @@ export async function appendRecordHistory(
       after: snapshot(snapshots.after),
     },
   });
+  const collection = await unit.db.collection.findUniqueOrThrow({
+    where: { id: collectionId },
+  });
+  const links: Array<{
+    orgId: string;
+    historyId: string;
+    field: string;
+    fileId: string;
+  }> = [];
+  for (const [field, definition] of Object.entries(
+    collection.schema as Schema,
+  )) {
+    if (extractFieldType(definition) !== "attachments") continue;
+    const ids = new Set<string>();
+    for (const version of [snapshots.before, snapshots.after]) {
+      const value = (version?.data as Record<string, unknown> | undefined)?.[
+        field
+      ];
+      if (Array.isArray(value))
+        for (const id of value) if (typeof id === "string") ids.add(id);
+    }
+    for (const fileId of ids)
+      links.push({ orgId, historyId: history.id, field, fileId });
+  }
+  if (links.length) await unit.db.recordHistoryFile.createMany({ data: links });
 }
 
 /** One bounded batch per scheduler tick; reads also enforce the retention cutoff. */

@@ -346,6 +346,7 @@ describe("MCP data tools", () => {
       "records_history",
       "records_insert",
       "records_query",
+      "records_related",
       "records_update",
     ]);
   });
@@ -415,4 +416,51 @@ describe("MCP data tools", () => {
       message: "User does not have read permission on /collections/entries",
     });
   });
+});
+
+test("MCP creates multiple references and returns expanded and reverse-linked records", async () => {
+  const { createClient } = await createHarness();
+  const client = await createClient("user_admin");
+  async function call(name: string, args: Record<string, unknown>) {
+    const result = resultShape(
+      await client.callTool({ name, arguments: args }),
+    );
+    expect(result.isError).not.toBe(true);
+    return result.structuredContent!;
+  }
+  await call("collections_create", {
+    name: "companies",
+    schema: { name: "string" },
+  });
+  await call("collections_create", {
+    name: "contacts",
+    schema: {
+      name: "string",
+      companies: { type: "ref:companies", multiple: true },
+      contracts: "attachments",
+    },
+  });
+  const company = await call("records_insert", {
+    collection: "companies",
+    data: { name: "Acme" },
+  });
+  const contact = await call("records_insert", {
+    collection: "contacts",
+    data: { name: "Ada", companies: [company.id] },
+  });
+  const expanded = await call("records_get", {
+    collection: "contacts",
+    id: contact.id,
+    expand: ["companies"],
+  });
+  expect(expanded.expand).toMatchObject({
+    companies: [{ id: company.id, data: { name: "Acme" } }],
+  });
+  const reverse = await call("records_related", {
+    collection: "companies",
+    id: company.id,
+    source_collection: "contacts",
+    field: "companies",
+  });
+  expect(reverse.total).toBe(1);
 });

@@ -7,6 +7,7 @@ export const ErrorCode = {
   PermissionDenied: "PermissionDeniedError",
   FieldPermissionDenied: "FieldPermissionDeniedError",
   InvalidQuery: "InvalidQueryError",
+  RelationshipConflict: "RelationshipConflictError",
   Unauthorized: "Unauthorized",
   AutomationNotFound: "AutomationNotFoundError",
   AutomationConflict: "AutomationConflictError",
@@ -115,5 +116,13 @@ export class AutomationConflictError extends LastSaasError {
 export class AutomationUnavailableError extends LastSaasError {
   constructor(message = "Feature is unavailable") {
     super(ErrorCode.AutomationUnavailable, message);
+  }
+}
+
+export class RelationshipConflictError extends LastSaasError {
+  constructor(
+    message = "This item is still referenced. Remove its links before deleting it.",
+  ) {
+    super(ErrorCode.RelationshipConflict, message);
   }
 }

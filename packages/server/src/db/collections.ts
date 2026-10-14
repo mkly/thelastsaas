@@ -9,6 +9,8 @@ import { queryProvider } from "./provider";
 import { queryAdapter } from "./query/adapters";
 import {
   CollectionExistsError,
+  RelationshipConflictError,
+  isMultipleReference,
   CollectionNotFoundError,
   SchemaValidationError,
   applyFieldUpdate,
@@ -141,7 +143,11 @@ export async function updateCollectionSchema(
     const adapter = queryAdapter(queryProvider(prisma));
     for (const [field, definition] of Object.entries(addFields)) {
       if (Object.hasOwn(schema, field)) {
-        if (extractFieldType(definition) !== extractFieldType(schema[field]!)) {
+        if (
+          extractFieldType(definition) !== extractFieldType(schema[field]!) ||
+          isMultipleReference(definition) !==
+            isMultipleReference(schema[field]!)
+        ) {
           throw new SchemaValidationError([
             `Field '${field}': changing an existing field type is unsupported`,
           ]);
@@ -180,9 +186,20 @@ export async function updateCollectionSchema(
   }
 
   try {
-    const updated = await prisma.collection.update({
-      where: { id: collection.id },
-      data: { schema: schemaJson(schema) },
+    const updated = await prisma.$transaction(async (tx) => {
+      if (removeFields?.length) {
+        const records = { orgId, collectionId: collection.id };
+        await tx.recordReference.deleteMany({
+          where: { orgId, field: { in: removeFields }, source: records },
+        });
+        await tx.recordAttachment.deleteMany({
+          where: { orgId, field: { in: removeFields }, record: records },
+        });
+      }
+      return tx.collection.update({
+        where: { id: collection.id },
+        data: { schema: schemaJson(schema) },
+      });
     });
     return serializeCollection(updated);
   } finally {
@@ -198,6 +215,25 @@ export async function dropCollection(
   const collection = await getCollection(prisma, orgId, name);
   try {
     await prisma.$transaction(async (transaction) => {
+      if (queryProvider(prisma) === "postgresql") {
+        await queryRows(
+          transaction,
+          "postgresql",
+          sql`SELECT id FROM collections WHERE id = ${collection.id} AND org_id = ${orgId} FOR UPDATE`,
+        );
+        await queryRows(
+          transaction,
+          "postgresql",
+          sql`SELECT id FROM records WHERE collection_id = ${collection.id} AND org_id = ${orgId} ORDER BY id FOR UPDATE`,
+        );
+      }
+      await transaction.recordReference.deleteMany({
+        where: { orgId, source: { collectionId: collection.id } },
+      });
+      const dependents = await transaction.recordReference.count({
+        where: { orgId, target: { collectionId: collection.id } },
+      });
+      if (dependents) throw new RelationshipConflictError();
       await transaction.collection.delete({ where: { id: collection.id } });
       await transaction.casbinRule.deleteMany({
         where: {
@@ -207,6 +243,15 @@ export async function dropCollection(
         },
       });
     });
+  } catch (error) {
+    if (
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      error.code === "P2003"
+    )
+      throw new RelationshipConflictError();
+    throw error;
   } finally {
     await invalidateMetadata(
       prisma,

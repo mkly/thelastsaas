@@ -113,10 +113,10 @@ test("links enforce organization access and revoked membership", async () => {
   });
   await expect(
     createDownloadLink(services, config, "org", "unprivileged", "file"),
-  ).rejects.toThrow("permission");
+  ).rejects.toThrow("File not found");
   await expect(
     createDownloadLink(services, config, "other", "user", "file"),
-  ).rejects.toThrow("permission");
+  ).rejects.toThrow(/permission/i);
   await expect(
     createDownloadLink(services, config, "org", "user", "missing"),
   ).rejects.toThrow("File not found");
@@ -143,7 +143,7 @@ test("links enforce organization access and revoked membership", async () => {
   expect((await app.request(link.download_url)).status).toBe(403);
   await expect(
     createDownloadLink(services, config, "org", "user", "file"),
-  ).rejects.toThrow("permission");
+  ).rejects.toThrow(/permission/i);
 });
 
 test("S3 download links sign GET, expiry, attachment filename and cache policy", async () => {

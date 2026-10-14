@@ -16,6 +16,7 @@ import {
 } from "./data-client";
 
 interface QueryOptions {
+  expand?: string;
   where?: string;
   orderBy?: string;
   limit: string;
@@ -68,6 +69,61 @@ export function registerRecords(
     .command("records")
     .alias("r")
     .description("Manage records in a collection");
+
+  records
+    .command("related <collection> <id>")
+    .description("Find records that reference this record")
+    .requiredOption("--source <collection>", "Source collection")
+    .requiredOption(
+      "--field <field>",
+      "Reference field on the source collection",
+    )
+    .option("--where <json>", "Additional source filters")
+    .option("--order-by <field>", "Sort by field, prefix with - for descending")
+    .option("--expand <paths>", "Comma-separated reference paths")
+    .option("--limit <n>", "Maximum records", "50")
+    .option("--offset <n>", "Skip records", "0")
+    .action(
+      withErrorHandling(
+        async (
+          collection: string,
+          id: string,
+          opts: {
+            source: string;
+            field: string;
+            where?: string;
+            orderBy?: string;
+            expand?: string;
+            limit: string;
+            offset: string;
+          },
+          command: Command,
+        ) => {
+          const options = globalOptions(command);
+          const { client, orgId } = dependencies.getOrgClient(options);
+          const response = await client.v1.orgs[":orgId"].collections[
+            ":name"
+          ].records[":id"].related.$post({
+            param: { orgId, name: collection, id },
+            json: {
+              source_collection: opts.source,
+              field: opts.field,
+              ...(opts.where
+                ? { where: parseJson<Where>(opts.where, "--where") }
+                : {}),
+              ...(opts.expand ? { expand: opts.expand.split(",") } : {}),
+              ...(opts.orderBy ? { order_by: opts.orderBy } : {}),
+              limit: integerOption(opts.limit, "--limit", 1),
+              offset: integerOption(opts.offset, "--offset", 0),
+            },
+          });
+          dependencies.writeOutput(
+            await dependencies.handleResponse(response),
+            options,
+          );
+        },
+      ),
+    );
 
   records
     .command("history <collection> [id]")
@@ -158,20 +214,24 @@ export function registerRecords(
   records
     .command("get <collection> <id>")
     .description("Get a record by ID")
+    .option("--expand <paths>", "Comma-separated reference paths")
     .action(
       withErrorHandling(
         async (
           collection: string,
           id: string,
-          _commandOptions,
+          commandOptions: { expand?: string },
           command: Command,
         ) => {
           const options = globalOptions(command);
           const { client, orgId } = dependencies.getOrgClient(options);
-          const response = await getDataApi(client).v1.orgs[
-            ":orgId"
-          ].collections[":name"].records[":id"].$get({
+          const response = await client.v1.orgs[":orgId"].collections[
+            ":name"
+          ].records[":id"].$get({
             param: { orgId, name: collection, id },
+            query: commandOptions.expand
+              ? { expand: commandOptions.expand }
+              : {},
           });
           const result = await dependencies.handleResponse(response);
           dependencies.writeOutput(result, options);
@@ -242,6 +302,7 @@ export function registerRecords(
     .alias("q")
     .description("Query records with filters")
     .option("-w, --where <json>", "Filter conditions as JSON")
+    .option("--expand <paths>", "Comma-separated reference paths")
     .option("-o, --order-by <field>", "Sort field (prefix with - for DESC)")
     .option("-l, --limit <n>", "Maximum records to return", "50")
     .option("--offset <n>", "Skip the first N records", "0")
@@ -264,6 +325,8 @@ export function registerRecords(
           };
           const where = queryWhere(commandOptions);
           if (where) body.where = where;
+          if (commandOptions.expand)
+            body.expand = commandOptions.expand.split(",");
           if (commandOptions.orderBy) body.order_by = commandOptions.orderBy;
 
           const options = globalOptions(command);

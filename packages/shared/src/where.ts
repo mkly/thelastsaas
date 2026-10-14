@@ -6,6 +6,7 @@ const RESERVED_WHERE_KEYS = new Set(["and", "or", "not"]);
 
 const whereOpsSchema = z
   .object({
+    has: z.string().min(1).optional(),
     eq: z.unknown().optional(),
     not: z.unknown().optional(),
     gt: z.unknown().optional(),
@@ -42,11 +43,33 @@ const whereLeafSchema: z.ZodType<Where> = z
 function whereSchemaAtDepth(depth: number): z.ZodType<Where> {
   if (depth <= 0) return whereLeafSchema;
   const child = whereSchemaAtDepth(depth - 1);
+  const relationLeaf: z.ZodType<Where> = z
+    .record(
+      z.string(),
+      z.union([
+        z.string(),
+        z.number(),
+        z.boolean(),
+        z.null(),
+        whereOpsSchema
+          .extend({
+            some: child.optional(),
+            none: child.optional(),
+            every: child.optional(),
+          })
+          .strict(),
+      ]),
+    )
+    .refine(
+      (object) =>
+        Object.keys(object).every((key) => !RESERVED_WHERE_KEYS.has(key)),
+      { message: "Reserved boolean key in field predicate" },
+    );
   return z.union([
     z.object({ and: z.array(child).min(1) }).strict(),
     z.object({ or: z.array(child).min(1) }).strict(),
     z.object({ not: child }).strict(),
-    whereLeafSchema,
+    relationLeaf,
   ]);
 }
 

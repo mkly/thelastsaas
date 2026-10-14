@@ -165,11 +165,19 @@ export function registerFiles(
       "-p, --path <remote-path>",
       "Remote slash-separated path (defaults to the local filename)",
     )
+    .option("--collection <name>", "Attach to a record in this collection")
+    .option("--record <id>", "Destination record ID")
+    .option("--field <name>", "Destination attachment field")
     .action(
       withErrorHandling(
         async (
           localPath: string,
-          commandOptions: { path?: string },
+          commandOptions: {
+            path?: string;
+            collection?: string;
+            record?: string;
+            field?: string;
+          },
           command: Command,
         ) => {
           if (!dependencies.exists(localPath)) {
@@ -179,6 +187,15 @@ export function registerFiles(
             throw new CliError(`'${localPath}' is a directory, not a file.`);
           }
 
+          const destinations = [
+            commandOptions.collection,
+            commandOptions.record,
+            commandOptions.field,
+          ];
+          if (destinations.some(Boolean) && !destinations.every(Boolean))
+            throw new CliError(
+              "Use --collection, --record and --field together",
+            );
           const options = globalOptions(command);
           const { client, orgId } = dependencies.getOrgClient(options);
           const remotePath = commandOptions.path ?? basename(localPath);
@@ -193,6 +210,15 @@ export function registerFiles(
             await api.uploads.$post({
               param: { orgId },
               json: {
+                ...(commandOptions.collection
+                  ? {
+                      attachment: {
+                        collection: commandOptions.collection,
+                        record_id: commandOptions.record!,
+                        field: commandOptions.field!,
+                      },
+                    }
+                  : {}),
                 filename: basename(localPath),
                 path: remotePath,
                 size_bytes: file.size,

@@ -1,3 +1,8 @@
+import { jsonRequest, queryRequest } from "../lib/transport";
+import { expandSchema, RelationshipConflictError } from "@lastsaas/shared";
+import { expandRecords, relatedRecords } from "../db/record-expansion";
+import { recordPrincipal } from "../db/record-links";
+import { relatedRecordsSchema } from "@lastsaas/shared";
 import {
   CollectionNotFoundError,
   FieldPermissionDeniedError,
@@ -37,6 +42,7 @@ const insertSchema = z.object({ data: dataSchema }).strict();
 const batchSchema = z.object({ records: z.array(dataSchema).min(1) }).strict();
 const querySchema = z
   .object({
+    expand: expandSchema.optional(),
     where: whereSchema.optional(),
     order_by: z.string().optional(),
     limit: z.number().int().min(1).max(1000).optional(),
@@ -112,6 +118,8 @@ function recordsError(
   context: Context<AppEnvironment>,
   error: unknown,
 ): Response {
+  if (error instanceof RelationshipConflictError)
+    return context.json(error.toResponse(), 409);
   if (
     error instanceof CollectionNotFoundError ||
     error instanceof RecordNotFoundError
@@ -142,6 +150,14 @@ function recordsError(
     return context.json(errorResponse(error.code, error.message), 400);
   }
   throw error;
+}
+
+async function principalFor(context: Context<AppEnvironment>) {
+  return recordPrincipal(
+    context.get("services").prisma,
+    context.get("orgId"),
+    context.get("userId"),
+  );
 }
 
 export const recordsRouter = new Hono<AppEnvironment>()
@@ -182,6 +198,14 @@ export const recordsRouter = new Hono<AppEnvironment>()
         context.get("rowFilter"),
         context.get("fieldFilter"),
         context.get("recordGrants"),
+        await principalFor(context),
+      );
+      result.records = await expandRecords(
+        context.get("services").prisma,
+        await principalFor(context),
+        context.req.param("name")!,
+        result.records,
+        body.data.expand,
       );
       return context.json({ status: "ok" as const, ...result });
     } catch (error) {
@@ -200,6 +224,7 @@ export const recordsRouter = new Hono<AppEnvironment>()
         context.get("rowFilter"),
         context.get("fieldFilter"),
         context.get("recordGrants"),
+        await principalFor(context),
       );
       return context.json({ status: "ok" as const, count });
     } catch (error) {
@@ -218,6 +243,7 @@ export const recordsRouter = new Hono<AppEnvironment>()
         context.get("rowFilter"),
         context.get("fieldFilter"),
         context.get("recordGrants"),
+        await principalFor(context),
       );
       return context.json({ status: "ok" as const, ...result });
     } catch (error) {
@@ -245,22 +271,55 @@ export const recordsRouter = new Hono<AppEnvironment>()
       return recordsError(context, error);
     }
   })
-  .get("/:id", requireCollectionPermission("read"), async (context) => {
-    try {
-      const result = await getRecord(
-        context.get("services").prisma,
-        context.get("orgId"),
-        context.req.param("name")!,
-        context.req.param("id"),
-        context.get("rowFilter"),
-        context.get("fieldFilter"),
-        context.get("recordGrants"),
-      );
-      return context.json({ status: "ok" as const, ...result });
-    } catch (error) {
-      return recordsError(context, error);
-    }
-  })
+  .post(
+    "/:id/related",
+    requireCollectionPermission("read"),
+    jsonRequest(relatedRecordsSchema),
+    async (context) => {
+      const body = { data: context.req.valid("json") };
+      try {
+        const result = await relatedRecords(
+          context.get("services").prisma,
+          await principalFor(context),
+          context.req.param("name")!,
+          context.req.param("id"),
+          body.data,
+        );
+        return context.json({ status: "ok" as const, ...result });
+      } catch (error) {
+        return recordsError(context, error);
+      }
+    },
+  )
+  .get(
+    "/:id",
+    requireCollectionPermission("read"),
+    queryRequest(z.object({ expand: z.string().optional() }).strict()),
+    async (context) => {
+      try {
+        const result = await getRecord(
+          context.get("services").prisma,
+          context.get("orgId"),
+          context.req.param("name")!,
+          context.req.param("id"),
+          context.get("rowFilter"),
+          context.get("fieldFilter"),
+          context.get("recordGrants"),
+        );
+        const paths = context.req.query("expand");
+        const [expanded] = await expandRecords(
+          context.get("services").prisma,
+          await principalFor(context),
+          context.req.param("name")!,
+          [result],
+          paths ? paths.split(",") : [],
+        );
+        return context.json({ status: "ok" as const, ...expanded });
+      } catch (error) {
+        return recordsError(context, error);
+      }
+    },
+  )
   .patch("/:id", requireCollectionPermission("update"), async (context) => {
     const body = await parseJson(context, insertSchema);
     if (!body.success) return body.response;

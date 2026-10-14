@@ -1,3 +1,4 @@
+import { extractFieldType } from "@lastsaas/shared";
 import { appendRecordHistory } from "./record-history-storage";
 import { withUnitOfWork, type UnitOfWork } from "./unit-of-work";
 import {
@@ -265,6 +266,23 @@ export async function importData(
     status?: "ok";
   };
   for (const c of data.collections) {
+    for (const [field, definition] of Object.entries(c.schema)) {
+      const type = extractFieldType(definition);
+      if (
+        (type?.startsWith("ref:") || type === "attachments") &&
+        c.records.some((record) => {
+          const value = record.data[field];
+          return (
+            value !== undefined &&
+            value !== null &&
+            (!Array.isArray(value) || value.length > 0)
+          );
+        })
+      )
+        throw new SchemaValidationError([
+          "Organization import does not accept populated reference or attachment fields",
+        ]);
+    }
     const errors = validateSchema(c.schema);
     if (errors.length) throw new SchemaValidationError(errors);
   }

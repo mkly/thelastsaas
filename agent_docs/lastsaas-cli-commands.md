@@ -29,11 +29,12 @@ saas collections delete <name> --confirm
 
 # Records (alias: r)
 saas records insert <collection> --data <json>
-saas records get <collection> <id>
+saas records get <collection> <id> [--expand <paths>]
+saas records related <collection> <id> --source <collection> --field <field> [--where <json>] [--order-by <field>] [--expand <paths>] [--limit <n>] [--offset <n>]
 saas records history <collection> [id] [--since <utc>] [--until <utc>] [--change-set-id <id>] [--limit <n>] [--cursor <cursor>]
 saas records update <collection> <id> --data <json>
 saas records delete <collection> <id>
-saas records query <collection> [--where <json>] [--order-by <field>] [--limit <n>] [--offset <n>]
+saas records query <collection> [--where <json>] [--order-by <field>] [--expand <paths>] [--limit <n>] [--offset <n>]
 saas records query <collection> --occurs-between <field> --from <timestamp> --to <timestamp>
 saas records count <collection> [--where <json>]
 saas records batch <collection> --data <json-array>
@@ -77,7 +78,7 @@ saas notifications preferences set-kind <kind> [--in-app <on/off>] [--email <on/
 
 # Files
 saas files list [--prefix <path-prefix>]
-saas files upload <local-path> [--path <remote-path>]
+saas files upload <local-path> [--path <remote-path>] [--collection <name> --record <id> --field <name>]
 saas files get <id>
 saas files download <id> [--output <path>]
 saas files delete <id> --confirm
@@ -208,3 +209,9 @@ see [operator rotation](../docs/secrets-backup.md#rotate-server-encryption-keys)
 `records history` reads 30 days of changes under current record permissions,
 including deletions. Pagination counts visible entries only. See
 [history semantics and correction](../docs/record-history.md).
+
+`records get` and `records query` accept `--expand company,company.parent`.
+`records related` queries source records linking to a readable target.
+Attachment uploads use all three destination options together. Ordinary record
+updates attach, detach, replace, or reorder file IDs. See
+[relationships](../docs/relationships.md) and [attachments](../docs/attachments.md).

@@ -2,7 +2,8 @@ import type { EncryptedSecret } from "./secrets";
 import type { PortableAutomationData } from "./portable-automation";
 import type { NotificationAudience } from "./notification-audience";
 
-export type FieldDef = string | { type: string; description?: string };
+export type FieldDef =
+  string | { type: string; description?: string; multiple?: boolean };
 export type Schema = Record<string, FieldDef>;
 
 export type Where =
@@ -26,6 +27,10 @@ export interface WhereOps {
   is_null?: boolean;
   between?: [unknown, unknown];
   occurs_between?: [string, string];
+  has?: string;
+  some?: Where;
+  none?: Where;
+  every?: Where;
 }
 
 export interface AggregateRequest {
@@ -57,6 +62,11 @@ export interface Collection {
 }
 
 export interface CollectionRecord {
+  expand?: Record<
+    string,
+    CollectionRecord | Array<CollectionRecord | null> | null
+  >;
+  attachments?: Record<string, File[]>;
   id: string;
   collection?: string;
   data: Record<string, unknown>;

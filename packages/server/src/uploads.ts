@@ -1,3 +1,14 @@
+import { isDeepStrictEqual } from "node:util";
+import {
+  attachmentDestinationSchema,
+  type AttachmentDestination,
+} from "@lastsaas/shared";
+import { attachmentDestination } from "./db/attachment-access";
+import { recordPrincipal, linkIds } from "./db/record-links";
+import { queryProvider } from "./db/provider";
+import { queryRows, sql } from "./db/query/kysely";
+import { withUnitOfWork } from "./db/unit-of-work";
+import { updateRecordInTransaction } from "./db/records";
 import { createHash, randomBytes } from "node:crypto";
 import { genId, sanitizePathComponent } from "@lastsaas/shared";
 import type { FileUpload } from "@prisma/client";
@@ -11,6 +22,7 @@ import { getFile } from "./db/files";
 export const UPLOAD_TTL_SECONDS = 5 * 60;
 export const uploadMetadataSchema = z
   .object({
+    attachment: attachmentDestinationSchema.optional(),
     filename: z.string().min(1).max(255),
     size_bytes: z.number().int().nonnegative(),
     mime_type: z
@@ -37,19 +49,32 @@ export async function authorizeUpload(
   services: AppServices,
   orgId: string,
   userId: string,
+  destination?: AttachmentDestination,
 ) {
   const member = await services.prisma.member.findUnique({
     where: { organizationId_userId: { organizationId: orgId, userId } },
   });
-  if (
-    !member ||
-    !(await checkPermission(services.prisma, orgId, userId, "/files", "write"))
-      .allowed
-  )
+  if (!member)
     fail(
       403,
       "You no longer have permission to upload files to this organization",
     );
+  if (destination) {
+    await attachmentDestination(
+      services.prisma,
+      queryProvider(services.prisma),
+      await recordPrincipal(services.prisma, orgId, userId),
+      destination,
+    );
+  } else if (
+    !(await checkPermission(services.prisma, orgId, userId, "/files", "write"))
+      .allowed
+  ) {
+    fail(
+      403,
+      "You no longer have permission to upload files to this organization",
+    );
+  }
 }
 
 export async function createUpload(
@@ -57,8 +82,10 @@ export async function createUpload(
   config: AppConfig,
   orgId: string,
   userId: string,
+  destination?: AttachmentDestination,
 ) {
-  await authorizeUpload(services, orgId, userId);
+  if (destination) destination = attachmentDestinationSchema.parse(destination);
+  await authorizeUpload(services, orgId, userId, destination);
   // Bound abandoned sessions and clean temporary objects opportunistically.
   const expired = await services.prisma.fileUpload.findMany({
     where: { expiresAt: { lt: new Date(Date.now() - 3600_000) } },
@@ -90,6 +117,7 @@ export async function createUpload(
       id: genId(),
       orgId,
       userId,
+      ...(destination ? { attachment: destination } : {}),
       tokenHash: hash(token),
       expiresAt: new Date(Date.now() + UPLOAD_TTL_SECONDS * 1000),
     },
@@ -124,7 +152,14 @@ export async function getUpload(
     upload.expiresAt.getTime() <= Date.now()
   )
     fail(410, "This upload link has expired. Ask for a new link.");
-  await authorizeUpload(services, upload.orgId, upload.userId);
+  await authorizeUpload(
+    services,
+    upload.orgId,
+    upload.userId,
+    upload.attachment
+      ? attachmentDestinationSchema.parse(upload.attachment)
+      : undefined,
+  );
   return upload;
 }
 
@@ -148,7 +183,14 @@ export async function prepareUpload(
       `File exceeds the ${Math.min(config.maxUploadSize, 5 * 1024 ** 3)}-byte upload limit`,
     );
   const filename = sanitizePathComponent(metadata.filename);
-  const path = metadata.path ?? filename;
+  const path = upload.attachment
+    ? `attachments/${upload.id}/${filename}`
+    : (metadata.path ?? filename);
+  if (
+    metadata.attachment &&
+    !isDeepStrictEqual(metadata.attachment, upload.attachment)
+  )
+    fail(400, "Upload destination cannot be changed");
   if (
     Buffer.byteLength(path) > 1024 ||
     path.includes("\\") ||
@@ -265,35 +307,86 @@ export async function completeUpload(
       fail(400, "Uploaded file size does not match");
     await services.storage.promote(stagingKey(upload.id), finalKey, info!.etag);
     promoted = true;
-    await authorizeUpload(services, upload.orgId, upload.userId);
-    await services.prisma.$transaction(async (tx) => {
-      await tx.file.create({
-        data: {
-          id: upload.id,
-          orgId: upload.orgId,
-          filename: upload.filename!,
-          path: upload.path!,
-          mimeType: upload.mimeType,
-          sizeBytes: upload.sizeBytes,
-          uploadedBy: upload.userId,
-        },
-      });
-      await tx.auditLog.create({
-        data: {
-          id: genId(),
-          orgId: upload.orgId,
-          userId: upload.userId,
-          action: "upload_file",
-          resourceType: "file",
-          resourceId: upload.id,
-          details: { path: upload.path! },
-        },
-      });
-      await tx.fileUpload.update({
-        where: { id: upload.id },
-        data: { status: "complete" },
-      });
-    });
+    await authorizeUpload(
+      services,
+      upload.orgId,
+      upload.userId,
+      upload.attachment
+        ? attachmentDestinationSchema.parse(upload.attachment)
+        : undefined,
+    );
+    await withUnitOfWork(
+      { prisma: services.prisma, provider: queryProvider(services.prisma) },
+      async (unit) => {
+        const tx = unit.db;
+        await tx.file.create({
+          data: {
+            id: upload.id,
+            orgId: upload.orgId,
+            filename: upload.filename!,
+            path: upload.path!,
+            mimeType: upload.mimeType,
+            sizeBytes: upload.sizeBytes,
+            uploadedBy: upload.userId,
+            standalone: !upload.attachment,
+          },
+        });
+        if (upload.attachment) {
+          const destination = attachmentDestinationSchema.parse(
+            upload.attachment,
+          );
+          // Append against one locked snapshot, so overlapping uploads retain
+          // each other's IDs. SQLite already holds its write lock after create.
+          if (unit.provider === "postgresql")
+            await queryRows(
+              tx,
+              unit.provider,
+              sql`SELECT id FROM records WHERE org_id = ${upload.orgId} AND id = ${destination.record_id} FOR UPDATE`,
+            );
+          const principal = await recordPrincipal(
+            tx,
+            upload.orgId,
+            upload.userId,
+          );
+          const { record, grants } = await attachmentDestination(
+            tx,
+            unit.provider,
+            principal,
+            destination,
+          );
+          const existing = linkIds(
+            (record.data as Record<string, unknown>)[destination.field],
+          );
+          unit.attachmentUploadId = upload.id;
+          await updateRecordInTransaction(
+            unit,
+            upload.orgId,
+            destination.collection,
+            destination.record_id,
+            { [destination.field]: [...existing, upload.id] },
+            null,
+            null,
+            grants,
+            upload.userId,
+          );
+        }
+        await tx.auditLog.create({
+          data: {
+            id: genId(),
+            orgId: upload.orgId,
+            userId: upload.userId,
+            action: "upload_file",
+            resourceType: "file",
+            resourceId: upload.id,
+            details: { path: upload.path! },
+          },
+        });
+        await tx.fileUpload.update({
+          where: { id: upload.id },
+          data: { status: "complete" },
+        });
+      },
+    );
   } catch (error) {
     if (promoted) await services.storage.delete(finalKey);
     await services.prisma.fileUpload.updateMany({

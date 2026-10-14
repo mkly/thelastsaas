@@ -43,7 +43,7 @@ interface HistoryGrant {
 }
 
 async function projectSnapshot(
-  prisma: PrismaClient,
+  prisma: Prisma.TransactionClient,
   provider: DbProvider,
   historyGrants: HistoryGrant[],
   schema: Schema,
@@ -91,7 +91,7 @@ async function projectSnapshot(
 }
 
 async function visibleEntry(
-  prisma: PrismaClient,
+  prisma: Prisma.TransactionClient,
   provider: DbProvider,
   grants: HistoryGrant[],
   schema: Schema,
@@ -271,4 +271,61 @@ export async function queryRecordHistory(
     }
     if (rows.length < 100) return { items, next_cursor: null };
   }
+}
+
+/** File bytes inherit exactly the projected historical field access. */
+export async function canReadHistoryFile(
+  db: Prisma.TransactionClient,
+  provider: DbProvider,
+  context: AutomationContext,
+  fileId: string,
+): Promise<boolean> {
+  const links = await db.recordHistoryFile.findMany({
+    where: {
+      orgId: context.orgId,
+      fileId,
+      history: {
+        createdAt: { gt: new Date(Date.now() - RECORD_HISTORY_RETENTION_MS) },
+      },
+    },
+    include: { history: { include: { collection: true } } },
+  });
+  for (const link of links) {
+    const row = link.history;
+    const schema = row.collection.schema as Schema;
+    const grants = await resolveRecordGrants(
+      db,
+      context,
+      row.collectionId,
+      `/collections/${row.collection.name}`,
+      "read",
+    );
+    const historyGrants = grants.map((grant) => {
+      const conditionSchema: Schema = {};
+      compileWhere(grant.where, schema, provider, {
+        isFieldAllowed: (field) => {
+          if (!metadataFields.has(field))
+            conditionSchema[field] = schema[field]!;
+          return true;
+        },
+      });
+      return { grant, conditionSchema };
+    });
+    for (const snapshot of [row.before, row.after]) {
+      const visible = await projectSnapshot(
+        db,
+        provider,
+        historyGrants,
+        schema,
+        row.recordId,
+        snapshot,
+      );
+      if (
+        Array.isArray(visible?.[link.field]) &&
+        (visible[link.field] as unknown[]).includes(fileId)
+      )
+        return true;
+    }
+  }
+  return false;
 }

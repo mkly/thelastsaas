@@ -1,5 +1,5 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
-import { genId } from "@lastsaas/shared";
+import { genId, RelationshipConflictError } from "@lastsaas/shared";
 import type { DbProvider } from "./query/adapters/types";
 
 /** Prisma and compiled SQL must use this same transaction and explicit dialect. */
@@ -7,6 +7,7 @@ import { jobsFor } from "../jobs";
 import type { JobBackend } from "../jobs/types";
 
 export interface UnitOfWork {
+  attachmentUploadId?: string;
   changeSetId?: string;
   readonly jobs?: JobBackend;
   readonly db: Prisma.TransactionClient;
@@ -29,14 +30,29 @@ export async function withUnitOfWork<T>(
   options?: { maxWait?: number; timeout?: number },
 ): Promise<T> {
   if ("db" in source) return operation(source);
-  return source.prisma.$transaction(
-    (db) =>
-      operation({
-        changeSetId: genId(),
-        db,
-        provider: source.provider,
-        jobs: jobsFor(source.prisma),
-      }),
-    options,
-  );
+  return source.prisma
+    .$transaction(
+      (db) =>
+        operation({
+          changeSetId: genId(),
+          db,
+          provider: source.provider,
+          jobs: jobsFor(source.prisma),
+        }),
+      options,
+    )
+    .catch((error) => {
+      if (
+        error &&
+        typeof error === "object" &&
+        "code" in error &&
+        (error.code === "P2003" ||
+          (error.code === "P2010" &&
+            /23503|787|FOREIGN KEY/i.test(
+              JSON.stringify("meta" in error ? error.meta : {}),
+            )))
+      )
+        throw new RelationshipConflictError();
+      throw error;
+    });
 }

@@ -18,3 +18,5 @@ export * from "./portable-automation";
 
 export * from "./notify";
 export * from "./record-history";
+
+export * from "./relationships";

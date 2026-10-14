@@ -13,6 +13,7 @@ export const FIELD_TYPES = [
   "datetime",
   "json",
   "recurrence",
+  "attachments",
 ] as const;
 
 const VALID_FIELD_TYPES = new Set<string>(FIELD_TYPES);
@@ -46,6 +47,7 @@ export const recurrenceValueSchema = z.string().refine(
 const fieldUpdateSchema = z.object({
   type: z.string().optional(),
   description: z.string().optional(),
+  multiple: z.boolean().optional(),
 });
 
 export function isPlainObject(
@@ -86,6 +88,16 @@ export function validateSchema(schema: Schema): string[] {
   if (entries.length === 0) return ["Schema must have at least one field"];
 
   for (const [fieldName, fieldDef] of entries) {
+    if (
+      isPlainObject(fieldDef) &&
+      fieldDef.multiple !== undefined &&
+      (typeof fieldDef.multiple !== "boolean" ||
+        !extractFieldType(fieldDef)?.startsWith("ref:"))
+    ) {
+      errors.push(
+        `Field '${fieldName}': multiple is only valid for reference fields`,
+      );
+    }
     if (!isValidFieldName(fieldName)) {
       errors.push(
         `Field name '${fieldName}' must start with a letter and contain only letters, digits, and underscores`,
@@ -140,8 +152,10 @@ export function validateFieldUpdates(
     ) {
       errors.push(`Field '${fieldName}': unknown type '${parsed.data.type}'`);
     } else if (
-      parsed.data.type !== undefined &&
-      parsed.data.type !== extractFieldType(schema[fieldName]!)
+      (parsed.data.type !== undefined &&
+        parsed.data.type !== extractFieldType(schema[fieldName]!)) ||
+      (parsed.data.multiple !== undefined &&
+        parsed.data.multiple !== isMultipleReference(schema[fieldName]!))
     ) {
       errors.push(
         `Field '${fieldName}': changing an existing field type is unsupported`,
@@ -154,8 +168,8 @@ export function validateFieldUpdates(
 export function applyFieldUpdate(
   existingDef: FieldDef,
   updateDef: Record<string, unknown>,
-): { type: string; description?: string } {
-  const result: { type: string; description?: string } = {
+): { type: string; description?: string; multiple?: boolean } {
+  const result: { type: string; description?: string; multiple?: boolean } = {
     type:
       (typeof updateDef.type === "string"
         ? updateDef.type
@@ -168,6 +182,7 @@ export function applyFieldUpdate(
   ) {
     result.description = existingDef.description;
   }
+  if (isMultipleReference(existingDef)) result.multiple = true;
   if (typeof updateDef.description === "string") {
     result.description = updateDef.description;
   }
@@ -189,6 +204,22 @@ export function validateRecordData(
     const fieldType = extractFieldType(schema[fieldName]!);
     if (fieldType === null) {
       errors.push(`Field '${fieldName}': schema has invalid type definition`);
+      continue;
+    }
+    if (
+      fieldType === "attachments" ||
+      isMultipleReference(schema[fieldName]!)
+    ) {
+      if (
+        !Array.isArray(value) ||
+        value.some((id) => typeof id !== "string" || !id.length) ||
+        new Set(value).size !== value.length ||
+        value.length > 100
+      ) {
+        errors.push(
+          `Field '${fieldName}': expected at most 100 unique nonempty IDs`,
+        );
+      }
       continue;
     }
     const error = validateValue(fieldName, value, fieldType);
@@ -254,3 +285,31 @@ export function isSafePathComponent(name: string): boolean {
 export function genId(): string {
   return Bun.randomUUIDv7();
 }
+
+export function isMultipleReference(definition: FieldDef): boolean {
+  return isPlainObject(definition) && definition.multiple === true;
+}
+
+export const fieldDefinitionSchema = z.union([
+  z.string(),
+  z
+    .object({
+      type: z.string(),
+      description: z.string().optional(),
+      multiple: z.boolean().optional(),
+    })
+    .strict(),
+]);
+export const attachmentDestinationSchema = z
+  .object({
+    collection: z.string().min(1),
+    record_id: z.string().min(1),
+    field: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_]*$/),
+  })
+  .strict();
+export type AttachmentDestination = z.infer<typeof attachmentDestinationSchema>;
+export const expandSchema = z
+  .array(
+    z.string().regex(/^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*){0,3}$/),
+  )
+  .max(20);

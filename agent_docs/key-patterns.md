@@ -4,7 +4,9 @@
 
 Fields use either a type string or `{ "type": "...", "description": "..." }`.
 Supported types are string, text, number, integer, float, boolean, date,
-datetime, JSON, recurrence, enums, and collection references. Field names are
+datetime, JSON, recurrence, enums, collection references, and attachments.
+Reference objects accept `multiple:true`; attachments and multiple references
+contain ordered unique ID lists. Field names are
 validated before interpolation into SQLite JSON expressions.
 
 ## Where DSL
@@ -97,3 +99,21 @@ REST routes attach shared Zod validators through `@hono/zod-validator`; the chai
 `lib/transport.ts` shares validation diagnostics and domain error envelopes across
 REST and MCP. Validation reports paths and issue codes without submitted values;
 logs use route templates and error types. Hono body limits bound transport ingress.
+
+## Relationships and attachments
+
+`synchronizeRecordLinks` validates newly assigned targets and persists indexed
+links with record JSON in the same UnitOfWork. Names remain schema keys.
+`relationshipPredicates` resolves target grants and compiles scoped SQL subqueries;
+`expandRecords` batches target reads and projects each target independently.
+Deletion services lock PostgreSQL target rows before checking incoming links;
+foreign-key insertion locks coordinate these checks. Organization deletion
+cascades its whole graph. SQLite uses its transactional write serialization.
+
+`attachment-access.ts` centralizes current and historical file authorization.
+Contextual upload completion sets `standalone=false` and updates the containing
+record within its UnitOfWork. `record_history_files` pins bytes referenced by
+snapshots; history cleanup releases pins. File deletion checks live/history pins
+before deleting metadata and then storage bytes. Library listings select only
+standalone files. See [relationships](../docs/relationships.md) and
+[attachments](../docs/attachments.md).

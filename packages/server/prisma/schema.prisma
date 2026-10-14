@@ -409,6 +409,10 @@ model Record {
   collection   Collection   @relation(fields: [orgId, collectionId], references: [orgId, id], onDelete: Cascade)
   files        File[]
 
+  outgoingReferences RecordReference[]  @relation("ReferenceSource")
+  incomingReferences RecordReference[]  @relation("ReferenceTarget")
+  attachments        RecordAttachment[]
+
   @@unique([orgId, id])
   @@index([orgId, collectionId])
   @@map("records")
@@ -416,20 +420,22 @@ model Record {
 
 // Position orders mutations even when their timestamps are identical. It stays internal.
 model RecordHistory {
-  position     Int          @id @default(autoincrement())
-  id           String       @unique
-  orgId        String       @map("org_id")
-  collectionId String       @map("collection_id")
-  recordId     String       @map("record_id")
+  position     Int                 @id @default(autoincrement())
+  id           String              @unique
+  orgId        String              @map("org_id")
+  collectionId String              @map("collection_id")
+  recordId     String              @map("record_id")
   operation    String
-  actorId      String       @map("actor_id")
-  changeSetId  String       @map("change_set_id")
+  actorId      String              @map("actor_id")
+  changeSetId  String              @map("change_set_id")
   before       Json?
   after        Json?
-  createdAt    DateTime     @default(now()) @map("created_at")
-  org          Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  collection   Collection   @relation(fields: [orgId, collectionId], references: [orgId, id], onDelete: Cascade)
+  createdAt    DateTime            @default(now()) @map("created_at")
+  org          Organization        @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  collection   Collection          @relation(fields: [orgId, collectionId], references: [orgId, id], onDelete: Cascade)
+  files        RecordHistoryFile[]
 
+  @@unique([orgId, id])
   @@index([orgId, collectionId, position])
   @@index([orgId, collectionId, recordId, position])
   @@index([orgId, changeSetId])
@@ -488,6 +494,11 @@ model File {
   collection   Collection?  @relation(fields: [collectionId], references: [id], onDelete: SetNull)
   record       Record?      @relation(fields: [recordId], references: [id], onDelete: SetNull)
 
+  standalone   Boolean             @default(true)
+  attachments  RecordAttachment[]
+  historyFiles RecordHistoryFile[]
+
+  @@unique([orgId, id])
   @@unique([orgId, path])
   @@index([orgId, collectionId])
   @@index([orgId, recordId])
@@ -615,17 +626,18 @@ model McpOrganization {
 }
 
 model FileUpload {
-  id        String   @id
-  orgId     String
-  userId    String
-  tokenHash String   @unique
-  status    String   @default("pending")
-  filename  String?
-  path      String?
-  mimeType  String?
-  sizeBytes Int?
-  expiresAt DateTime
-  createdAt DateTime @default(now())
+  id         String   @id
+  orgId      String
+  userId     String
+  attachment Json?
+  tokenHash  String   @unique
+  status     String   @default("pending")
+  filename   String?
+  path       String?
+  mimeType   String?
+  sizeBytes  Int?
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
 
   @@index([expiresAt])
   @@index([orgId, userId])
@@ -796,4 +808,45 @@ model JobOutbox {
   createdAt DateTime @default(now()) @map("created_at")
 
   @@map("job_outbox")
+}
+
+model RecordReference {
+  orgId    String @map("org_id")
+  sourceId String @map("source_id")
+  field    String
+  targetId String @map("target_id")
+  position Int
+  source   Record @relation("ReferenceSource", fields: [orgId, sourceId], references: [orgId, id], onDelete: Cascade)
+  target   Record @relation("ReferenceTarget", fields: [orgId, targetId], references: [orgId, id], onDelete: Cascade)
+
+  @@id([sourceId, field, targetId])
+  @@index([orgId, targetId])
+  @@map("record_references")
+}
+
+model RecordAttachment {
+  orgId    String @map("org_id")
+  recordId String @map("record_id")
+  field    String
+  fileId   String @map("file_id")
+  position Int
+  record   Record @relation(fields: [orgId, recordId], references: [orgId, id], onDelete: Cascade)
+  file     File   @relation(fields: [orgId, fileId], references: [orgId, id], onDelete: Cascade)
+
+  @@id([recordId, field, fileId])
+  @@index([orgId, fileId])
+  @@map("record_attachments")
+}
+
+model RecordHistoryFile {
+  orgId     String        @map("org_id")
+  historyId String        @map("history_id")
+  field     String
+  fileId    String        @map("file_id")
+  history   RecordHistory @relation(fields: [orgId, historyId], references: [orgId, id], onDelete: Cascade)
+  file      File          @relation(fields: [orgId, fileId], references: [orgId, id], onDelete: Cascade)
+
+  @@id([historyId, field, fileId])
+  @@index([orgId, fileId])
+  @@map("record_history_files")
 }

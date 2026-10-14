@@ -60,3 +60,8 @@ Record history DTOs live in shared `record-history.ts`. Server
 `db/record-history-storage.ts` appends and expires snapshots; `db/record-history.ts`
 authorizes and projects queries. `routes/record-history.ts`, MCP `records_history`,
 and CLI `records history` use the same query service and shared schema.
+
+Record links use shared `relationships.ts` and server `db/record-links.ts`,
+`relationship-query.ts`, `record-expansion.ts`, and `attachment-access.ts`.
+Record transports provide expansion and reverse queries; existing upload
+transports accept record/field attachment destinations.

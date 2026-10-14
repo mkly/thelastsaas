@@ -41,7 +41,9 @@ the expanded result.
 
 Files are streamed through a `Storage` interface backed by local disk or S3.
 Metadata and unique per-organization paths live in the database. Slash prefixes
-provide organization without a separate hierarchy model.
+provide organization without a separate hierarchy model. Record attachment fields
+store ordered file IDs with record/field access and history retention. Reference
+fields have indexed links, target validation, expansion, and SQL relationship filters.
 
 Queues store immutable payloads and one native job per job ID.
 PostgreSQL uses pg-boss, SQLite uses embedded Bunqueue with a transactional outbox.

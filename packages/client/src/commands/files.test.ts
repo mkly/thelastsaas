@@ -76,31 +76,34 @@ describe("files commands", () => {
     expect(outputs[0]?.human).toContain("reports/today.csv");
   });
 
-  test("uploads raw bytes to the prepared URL then completes with organization auth", async () => {
-    const calls: unknown[] = [];
-    const client = {
-      v1: {
-        orgs: {
-          ":orgId": {
-            files: {
-              uploads: {
-                $post: async (input: unknown) => {
-                  calls.push(input);
-                  return {
-                    upload_id: "upload_1",
-                    upload_url: "https://storage.example/upload",
-                    headers: { "Content-Type": "text/plain" },
-                  };
-                },
-                ":id": {
-                  complete: {
-                    $post: async (input: unknown) => {
-                      calls.push(input);
-                      return {
-                        status: "ok",
-                        id: "file_2",
-                        path: "docs/greeting.txt",
-                      };
+  test.each([false, true])(
+    "uploads raw bytes with contextual attachment=%s",
+    async (attached) => {
+      const calls: unknown[] = [];
+      const client = {
+        v1: {
+          orgs: {
+            ":orgId": {
+              files: {
+                uploads: {
+                  $post: async (input: unknown) => {
+                    calls.push(input);
+                    return {
+                      upload_id: "upload_1",
+                      upload_url: "https://storage.example/upload",
+                      headers: { "Content-Type": "text/plain" },
+                    };
+                  },
+                  ":id": {
+                    complete: {
+                      $post: async (input: unknown) => {
+                        calls.push(input);
+                        return {
+                          status: "ok",
+                          id: "file_2",
+                          path: "docs/greeting.txt",
+                        };
+                      },
                     },
                   },
                 },
@@ -108,46 +111,71 @@ describe("files commands", () => {
             },
           },
         },
-      },
-    };
-    const { deps, outputs } = dependencies(client);
-    const program = testProgram();
-    registerFiles(program, deps);
-    const transfer = spyOn(globalThis, "fetch").mockImplementation(
-      Object.assign(
-        async (url: unknown, options?: RequestInit) => {
-          expect(url).toBe("https://storage.example/upload");
-          expect(options?.method).toBe("PUT");
-          expect(options?.headers).toEqual({ "Content-Type": "text/plain" });
-          expect(options?.body).toBeInstanceOf(Blob);
-          expect(await (options!.body as Blob).text()).toBe("hello");
-          return new Response(null, { status: 200 });
-        },
-        { preconnect: fetch.preconnect },
-      ),
-    );
-    try {
-      await program.parseAsync(
-        ["files", "upload", "source.txt", "--path", "docs/greeting.txt"],
-        { from: "user" },
+      };
+      const { deps, outputs } = dependencies(client);
+      const program = testProgram();
+      registerFiles(program, deps);
+      const transfer = spyOn(globalThis, "fetch").mockImplementation(
+        Object.assign(
+          async (url: unknown, options?: RequestInit) => {
+            expect(url).toBe("https://storage.example/upload");
+            expect(options?.method).toBe("PUT");
+            expect(options?.headers).toEqual({ "Content-Type": "text/plain" });
+            expect(options?.body).toBeInstanceOf(Blob);
+            expect(await (options!.body as Blob).text()).toBe("hello");
+            return new Response(null, { status: 200 });
+          },
+          { preconnect: fetch.preconnect },
+        ),
       );
-    } finally {
-      transfer.mockRestore();
-    }
-    expect(calls).toEqual([
-      {
-        param: { orgId: "org_123" },
-        json: {
-          filename: "source.txt",
-          path: "docs/greeting.txt",
-          size_bytes: 5,
-          mime_type: "text/plain;charset=utf-8",
+      try {
+        await program.parseAsync(
+          [
+            "files",
+            "upload",
+            "source.txt",
+            "--path",
+            "docs/greeting.txt",
+            ...(attached
+              ? [
+                  "--collection",
+                  "deals",
+                  "--record",
+                  "deal_1",
+                  "--field",
+                  "contracts",
+                ]
+              : []),
+          ],
+          { from: "user" },
+        );
+      } finally {
+        transfer.mockRestore();
+      }
+      expect(calls).toEqual([
+        {
+          param: { orgId: "org_123" },
+          json: {
+            ...(attached
+              ? {
+                  attachment: {
+                    collection: "deals",
+                    record_id: "deal_1",
+                    field: "contracts",
+                  },
+                }
+              : {}),
+            filename: "source.txt",
+            path: "docs/greeting.txt",
+            size_bytes: 5,
+            mime_type: "text/plain;charset=utf-8",
+          },
         },
-      },
-      { param: { orgId: "org_123", id: "upload_1" } },
-    ]);
-    expect(outputs[0]?.human).toBe("Uploaded 'docs/greeting.txt' (file_2)");
-  });
+        { param: { orgId: "org_123", id: "upload_1" } },
+      ]);
+      expect(outputs[0]?.human).toBe("Uploaded 'docs/greeting.txt' (file_2)");
+    },
+  );
 
   test("streams downloads to the Content-Disposition filename", async () => {
     const response = new Response("hello", {

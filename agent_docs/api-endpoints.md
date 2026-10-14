@@ -54,18 +54,19 @@ POST   /v1/orgs/:orgId/collections/:name/records/batch
 GET    /v1/orgs/:orgId/collections/:name/history
 GET    /v1/orgs/:orgId/collections/:name/records/:id/history
 GET    /v1/orgs/:orgId/collections/:name/records/:id
+POST   /v1/orgs/:orgId/collections/:name/records/:id/related
 PATCH  /v1/orgs/:orgId/collections/:name/records/:id
 DELETE /v1/orgs/:orgId/collections/:name/records/:id
 POST   /v1/orgs/:orgId/collections/:name/records/query
 POST   /v1/orgs/:orgId/collections/:name/records/count
 POST   /v1/orgs/:orgId/collections/:name/records/aggregate
 
-# Files (`/files` permission)
+# Files (library grants or attachment access as indicated)
 POST   /v1/orgs/:orgId/files                     write
 GET    /v1/orgs/:orgId/files?prefix=<path-prefix> read
-GET    /v1/orgs/:orgId/files/:id                  read
-GET    /v1/orgs/:orgId/files/:id/content          read
-DELETE /v1/orgs/:orgId/files/:id                  delete
+GET    /v1/orgs/:orgId/files/:id                  library or attachment read
+GET    /v1/orgs/:orgId/files/:id/content          library or attachment read
+DELETE /v1/orgs/:orgId/files/:id                  delete; no live/history pins
 
 # Secrets. Metadata uses `/secrets` paths; reveal is a separate grant on
 # `/secrets/:name/value`. Responses never include values except reveal and all
@@ -202,3 +203,16 @@ projection on each stored version. Query parameters are `record_id`,
 (1..100, default 50), and `cursor`. The record route supplies `record_id` from
 its path. Responses contain `items` and `next_cursor`; see
 [record history](../docs/record-history.md).
+
+Record GET supports comma-separated `expand` paths; record query accepts an
+`expand` array. Query/count/aggregate predicates support related `some`, `none`,
+`every`, and list-ID `has`. The related-record route accepts `source_collection`
+and `field`, plus normal source filters/pagination/expansion. See
+[relationships](../docs/relationships.md).
+
+Upload-link and prepare-upload requests accept optional
+`attachment:{collection,record_id,field}`. Destination record-field update access
+replaces the library write gate for these uploads. File metadata/content/download
+link requests resolve library, current attachment, or retained-history access;
+file deletion requires library delete authority and zero live/history references.
+See [attachments](../docs/attachments.md).

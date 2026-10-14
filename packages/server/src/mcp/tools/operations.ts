@@ -1,3 +1,5 @@
+import { attachmentDestinationSchema } from "@lastsaas/shared";
+import { authorizedFile } from "../../file-downloads";
 import { notify } from "../../notifications/notify";
 import { HTTPException } from "hono/http-exception";
 import { createDownloadLink } from "../../file-downloads";
@@ -269,16 +271,19 @@ function registerFileTools(server: McpServer, context: McpToolContext): void {
     "files_upload_link",
     {
       description:
-        "Create a short-lived browser link for the user to choose and upload one file without sending file contents through the conversation. Prefer this for chat clients.",
-      inputSchema: z.object({}).strict(),
+        "Create a short-lived browser link for the user to choose and upload one file without sending file contents through the conversation. Prefer this for chat clients. Supply attachment {collection, record_id, field} to append the uploaded file to a record's attachments field with that field's permissions.",
+      inputSchema: z
+        .object({ attachment: attachmentDestinationSchema.optional() })
+        .strict(),
     },
-    () =>
+    ({ attachment }) =>
       withToolErrors(async () => {
         const { upload_id, browser_url, expires_at } = await createUpload(
           context.services,
           context.config,
           requireOrganization(context),
           context.userId,
+          attachment,
         );
         return toolSuccess({ upload_id, browser_url, expires_at });
       }),
@@ -287,7 +292,7 @@ function registerFileTools(server: McpServer, context: McpToolContext): void {
     "files_prepare_upload",
     {
       description:
-        "Prepare a direct binary upload. Use when you can transfer the local file with HTTP PUT outside the conversation. Send bytes to upload_url with headers, then call files_complete_upload. For a user-selected browser file, use files_upload_link instead.",
+        "Prepare a direct binary upload. Use when you can transfer the local file with HTTP PUT outside the conversation. Send bytes to upload_url with headers, then call files_complete_upload. Supply attachment {collection, record_id, field} to attach the completed file to that record. For a user-selected browser file, use files_upload_link instead.",
       inputSchema: uploadMetadataSchema,
     },
     (input) =>
@@ -297,6 +302,7 @@ function registerFileTools(server: McpServer, context: McpToolContext): void {
           context.config,
           requireOrganization(context),
           context.userId,
+          input.attachment,
         );
         return toolSuccess(
           await prepareUpload(
@@ -395,10 +401,10 @@ function registerFileTools(server: McpServer, context: McpToolContext): void {
     },
     ({ id }) =>
       withToolErrors(async () => {
-        await requireToolPermission(context, "read", "/files");
-        const file = await getFile(
-          context.services.prisma,
+        const file = await authorizedFile(
+          context.services,
           requireOrganization(context),
+          context.userId,
           id,
         );
         return toolSuccess({ file });
@@ -462,10 +468,10 @@ function registerFileTools(server: McpServer, context: McpToolContext): void {
     },
     ({ id }) =>
       withToolErrors(async () => {
-        await requireToolPermission(context, "read", "/files");
-        const file = await getFile(
-          context.services.prisma,
+        const file = await authorizedFile(
+          context.services,
           requireOrganization(context),
+          context.userId,
           id,
         );
         if (
@@ -517,13 +523,13 @@ function registerFileTools(server: McpServer, context: McpToolContext): void {
           requireOrganization(context),
           id,
         );
-        await context.services.storage.delete(
-          `${requireOrganization(context)}/${file.id}`,
-        );
         await deleteFile(
           context.services.prisma,
           requireOrganization(context),
           file.id,
+        );
+        await context.services.storage.delete(
+          `${requireOrganization(context)}/${file.id}`,
         );
         await audit(context, "delete_file", "file", file.id, {
           path: file.path,
