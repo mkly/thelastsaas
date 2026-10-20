@@ -11,7 +11,6 @@ import {
   importAutomation,
   validateAutomation,
 } from "./portable-automation";
-import { exportSecrets, importSecrets } from "./portable-secrets";
 import { portableDataSchema } from "./portable-data";
 import { queryProvider } from "./provider";
 import {
@@ -26,7 +25,6 @@ import {
   storedNotificationAudience,
   isPlainObject,
   type ExportData,
-  type SecretKeyring,
   type ImportResult,
   type Schema,
   type Where,
@@ -35,11 +33,6 @@ import { Prisma, type PrismaClient } from "@prisma/client";
 
 import { roleSubject } from "./casbin";
 import { validateCollectionRecordData } from "./collections";
-
-export interface SecretBackupOptions {
-  includeEncryptedSecrets?: boolean;
-  keyring?: SecretKeyring | null;
-}
 
 const ROLE_SUBJECT = "role:";
 const USER_SUBJECT = "user:";
@@ -95,7 +88,6 @@ async function availableId(
 async function exportInTransaction(
   prisma: Prisma.TransactionClient,
   orgId: string,
-  options: SecretBackupOptions,
 ): Promise<ExportData> {
   const [collections, files, rules, rowFilters, fieldFilters, schedules] =
     await Promise.all([
@@ -172,15 +164,6 @@ async function exportInTransaction(
 
   return {
     version: 1,
-    ...(options.includeEncryptedSecrets
-      ? {
-          encrypted_secrets: await exportSecrets(
-            prisma,
-            orgId,
-            options.keyring ?? null,
-          ),
-        }
-      : {}),
     ...(await exportAutomation(prisma, orgId)),
     collections: collections.map((collection) => ({
       name: collection.name,
@@ -244,9 +227,8 @@ async function exportInTransaction(
 export async function exportData(
   prisma: PrismaClient,
   orgId: string,
-  options: SecretBackupOptions = {},
 ): Promise<ExportData> {
-  return prisma.$transaction((db) => exportInTransaction(db, orgId, options), {
+  return prisma.$transaction((db) => exportInTransaction(db, orgId), {
     timeout: 60_000,
   });
 }
@@ -255,7 +237,7 @@ export async function importData(
   prisma: PrismaClient,
   orgId: string,
   input: ExportData,
-  options: Pick<SecretBackupOptions, "keyring"> & { actorId?: string } = {},
+  options: { actorId?: string } = {},
 ): Promise<ImportResult> {
   // The DB entry point validates too: MCP and direct callers must get exactly
   // the same atomic boundary as HTTP imports.
@@ -290,13 +272,7 @@ export async function importData(
   const result = await withUnitOfWork(
     { prisma, provider: queryProvider(prisma) },
     (unit) =>
-      importInTransaction(
-        unit,
-        orgId,
-        data,
-        options.keyring ?? null,
-        options.actorId ?? "import",
-      ),
+      importInTransaction(unit, orgId, data, options.actorId ?? "import"),
     { timeout: 60_000 },
   );
   await invalidateMetadata(
@@ -311,16 +287,9 @@ async function importInTransaction(
   unit: UnitOfWork,
   orgId: string,
   data: ExportData,
-  keyring: SecretKeyring | null,
   actorId: string,
 ): Promise<ImportResult> {
   const prisma = unit.db;
-  const importedSecrets = await importSecrets(
-    prisma,
-    orgId,
-    data.encrypted_secrets ?? [],
-    keyring,
-  );
   let importedRecords = 0,
     skippedRecords = 0,
     importedFiles = 0,
@@ -565,7 +534,6 @@ async function importInTransaction(
     importedSchedules++;
   }
   return {
-    ...(data.encrypted_secrets ? { imported_secrets: importedSecrets } : {}),
     imported_collections: data.collections.length,
     imported_records: importedRecords,
     imported_files: importedFiles,

@@ -1,7 +1,7 @@
 # Queue and automation contracts
 
 The authoritative request validators, DTOs and service interfaces live in
-`packages/shared/src/{queue,schedules,triggers,secrets,transactions}.ts`.
+`packages/shared/src/{queue,schedules,triggers,transactions}.ts`.
 REST, MCP and CLI use the same services and permissions. Wire fields are
 snake_case; dates are ISO UTC strings. Public routes are under
 `/v1/orgs/:orgId`; permission paths omit that prefix.
@@ -48,8 +48,7 @@ back the source write or occurrence. See [automation](automation.md).
 Organization export/import includes queue definitions, processing policies, schedules
 and triggers. Import remaps configuration references and restores producers
 paused. Pending jobs, delivery state, occurrence ledgers and transaction replay
-receipts and retained record history belong to database backups. Ordinary exports omit secrets; explicit
-encrypted backups follow [secret backup and rotation](secrets-backup.md).
+receipts and retained record history belong to database backups.
 
 ## API conventions
 

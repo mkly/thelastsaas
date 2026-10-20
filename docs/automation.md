@@ -3,7 +3,7 @@
 Schedules publish queue messages over time. Collection triggers publish messages
 inside record writes. External workers claim and process those messages using
 [queue leases and permissions](queues.md). Neither producer executes arbitrary
-code or reads secrets.
+code.
 
 ## Schedules
 
@@ -109,7 +109,7 @@ use `/triggers/<id>` with the corresponding action. Reading a trigger reveals it
 mapping/literals. Execution rechecks the creator's membership, source row/field
 read constraints and destination create constraints. Only explicitly mapped,
 authorized data is published, including on delete; no arbitrary source snapshot
-or secret interpolation is allowed.
+is allowed.
 
 Every record mutation path, including batch, REST, MCP and bounded transactions,
 publishes through the same unit of work. Source mutation, event identity and
@@ -174,4 +174,3 @@ Inspect their configuration and creator permissions before resuming them.
 Pending jobs, delivery state and occurrence history belong to database backups.
 SQLite backups must include both application and Bunqueue databases; PostgreSQL
 backups must include the pg-boss schema. See [backend operations](job-backends.md).
-Ordinary exports omit secrets. See [secret backup and rotation](secrets-backup.md).

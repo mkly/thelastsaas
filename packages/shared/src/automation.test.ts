@@ -17,11 +17,6 @@ import {
   queueUpdateSchema,
   scheduleCreateSchema,
   scheduleUpdateSchema,
-  secretCreateSchema,
-  secretReplaceSchema,
-  secretRevealSchema,
-  secretRotationSchema,
-  secretKeyringConfigSchema,
   transactionOperationSchema,
   transactionRequestSchema,
   triggerCreateSchema,
@@ -99,11 +94,6 @@ describe("automation request contracts", () => {
       ],
       [triggerCreateSchema, { ...trigger, code: "execute()" }],
       [
-        secretCreateSchema,
-        { name: "credential", value: "x", key_version: "v1" },
-      ],
-      [secretRevealSchema, { value: "x" }],
-      [
         transactionRequestSchema,
         {
           operations: [{ op: "record.create", collection: "tasks", data: {} }],
@@ -160,7 +150,7 @@ describe("automation request contracts", () => {
     expect(schema.safeParse({ title: null }).success).toBe(true);
   });
 
-  test("counts UTF-8 bytes for queue payloads and secrets", () => {
+  test("counts UTF-8 bytes for queue payloads", () => {
     const overhead = jsonByteLength({ title: "" });
     expect(
       enqueueRequestSchema.safeParse({
@@ -188,12 +178,6 @@ describe("automation request contracts", () => {
       enqueueRequestSchema.safeParse({
         entries: [{ payload: { title: "é".repeat(32768) } }],
       }).success,
-    ).toBe(false);
-    expect(
-      secretReplaceSchema.safeParse({ value: "é".repeat(32768) }).success,
-    ).toBe(true);
-    expect(
-      secretReplaceSchema.safeParse({ value: "é".repeat(32769) }).success,
     ).toBe(false);
     expect(
       enqueueRequestSchema.safeParse({
@@ -278,7 +262,6 @@ describe("automation request contracts", () => {
   test("restricts trigger mapping to explicit tagged values and valid snapshots", () => {
     expect(triggerCreateSchema.safeParse(trigger).success).toBe(true);
     for (const mapping of [
-      { kind: "secret", name: "credential" },
       { kind: "after", field: "bad.name" },
       { kind: "metadata", key: "token" },
       { kind: "literal", value: 1, code: "x" },
@@ -326,20 +309,13 @@ describe("automation request contracts", () => {
     expect(whereSchema.safeParse(where).success).toBe(false);
   });
 
-  test("rejects empty patches and bounded rotation violations", () => {
+  test("rejects empty patches", () => {
     for (const schema of [
       queueUpdateSchema,
       scheduleUpdateSchema,
       triggerUpdateSchema,
     ])
       expect(schema.safeParse({}).success).toBe(false);
-    expect(secretRotationSchema.parse({ key_version: "v2" }).limit).toBe(100);
-    expect(
-      secretRotationSchema.safeParse({ key_version: "v2", limit: 101 }).success,
-    ).toBe(false);
-    expect(
-      secretRotationSchema.safeParse({ key_version: "../v2" }).success,
-    ).toBe(false);
   });
 
   test("accepts literal operations and rejects arbitrary or interpolated operation shapes", () => {
@@ -391,23 +367,6 @@ describe("automation request contracts", () => {
         ],
       }).success,
     ).toBe(false);
-  });
-
-  test("validates keyring configuration without an ephemeral key fallback", () => {
-    const key = btoa("a".repeat(32));
-    expect(
-      secretKeyringConfigSchema.safeParse({
-        active_version: "v1",
-        keys: { v1: key },
-      }).success,
-    ).toBe(true);
-    for (const input of [
-      { active_version: "v2", keys: { v1: key } },
-      { active_version: "v1", keys: { v1: btoa("a".repeat(31)) } },
-      { active_version: "v1", keys: { v1: "malformed" } },
-      { active_version: "v1", keys: { v1: key }, fallback: true },
-    ])
-      expect(secretKeyringConfigSchema.safeParse(input).success).toBe(false);
   });
 
   test("uses domain errors without reflecting foreign IDs or secret values", () => {

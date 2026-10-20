@@ -332,7 +332,6 @@ model Organization {
   notificationSchedules NotificationSchedule[]
   casbinRules           CasbinRule[]
   auditLogs             AuditLog[]
-  secrets               Secret[]
   collectionTriggers    CollectionTrigger[]
   transactionRequests   TransactionRequest[]
   recordHistory         RecordHistory[]
@@ -642,25 +641,6 @@ model FileUpload {
   @@index([expiresAt])
   @@index([orgId, userId])
   @@map("file_upload")
-}
-
-// Ciphertext is deliberately separate from public metadata and ordinary exports.
-model Secret {
-  id         String       @id
-  orgId      String       @map("org_id")
-  name       String
-  keyVersion String       @map("key_version")
-  ciphertext String
-  nonce      String
-  authTag    String       @map("auth_tag")
-  createdAt  DateTime     @default(now()) @map("created_at")
-  updatedAt  DateTime     @updatedAt @map("updated_at")
-  org        Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
-
-  @@unique([orgId, name])
-  @@index([orgId, createdAt, id])
-  @@index([orgId, keyVersion, id])
-  @@map("secrets")
 }
 
 // --- Durable queues ---

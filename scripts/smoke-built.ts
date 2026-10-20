@@ -95,8 +95,6 @@ async function smoke(provider: "sqlite" | "postgres"): Promise<void> {
     STORAGE_TYPE: "local",
     STORAGE_PATH: join(fixture, provider),
     SAAS_API_TOKEN: "",
-    SECRETS_ACTIVE_KEY_VERSION: undefined,
-    SECRETS_KEYRING: undefined,
   };
   await run(
     [

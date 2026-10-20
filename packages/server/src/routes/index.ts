@@ -17,7 +17,6 @@ import { queuesRouter } from "./queues";
 import { recordsRouter } from "./records";
 import { recordHistoryRouter } from "./record-history";
 import { serviceAccountRouter } from "./service-accounts";
-import { secretsRouter } from "./secrets";
 import { systemRouter } from "./system";
 import { transactionsRouter } from "./transactions";
 import { schedulesRouter } from "./schedules";
@@ -35,7 +34,6 @@ export const apiRouter = new Hono<AppEnvironment>()
   .route("/v1/orgs/:orgId/transactions", transactionsRouter)
   .route("/v1/orgs/:orgId/triggers", triggersRouter)
   .route("/v1/orgs/:orgId/schedules", schedulesRouter)
-  .route("/v1/orgs/:orgId/secrets", secretsRouter)
   .route("/v1/orgs/:orgId/files", fileRouter)
   .route("/v1/orgs/:orgId/invitations", invitationRouter)
   .route("/v1/mcp", mcpRouter)

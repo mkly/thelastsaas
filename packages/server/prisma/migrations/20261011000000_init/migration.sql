@@ -456,20 +456,6 @@ CREATE TABLE "file_upload" (
 );
 
 -- CreateTable
-CREATE TABLE "secrets" (
-    "id" TEXT NOT NULL PRIMARY KEY,
-    "org_id" TEXT NOT NULL,
-    "name" TEXT NOT NULL,
-    "key_version" TEXT NOT NULL,
-    "ciphertext" TEXT NOT NULL,
-    "nonce" TEXT NOT NULL,
-    "auth_tag" TEXT NOT NULL,
-    "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updated_at" DATETIME NOT NULL,
-    CONSTRAINT "secrets_org_id_fkey" FOREIGN KEY ("org_id") REFERENCES "organization" ("id") ON DELETE CASCADE ON UPDATE CASCADE
-);
-
--- CreateTable
 CREATE TABLE "queues" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "org_id" TEXT NOT NULL,
@@ -766,15 +752,6 @@ CREATE INDEX "file_upload_expiresAt_idx" ON "file_upload"("expiresAt");
 
 -- CreateIndex
 CREATE INDEX "file_upload_orgId_userId_idx" ON "file_upload"("orgId", "userId");
-
--- CreateIndex
-CREATE INDEX "secrets_org_id_created_at_id_idx" ON "secrets"("org_id", "created_at", "id");
-
--- CreateIndex
-CREATE INDEX "secrets_org_id_key_version_id_idx" ON "secrets"("org_id", "key_version", "id");
-
--- CreateIndex
-CREATE UNIQUE INDEX "secrets_org_id_name_key" ON "secrets"("org_id", "name");
 
 -- CreateIndex
 CREATE INDEX "queues_org_id_id_idx" ON "queues"("org_id", "id");

@@ -95,7 +95,6 @@ interface SystemRoutes {
   export: {
     $post(input: {
       param: OrgParam;
-      query?: { include_encrypted_secrets: "true" };
     }): Promise<Response>;
   };
   import: {

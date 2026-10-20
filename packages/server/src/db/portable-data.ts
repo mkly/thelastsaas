@@ -1,5 +1,4 @@
 import {
-  encryptedSecretSchema,
   notificationAudienceSchema,
   portableAutomationShape,
 } from "@lastsaas/shared";
@@ -21,7 +20,6 @@ export const portableDataSchema = z
   .object({
     status: z.literal("ok").optional(),
     version: z.literal(1),
-    encrypted_secrets: z.array(encryptedSecretSchema).optional(),
     ...portableAutomationShape,
     collections: z.array(
       z

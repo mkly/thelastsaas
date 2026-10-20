@@ -17,7 +17,6 @@ import {
   notifySchema,
   genId,
   sanitizePathComponent,
-  secretBackupRequestSchema,
   type ExportData,
 } from "@lastsaas/shared";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -806,25 +805,18 @@ function registerSystemTools(server: McpServer, context: McpToolContext): void {
   server.registerTool(
     "org_export",
     {
-      description:
-        "Export a portable organization dump; encrypted secrets require explicit opt-in and matching configured keys.",
-      inputSchema: secretBackupRequestSchema,
+      description: "Export a portable organization dump.",
+      inputSchema: z.object({}),
       annotations: { readOnlyHint: true },
     },
-    ({ include_encrypted_secrets }) =>
+    () =>
       withToolErrors(async () => {
         await requireToolPermission(context, "manage", "/system/export");
         const data = await exportData(
           context.services.prisma,
           requireOrganization(context),
-          {
-            includeEncryptedSecrets: include_encrypted_secrets,
-            keyring: context.config.secretKeyring,
-          },
         );
-        await audit(context, "export_data", "system", null, {
-          encrypted_secrets: include_encrypted_secrets,
-        });
+        await audit(context, "export_data", "system", null);
         return toolSuccess({ ...data });
       }, true),
   );
@@ -858,7 +850,7 @@ function registerSystemTools(server: McpServer, context: McpToolContext): void {
           context.services.prisma,
           requireOrganization(context),
           portableData as ExportData,
-          { keyring: context.config.secretKeyring, actorId: context.userId },
+          { actorId: context.userId },
         );
         await audit(context, "import_data", "system", null, {
           ...result,

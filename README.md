@@ -89,8 +89,8 @@ dist/saas login --server http://localhost:8787
 
 See the [CLI command reference](agent_docs/lastsaas-cli-commands.md).
 See [notifications](docs/notifications.md) for team audiences and destination permissions.
-See [durable queue workers](docs/queues.md), [application automation](docs/automation.md),
-and [secret backup and rotation](docs/secrets-backup.md) for operator workflows.
+See [durable queue workers](docs/queues.md) and [application automation](docs/automation.md)
+for operator workflows.
 The embedded operator guide is available through `dist/saas skills`.
 
 ## Database development

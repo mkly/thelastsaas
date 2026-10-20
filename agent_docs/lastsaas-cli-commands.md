@@ -83,14 +83,6 @@ saas files get <id>
 saas files download <id> [--output <path>]
 saas files delete <id> --confirm
 
-# Secrets (ordinary output contains metadata only)
-saas secrets create <name> (--file <path> | --stdin)
-saas secrets list [--limit <n>] [--cursor <cursor>]
-saas secrets show <name>
-saas secrets replace <name> (--file <path> | --stdin)
-saas secrets delete <name> --confirm
-saas secrets reveal <name>
-
 # Queues (configuration and inspection; one page per list, continue with --cursor)
 saas queues create <queue> (--schema <json> | --schema-file <path>) [--enabled on|off]
 saas queues update <queue> [--schema <json> | --schema-file <path>] [--enabled on|off]
@@ -144,15 +136,6 @@ saas skills install [--directory <skill-root>]
 It does not require a selected organization; when one is selected, it also reports
 the organization and the user's role.
 
-Secret input is UTF-8, bounded to 64 KiB, and preserves all whitespace, including
-trailing newlines. Supply exactly one of `--file` or piped `--stdin`; values are
-not command-line arguments. Only `secrets reveal` prints a value (exactly, with no
-added trailing newline), or returns it
-in the `secret.value` JSON field with `--json`. Metadata read on `/secrets/<name>`
-does not grant reveal; reveal requires read on `/secrets/<name>/value`.
-`key_version` identifies the server encryption key version, not an API token.
-Server keys must be configured for writes and reveals. See [config](config.md).
-
 Queue creation requires `write` on `/queues`; configuration requires `manage`
 on `/queues/<name>`, and deletion requires `delete`. Job inspection requires
 `read`; claim and settlement require `read` and `update`. Management alone does
@@ -192,20 +175,12 @@ optional `where`/`fields`). Grants are saved on the invitation and applied when
 it is accepted. Setting grants requires permission to manage permissions.
 `permissions invitations --json` includes the pending grants.
 
-`saas export --include-encrypted-secrets --output <file>` opts into an encrypted
-secret backup. Restore with `saas import <file>` after configuring the source
-key versions on the destination. Back up keys separately; see
-[encrypted secret backup and restore](../docs/secrets-backup.md).
-
 Authentication precedence is global `--token`, then `SAAS_API_TOKEN`, then the
 stored human session. API tokens use `x-api-key`; human sessions use bearer.
 Delivery `--lease-token` is separate. Process claim payloads before explicit ack;
 make side effects idempotent and never log claim tokens. Current grants are
 checked again on settlement. See [workers](../docs/queues.md) and
 [automation](../docs/automation.md) for ACLs, retry, trigger publication and restore.
-Encryption-key rotation is a server-local command, not `saas secrets rotate`;
-see [operator rotation](../docs/secrets-backup.md#rotate-server-encryption-keys).
-
 `records history` reads 30 days of changes under current record permissions,
 including deletions. Pagination counts visible entries only. See
 [history semantics and correction](../docs/record-history.md).

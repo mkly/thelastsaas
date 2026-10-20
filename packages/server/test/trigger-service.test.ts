@@ -167,12 +167,11 @@ describe("collection trigger configuration", () => {
     ).toBe(1);
   });
 
-  test("strict mapping union rejects code, secret reads, passthrough and unknown control fields", async () => {
+  test("strict mapping union rejects code, passthrough and unknown control fields", async () => {
     const { prisma, service, permissions, input } = await fixture();
     await permissions();
     for (const mapping of [
       { title: { kind: "code", value: "return source" } },
-      { title: { kind: "secret", name: "credential" } },
       { title: { kind: "after" } },
       { title: { kind: "after", field: "title", extra: true } },
       { title: "after.title" },

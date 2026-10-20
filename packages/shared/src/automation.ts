@@ -14,7 +14,6 @@ export const AUTOMATION_LIMITS = {
   transactionOperations: 25,
   transactionBytes: 1024 * 1024,
   transactionRetentionDays: 7,
-  secretBytes: 64 * 1024,
   claimScan: 1000,
   retryBaseSeconds: 30,
   retryMaxSeconds: 3600,

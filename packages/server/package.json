@@ -12,8 +12,7 @@
     "prisma:generate": "prisma generate --schema prisma/schema.prisma",
     "prisma:generate:postgres": "bun ../../scripts/generate-postgres-schema.ts && prisma generate --schema prisma/schema.postgres.prisma",
     "prisma:push:postgres": "bun ../../scripts/generate-postgres-schema.ts && prisma db push --schema prisma/schema.postgres.prisma --skip-generate",
-    "typecheck": "tsc --noEmit",
-    "secrets:rotate": "bun ../../scripts/rotate-secrets.ts"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@better-auth/api-key": "1.7.1",

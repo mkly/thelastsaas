@@ -90,8 +90,8 @@ Processing is at least once: external effects require consumer idempotency.
 
 Schedules and triggers recheck their creator at execution. Authority/schema
 invalidation pauses the producer with a safe reason; persistence failures roll
-back publication with the source write/cursor. Imports restore configuration and pause producers. Secret metadata never includes values; reveal has a separate child
-resource. See [contracts](../docs/queues-design.md), [workers](../docs/queues.md)
+back publication with the source write/cursor. Imports restore configuration and
+pause producers. See [contracts](../docs/queues-design.md), [workers](../docs/queues.md)
 and [automation](../docs/automation.md).
 
 REST routes attach shared Zod validators through `@hono/zod-validator`; the chained

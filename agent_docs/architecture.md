@@ -64,5 +64,3 @@ SQL or use `prisma db push` for a new PostgreSQL database.
 
 Organization export/import reconstructs configuration and records. Queue runtime
 state belongs to database backups. Imports restore schedules and triggers paused.
-Secret values use AES-256-GCM with organization/secret/version authenticated
-identity. Metadata read is separate from reveal. Back up key material separately.

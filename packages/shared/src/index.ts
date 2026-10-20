@@ -11,7 +11,6 @@ export * from "./where";
 export * from "./queue";
 export * from "./schedules";
 export * from "./triggers";
-export * from "./secrets";
 export * from "./transactions";
 
 export * from "./portable-automation";

@@ -68,16 +68,6 @@ GET    /v1/orgs/:orgId/files/:id                  library or attachment read
 GET    /v1/orgs/:orgId/files/:id/content          library or attachment read
 DELETE /v1/orgs/:orgId/files/:id                  delete; no live/history pins
 
-# Secrets. Metadata uses `/secrets` paths; reveal is a separate grant on
-# `/secrets/:name/value`. Responses never include values except reveal and all
-# secret and MCP responses carry `Cache-Control: no-store`.
-POST   /v1/orgs/:orgId/secrets                    /secrets:write
-GET    /v1/orgs/:orgId/secrets?limit=&cursor=      filters by /secrets/:name:read
-GET    /v1/orgs/:orgId/secrets/:name               /secrets/:name:read
-PATCH  /v1/orgs/:orgId/secrets/:name               /secrets/:name:manage
-DELETE /v1/orgs/:orgId/secrets/:name               /secrets/:name:delete
-POST   /v1/orgs/:orgId/secrets/:name/reveal        /secrets/:name/value:read
-
 # Queues: configuration and jobs. Payload access requires whole-queue read.
 # Responses carry Cache-Control: no-store.
 POST   /v1/orgs/:orgId/queues                     /queues:write
@@ -177,12 +167,6 @@ Uploads use `multipart/form-data` with one file and an optional relative `path`
 field. Download responses stream bytes. Every response other than a download
 is JSON with `status: "ok"` or `status: "error"`.
 
-Organization exports omit secrets by default. Opt in using
-`POST /v1/orgs/:orgId/export?include_encrypted_secrets=true`. Imports accept the
-optional `encrypted_secrets` array only with matching configured keys, and
-re-encrypt for the destination identity and active key. See
-[encrypted secret backup and restore](../docs/secrets-backup.md).
-
 Enqueue bodies are `{entries:[{payload,available_at?,idempotency_key?}]}` with
 1..100 entries. Claim takes `{limit?,lease_seconds?}` and returns
 `{status:"ok",claims,has_more}`. Ack takes `{token}`, nack
@@ -195,7 +179,6 @@ Schedule creation uses `{queue,payload,timing,enabled?}`, where timing is
 `{collection,queue,events,watched_fields?,where?,mapping,enabled?}`. Pause/resume
 are PATCH `{enabled:false/true}`. Transaction bodies contain 1..25 `operations`
 and optional `idempotency_key`, bounded to 1 MiB. See [automation examples](../docs/automation.md).
-Secret key rotation is local operator tooling, with no REST route.
 
 History routes use current collection read grants, row conditions and field
 projection on each stored version. Query parameters are `record_id`,

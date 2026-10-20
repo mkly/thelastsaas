@@ -11,7 +11,6 @@ import { registerOrganizationTools } from "./tools/organizations";
 import { registerOperationsTools } from "./tools/operations";
 import { registerQueueJobTools } from "./tools/queue-jobs";
 import { registerQueueTools } from "./tools/queues";
-import { registerSecretTools } from "./tools/secrets";
 import { registerTransactionTools } from "./tools/transactions";
 import { registerScheduleTools } from "./tools/schedules";
 import { registerTriggerTools } from "./tools/triggers";
@@ -57,7 +56,6 @@ const toolRegistrars: readonly ToolRegistrar[] = [
   registerDataTools,
   registerAccessTools,
   registerOperationsTools,
-  registerSecretTools,
   registerQueueTools,
   registerQueueJobTools,
   registerTransactionTools,

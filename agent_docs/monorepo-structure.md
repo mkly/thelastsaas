@@ -24,7 +24,6 @@ packages/
 │       ├── schedules/                 Producer CRUD and durable occurrences
 │       ├── triggers/                  Mapped publication inside record writes
 │       ├── transactions/              Bounded atomic operations and idempotency
-│       ├── secrets/                   Encryption, metadata/reveal, operator rotation
 │       ├── services.ts               Prisma, SQLite, auth, queue, scheduler
 │       ├── db/                        Collection, record, filter, audit, and export logic
 │       ├── lib/recurrence.ts          Timezone-aware bounded expansion
@@ -48,11 +47,11 @@ imports it as a type-only dependency, preserving end-to-end request and response
 inference without bundling server runtime code.
 
 Automation DTOs and validators live in shared `automation.ts`, `queue.ts`,
-`schedules.ts`, `triggers.ts`, `transactions.ts` and `secrets.ts`. Routes and MCP
+`schedules.ts`, `triggers.ts` and `transactions.ts`. Routes and MCP
 tools invoke domain services. CLI `queue-jobs.ts` handles worker commands;
-`schedules.ts`, `triggers.ts`, `transactions.ts` and `secrets.ts` handle the other
+`schedules.ts`, `triggers.ts` and `transactions.ts` handle the other
 families. Registration is in client `src/commands.ts` and server `src/app.ts` /
-`src/mcp/registry.ts`. `scripts/rotate-secrets.ts` is local operator tooling.
+`src/mcp/registry.ts`.
 After editing `skills/lastsaas/SKILL.md`, run `bun run embed:skill` in the host
 worktree; never hand-edit client `skill.generated.ts`.
 

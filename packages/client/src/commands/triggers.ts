@@ -146,7 +146,7 @@ Use --watch-fields for changed fields and --where or --where-file for predicates
 Mapping JSON is {"destination_field":{"kind":"after","field":"source_field"}}.
 Other tags are {"kind":"before","field":"source_field"},
 {"kind":"literal","value":...} and {"kind":"metadata","key":"recordId"}.
-Metadata keys: recordId, collectionName, event, occurredAt. No code or secret reads.
+Metadata keys: recordId, collectionName, event, occurredAt. No code execution.
 Before is unavailable for create; after is unavailable for delete.
 Watched fields apply to update; no-op updates never fire.
 Predicates inspect after for create/update and before for delete.

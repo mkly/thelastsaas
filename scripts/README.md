@@ -100,30 +100,3 @@ processes, checks server types, creates/drops a random schema, and restores the
 SQLite client even on failure. It overrides all three suites' fixture URLs.
 Install dependencies and Node (for the package-installed Prisma launcher) before
 running it. Never run provider-switching commands concurrently in one checkout.
-
-## Operator secret-key rotation
-
-Configure `SECRETS_ACTIVE_KEY_VERSION` to the new version and retain both old
-and new keys in `SECRETS_KEYRING`. Restart writers with that configuration first
-so replacements/new secrets use the target version. With `DATABASE_URL` explicitly
-set, run one bounded batch from the server package (which loads its `.env`):
-
-```sh
-bun run --cwd packages/server secrets:rotate --org <org-id> --user <actor-user-id> --key-version <new-version> --limit 100
-```
-
-This local operator script requires database and keyring access. It checks current
-organization membership and `manage /secrets/<name>` for every candidate; it is
-not registered as an HTTP or MCP endpoint. Output contains only `status`,
-`rotated`, and `next_cursor`. Pass a returned cursor as `--cursor <cursor>` to
-continue, keeping the organization and target version unchanged. A null cursor
-ends the pass. For a final sweep, run again without a cursor until `rotated` is
-zero, catching old-version writes or inserts earlier than the cursor.
-
-Each batch commits ciphertext and redacted audits atomically. On interruption,
-repeat the last batch request; already-rotated entries are skipped. Missing keys,
-invalid ciphertext, permission failures and concurrent replacement conflicts
-leave the batch uncommitted; fix the cause and retry the same cursor. A replacement
-is never overwritten with a stale value. No keys are removed or modified; keep
-old keys until every organization and encrypted backup no longer needs them.
-Use the Prisma client generated for the deployed database provider.

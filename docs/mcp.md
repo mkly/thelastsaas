@@ -1,7 +1,7 @@
 # Model Context Protocol (MCP)
 
 Last SaaS exposes its organization-scoped data, access-control, file,
-notification, queue, automation, secret, and system operations as MCP tools over Streamable HTTP.
+notification, queue, automation, and system operations as MCP tools over Streamable HTTP.
 
 Call `server_info` to identify the running server. It returns `version` (the
 server version), `bundledCliVersion` (the CLI available for download), `commit`
@@ -260,7 +260,7 @@ See [history semantics and corrections](record-history.md).
 Tools use the current selected organization and the same membership, payload
 whole-queue grants and native claim checks as REST. Organization-bound API keys use
 `x-api-key` and cannot switch organizations. Human OAuth clients use the browser
-flow above. Manage authority does not grant queue payload read or secret reveal.
+flow above. Manage authority does not grant queue payload read.
 
 | CLI (`saas` prefix)                            | MCP tool                                                                                         |
 | ---------------------------------------------- | ------------------------------------------------------------------------------------------------ |
@@ -272,10 +272,9 @@ flow above. Manage authority does not grant queue payload read or secret reveal.
 | triggers create/list/show/update/delete        | triggers_create / triggers_list / triggers_show / triggers_update / triggers_delete              |
 | triggers pause/resume                          | triggers_update with enabled false/true                                                          |
 | transactions execute                           | transactions_execute                                                                             |
-| secrets create/list/show/replace/delete/reveal | secrets_create / secrets_list / secrets_show / secrets_replace / secrets_delete / secrets_reveal |
 
-Queue tools select `queue`, and settlement uses `job_id`. Schedule/trigger tools select `id`; secrets use
-`name`. DTO fields are snake_case. Lists accept limit/cursor and return
+Queue tools select `queue`, and settlement uses `job_id`. Schedule/trigger tools
+select `id`. DTO fields are snake_case. Lists accept limit/cursor and return
 items/next_cursor. Creation/update take the shared strict DTO; unknown keys are
 rejected even where the MCP advertised schema is compact.
 
@@ -307,13 +306,6 @@ mappings. See [worker ACLs and examples](queues.md) and
 [atomic producers and transactions](automation.md). Direct worker claims,
 shared consumption, schema restrictions, retry and restore rules apply
 equally to MCP.
-
-Secret create/replace accept `{name,value}`; reveal is an explicit empty-value
-request `{name}` requiring read on `/secrets/<name>/value`. Ordinary secret tools
-return only metadata. Responses use no-store; avoid placing secret values in
-transcripts. Encrypted exports require `org_export` with
-`include_encrypted_secrets: true`; key rotation is server-local operator tooling.
-See [secret backup and rotation](secrets-backup.md).
 
 Queue consumers need whole-queue read/update grants. Claims include complete
 payloads, so use separate queues for different access boundaries. Collection

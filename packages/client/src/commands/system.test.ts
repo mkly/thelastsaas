@@ -131,16 +131,6 @@ describe("system operations commands", () => {
     await importProgram.parseAsync(["import", "dump.json"], { from: "user" });
 
     expect(exportCalls).toEqual([{ param: { orgId: "org_123" } }]);
-    const encryptedProgram = testProgram();
-    registerSystemCommands(encryptedProgram, deps);
-    await encryptedProgram.parseAsync(
-      ["export", "--include-encrypted-secrets"],
-      { from: "user" },
-    );
-    expect(exportCalls[1]).toEqual({
-      param: { orgId: "org_123" },
-      query: { include_encrypted_secrets: "true" },
-    });
     expect(writes).toHaveLength(1);
     expect(JSON.parse(writes[0]!.content)).toEqual({
       status: "ok",

@@ -1,4 +1,3 @@
-import type { EncryptedSecret } from "./secrets";
 import type { PortableAutomationData } from "./portable-automation";
 import type { NotificationAudience } from "./notification-audience";
 
@@ -147,7 +146,6 @@ export interface QueryResult {
 
 export interface ExportData extends PortableAutomationData {
   version: 1;
-  encrypted_secrets?: EncryptedSecret[];
   collections: Array<{
     name: string;
     schema: Schema;
@@ -216,7 +214,6 @@ export interface ExportData extends PortableAutomationData {
 }
 
 export interface ImportResult {
-  imported_secrets?: number;
   imported_collections: number;
   imported_records: number;
   imported_files: number;

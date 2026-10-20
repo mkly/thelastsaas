@@ -34,8 +34,6 @@ production.
 | `S3_BUCKET`                  | empty                                     | Required for S3 storage                               |
 | `S3_ACCESS_KEY`              | empty                                     | Optional explicit S3 credential; pair with secret     |
 | `S3_SECRET_KEY`              | empty                                     | Optional explicit S3 credential                       |
-| `SECRETS_ACTIVE_KEY_VERSION` | absent                                    | Active configured encryption key version              |
-| `SECRETS_KEYRING`            | absent                                    | JSON version-to-base64 map of 32-byte encryption keys |
 | `S3_FORCE_PATH_STYLE`        | `false`                                   | Use path-style S3 URLs                                |
 
 ## PostgreSQL
@@ -78,20 +76,6 @@ edits become visible when entries expire.
 For multiple server processes sharing a database, set `CACHE_MAX_BYTES=0`:
 invalidation is local to each process, so another process could retain revoked
 permissions until expiry.
-
-## Secret encryption
-
-Secrets are optional. Leave both `SECRETS_ACTIVE_KEY_VERSION` and
-`SECRETS_KEYRING` absent to start without encryption keys. Set the active version
-and a JSON object mapping versions to canonical base64 encodings of exactly 32
-random bytes. Partial or malformed configuration stops startup without printing
-key material. The parsed keyring is available as `AppConfig.secretKeyring`.
-Keep old versions for decryption after rotation and back up keys separately from
-the database. Never use ephemeral keys. See [the secrets contract](../docs/queues-design.md#secrets-notification-integration-and-portability).
-
-Explicit encrypted organization backups require all source key versions on the
-destination and re-encrypt restored values with its active key. Back up keys
-separately; see [encrypted secret backup and restore](../docs/secrets-backup.md).
 
 ## Background work and upgrades
 

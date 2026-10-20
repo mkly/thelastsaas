@@ -3,7 +3,6 @@ export { portableDataSchema } from "../db/portable-data";
 import {
   LastSaasError,
   errorResponse,
-  secretBackupRequestSchema,
   type ExportData,
 } from "@lastsaas/shared";
 import type { Prisma } from "@prisma/client";
@@ -49,40 +48,12 @@ export const systemRouter = new Hono<AppEnvironment>()
     return context.json({ status: "ok" as const, entries });
   })
   .post("/export", manageExport, async (context) => {
-    const include = context.req.query("include_encrypted_secrets");
-    const parsed = secretBackupRequestSchema.safeParse({
-      include_encrypted_secrets:
-        include === undefined
-          ? false
-          : include === "true"
-            ? true
-            : include === "false"
-              ? false
-              : include,
-    });
-    if (!parsed.success)
-      return context.json(
-        errorResponse("InvalidRequest", "Invalid export request"),
-        400,
-      );
-    try {
-      const data = await exportData(
-        context.get("services").prisma,
-        context.get("orgId"),
-        {
-          includeEncryptedSecrets: parsed.data.include_encrypted_secrets,
-          keyring: context.get("config")?.secretKeyring ?? null,
-        },
-      );
-      await context.get("audit")("export_data", "system", null, {
-        encrypted_secrets: parsed.data.include_encrypted_secrets,
-      });
-      return context.json({ status: "ok" as const, ...data });
-    } catch (error) {
-      if (error instanceof LastSaasError)
-        return context.json(error.toResponse(), 503);
-      throw error;
-    }
+    const data = await exportData(
+      context.get("services").prisma,
+      context.get("orgId"),
+    );
+    await context.get("audit")("export_data", "system", null);
+    return context.json({ status: "ok" as const, ...data });
   })
   .post("/import", manageImport, async (context) => {
     const parsed = portableDataSchema.safeParse(
@@ -102,7 +73,6 @@ export const systemRouter = new Hono<AppEnvironment>()
         context.get("orgId"),
         portableData as ExportData,
         {
-          keyring: context.get("config")?.secretKeyring ?? null,
           actorId: context.get("userId"),
         },
       );
