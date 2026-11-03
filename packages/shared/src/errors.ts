@@ -59,7 +59,10 @@ export class RecordNotFoundError extends LastSaasError {
 }
 
 export class SchemaValidationError extends LastSaasError {
-  constructor(public readonly errors: string[]) {
+  constructor(
+    public readonly errors: string[],
+    public readonly issues?: Array<{ path: string[]; code: string }>,
+  ) {
     super(
       ErrorCode.SchemaValidation,
       `Schema validation failed: ${errors.join("; ")}`,

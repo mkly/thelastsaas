@@ -8,7 +8,7 @@ import {
   expandRecurrence,
   expandRecurrences,
   parseRecurrence,
-} from "../src/lib/recurrence";
+} from "@lastsaas/shared";
 
 const weekly = [
   "DTSTART;TZID=America/New_York:20260301T090000",

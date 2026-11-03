@@ -145,14 +145,16 @@ function createFilesApp(storage: Storage, maxUploadSize = 50 * 1024 * 1024) {
           findMany: async () => [
             {
               ptype: "p",
-              v0: "org:org_1:user:admin",
+              v0: "org:org_1:role:admin",
               v1: "/*",
               v2: "*",
+              v3: "true",
+              v4: "",
             },
             {
               ptype: "g",
               v0: "user_1",
-              v1: "org:org_1:user:admin",
+              v1: "org:org_1:role:admin",
               v2: null,
             },
           ],

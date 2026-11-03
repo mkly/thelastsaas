@@ -1,3 +1,5 @@
+import { addPolicy } from "../src/db/casbin";
+import { resolveCollectionAccess } from "../src/db/collection-access";
 import { jobsFor } from "../src/jobs";
 import { afterEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
@@ -77,15 +79,20 @@ describe(`transaction-composable record mutations (${provider})`, () => {
       name: "Before",
       secret: "Internal",
     });
+    const permitted = await access(
+      source,
+      "update",
+      "true",
+      ["name"],
+      ["name"],
+    );
     const updated = await updateRecord(
       source.prisma,
       source.orgId,
       "tasks",
       record.id,
       { name: "After" },
-      undefined,
-      undefined,
-      [{ readable: ["name"], writable: ["name"], checkAfter: true }],
+      permitted,
     );
     expect(updated.data).toEqual({ name: "After" });
     expect(updated).not.toHaveProperty("mutation");
@@ -135,3 +142,43 @@ describe(`transaction-composable record mutations (${provider})`, () => {
     ).toEqual(before);
   });
 });
+
+async function access(
+  source: Awaited<ReturnType<typeof fixture>>,
+  action: string,
+  cond: string,
+  readable: string[],
+  writable: string[],
+) {
+  await addPolicy(
+    source.prisma,
+    source.orgId,
+    "worker",
+    "/collections/tasks",
+    action,
+    { cond },
+  );
+  for (const field of readable)
+    await addPolicy(
+      source.prisma,
+      source.orgId,
+      "worker",
+      `/collections/tasks/fields/${field}`,
+      "read",
+    );
+  for (const field of writable)
+    await addPolicy(
+      source.prisma,
+      source.orgId,
+      "worker",
+      `/collections/tasks/fields/${field}`,
+      action,
+    );
+  return resolveCollectionAccess(
+    source.prisma,
+    { orgId: source.orgId, userId: "worker", userEmail: "worker@example.com" },
+    source.collection.id,
+    "/collections/tasks",
+    action,
+  );
+}

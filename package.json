@@ -41,5 +41,8 @@
   },
   "engines": {
     "bun": ">=1.4.0"
+  },
+  "patchedDependencies": {
+    "casbin@5.51.1": "patches/casbin@5.51.1.patch"
   }
 }

@@ -8,6 +8,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "zod": "^4.1.11"
+    "zod": "^4.1.11",
+    "luxon": "^3.7.2",
+    "rrule": "^2.8.1"
+  },
+  "devDependencies": {
+    "@types/luxon": "^3.7.1"
   }
 }

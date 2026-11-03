@@ -102,7 +102,7 @@ control is enforced on both backends.
 ## Supported collection schema edits
 
 Collections support adding fields, removing fields, and editing descriptions.
-An existing field keeps its declared type, including enum/ref definitions.
+An existing field keeps its declared type and reference target. `update_fields` may add enum values, but may not remove existing values.
 Description edits accept the same type.
 
 Removing a field preserves its stored JSON values. A field name can be reused
@@ -129,3 +129,5 @@ restores the SQLite Prisma client. It also verifies that the generated equality
 predicate can use the GIN index. Run it separately from SQLite tests because
 Prisma client generation selects one provider at a time. These checks establish
 correctness and index eligibility, not a production performance benchmark.
+
+Field options `required`, `min`, `max`, `pattern`, and `unique` apply to subsequent writes, including admin writes. `min`/`max` bound numbers or string lengths; `pattern` is a string regular expression. `update_fields` merges options and preserves unspecified options. `add_fields` rejects existing field names. Optional fields accept null; required fields must be present and non-null. Dates use ISO calendar dates; datetimes normalize to UTC. Uniqueness checks run inside write transactions and see all records, including hidden records and earlier entries in a batch. Concurrent PostgreSQL writes can both pass this application-level check.

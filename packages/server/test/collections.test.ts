@@ -8,7 +8,7 @@ import { Hono } from "hono";
 
 import { loadConfig } from "../src/config";
 import { bootstrapOrgPolicies } from "../src/db/casbin";
-import { validateCollectionRecordData } from "../src/db/collections";
+
 import type { AppEnvironment } from "../src/env";
 import { collectionsRouter } from "../src/routes/collections";
 import { closeServices, createServices } from "../src/services";
@@ -53,6 +53,42 @@ async function createCollectionsApp() {
 }
 
 describe("collections routes", () => {
+  test("creates, describes and replaces expression rules through REST", async () => {
+    const app = await createCollectionsApp();
+    const base = "/v1/orgs/org_test/collections";
+    const rules = [
+      {
+        name: "range",
+        rule: "r.next.data.end > r.next.data.start",
+        message: "Invalid range.",
+      },
+    ];
+    const send = (body: unknown, method = "POST") => ({
+      method,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const created = await app.request(
+      base,
+      send({
+        name: "ranges",
+        schema: { start: "number", end: "number" },
+        validations: rules,
+      }),
+    );
+    expect(created.status).toBe(200);
+    expect(await created.json()).toMatchObject({ validations: rules });
+    expect(await (await app.request(`${base}/ranges`)).json()).toMatchObject({
+      validations: rules,
+    });
+    const replaced = await app.request(
+      `${base}/ranges/schema`,
+      send({ validations: [] }, "PATCH"),
+    );
+    expect(replaced.status).toBe(200);
+    expect(await replaced.json()).toMatchObject({ validations: [] });
+  });
+
   test("creates, lists, describes, and deletes an org-scoped collection", async () => {
     const app = await createCollectionsApp();
     const base = "/v1/orgs/org_test/collections";
@@ -227,12 +263,10 @@ describe("collection record validation", () => {
     const invalid =
       "DTSTART;TZID=Mars/Olympus:20260819T090000\nRRULE:FREQ=DAILY;COUNT=3";
 
-    expect(validateCollectionRecordData({ schedule: valid }, schema)).toEqual(
-      [],
-    );
-    expect(validateCollectionRecordData({ schedule: invalid }, schema)).toEqual(
-      ["Field 'schedule': invalid recurrence value"],
-    );
+    expect(validateRecordData({ schedule: valid }, schema)).toEqual([]);
+    expect(validateRecordData({ schedule: invalid }, schema)).toEqual([
+      "schedule: custom",
+    ]);
   });
 
   test("accepts engine-valid recurrences the shape check rejects", () => {
@@ -244,11 +278,8 @@ describe("collection record validation", () => {
       "EXDATE;TZID=America/Los_Angeles:20260821T090000",
     ].join("\n");
 
-    expect(validateRecordData({ schedule: repeatedExdates }, schema)).toEqual([
-      "Field 'schedule': invalid recurrence value",
-    ]);
-    expect(
-      validateCollectionRecordData({ schedule: repeatedExdates }, schema),
-    ).toEqual([]);
+    expect(validateRecordData({ schedule: repeatedExdates }, schema)).toEqual(
+      [],
+    );
   });
 });

@@ -5,10 +5,9 @@ import { checkPermission, roleSubject } from "./db/casbin";
 import { invalidateMetadata, policyCacheKey } from "./db/cache";
 import { getCollection } from "./db/collections";
 import {
-  encodeGrantOptions,
-  grantOptionSchema,
-  validateGrantOptions,
-} from "./db/grant-options";
+  policyOptionsSchema,
+  validatePolicyOptions,
+} from "./db/policy-options";
 
 export const invitationPermissionsSchema = z
   .array(
@@ -24,7 +23,7 @@ export const invitationPermissionsSchema = z
           "manage",
           "*",
         ]),
-        ...grantOptionSchema,
+        ...policyOptionsSchema,
       })
       .strict(),
   )
@@ -54,7 +53,7 @@ export async function validateInvitationPermissions(
         orgId,
         grant.resource.slice("/collections/".length),
       );
-    await validateGrantOptions(
+    await validatePolicyOptions(
       prisma,
       orgId,
       grant.resource,
@@ -87,7 +86,8 @@ export async function applyInvitationPermissions(
           v0: member.userId,
           v1: grant.resource,
           v2: grant.action,
-          v3: encodeGrantOptions(grant),
+          v3: grant.cond ?? "true",
+          v4: grant.msg ?? "",
         })),
       ];
       for (const rule of rules) {

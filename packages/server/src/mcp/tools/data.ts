@@ -1,3 +1,4 @@
+import { collectionValidationsSchema } from "@lastsaas/shared";
 import { expandSchema, relatedRecordsSchema } from "@lastsaas/shared";
 import { fieldDefinitionSchema } from "@lastsaas/shared";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
@@ -152,16 +153,18 @@ export function registerDataTools(
         .object({
           name: z.string().min(1),
           schema: collectionSchema,
+          validations: collectionValidationsSchema.optional(),
           description: z.string().optional(),
         })
         .strict(),
       annotations: { openWorldHint: false },
     },
-    async ({ name, schema, description }) =>
+    async ({ name, schema, description, validations }) =>
       callRoute("POST", "/collections", {
         name,
         schema,
         description: description ?? "",
+        validations,
       }),
   );
 
@@ -183,6 +186,7 @@ export function registerDataTools(
       inputSchema: z
         .object({
           name: z.string().min(1),
+          validations: collectionValidationsSchema.optional(),
           add_fields: collectionSchema.optional(),
           remove_fields: z.array(z.string()).optional(),
           update_fields: z
@@ -192,8 +196,9 @@ export function registerDataTools(
         .strict(),
       annotations: { openWorldHint: false },
     },
-    async ({ name, add_fields, remove_fields, update_fields }) =>
+    async ({ name, add_fields, remove_fields, update_fields, validations }) =>
       callRoute("PATCH", `/collections/${pathPart(name)}/schema`, {
+        ...(validations === undefined ? {} : { validations }),
         ...(add_fields === undefined ? {} : { add_fields }),
         ...(remove_fields === undefined ? {} : { remove_fields }),
         ...(update_fields === undefined ? {} : { update_fields }),

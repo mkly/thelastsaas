@@ -12,6 +12,8 @@ interface Rule {
   v0: string | null;
   v1: string | null;
   v2: string | null;
+  v3?: string;
+  v4?: string;
 }
 
 function createPrismaFixture() {
@@ -21,16 +23,18 @@ function createPrismaFixture() {
       id: 1,
       orgId: "org_123",
       ptype: "p",
-      v0: "org:org_123:user:admin",
+      v0: "org:org_123:role:admin",
       v1: "/*",
       v2: "*",
+      v3: "true",
+      v4: "",
     },
     {
       id: 2,
       orgId: "org_123",
       ptype: "g",
       v0: "user_admin",
-      v1: "org:org_123:user:admin",
+      v1: "org:org_123:role:admin",
       v2: null,
     },
   ];
@@ -96,12 +100,6 @@ function createPrismaFixture() {
         updatedAt: new Date(),
       }),
     },
-    rowFilter: {
-      findMany: async () => [],
-    },
-    fieldFilter: {
-      findMany: async () => [],
-    },
     member: {
       findMany: async ({ where }: { where: { organizationId: string } }) =>
         members.filter(
@@ -129,6 +127,10 @@ function createPrismaFixture() {
       operation: (client: typeof transaction) => Promise<T>,
     ) => operation(transaction),
   };
+
+  Object.assign(prisma.collection, {
+    findFirstOrThrow: prisma.collection.findUnique,
+  });
 
   return { prisma, rules };
 }
@@ -205,7 +207,7 @@ describe("permission routes", () => {
     expect(listResponse.status).toBe(200);
     expect(await listResponse.json()).toMatchObject({
       status: "ok",
-      policies: expect.arrayContaining([policy]),
+      policies: expect.arrayContaining([{ ...policy, cond: "true", msg: "" }]),
       role_assignments: expect.arrayContaining([
         { user_id: "user_reader", role: "reader" },
       ]),
@@ -280,16 +282,18 @@ describe("collection permission middleware", () => {
         id: 4,
         orgId: "org_123",
         ptype: "p",
-        v0: "org:org_123:user:reader",
+        v0: "org:org_123:role:reader",
         v1: "/collections/*",
         v2: "read",
+        v3: "true",
+        v4: "",
       },
       {
         id: 5,
         orgId: "org_123",
         ptype: "g",
         v0: "user_reader",
-        v1: "org:org_123:user:reader",
+        v1: "org:org_123:role:reader",
         v2: null,
       },
     );

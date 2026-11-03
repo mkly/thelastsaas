@@ -51,7 +51,7 @@ afterEach(async () => {
 });
 
 function permissionRules(resources: readonly string[]) {
-  const role = "org:org_1:user:test-role";
+  const role = "org:org_1:role:test-role";
   return [
     { ptype: "g", v0: "user_1", v1: role, v2: null },
     ...resources.map((resource) => ({
@@ -59,6 +59,8 @@ function permissionRules(resources: readonly string[]) {
       v0: role,
       v1: resource,
       v2: "read",
+      v3: "true",
+      v4: "",
     })),
   ];
 }
@@ -84,6 +86,7 @@ function contextWith(
     storageBytes: 12,
   };
   const prisma = {
+    user: { findUnique: async () => ({ email: "test@example.com" }) },
     casbinRule: {
       findMany: async () => permissionRules(options.permissions ?? []),
     },
@@ -187,14 +190,14 @@ describe("MCP operations tools", () => {
   });
 
   test("rejects oversized base64 upload content as a structured MCP error", async () => {
-    const role = "org:org_1:user:test-role";
+    const role = "org:org_1:role:test-role";
     const context = contextWith({ maxUploadSize: 2 });
     const prisma = context.services.prisma as unknown as {
       casbinRule: { findMany(): Promise<unknown[]> };
     };
     prisma.casbinRule.findMany = async () => [
       { ptype: "g", v0: "user_1", v1: role, v2: null },
-      { ptype: "p", v0: role, v1: "/files", v2: "write" },
+      { ptype: "p", v0: role, v1: "/files", v2: "write", v3: "true", v4: "" },
     ];
     const { client } = await connect(context);
     const result = await client.callTool({

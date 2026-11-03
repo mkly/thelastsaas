@@ -2,7 +2,7 @@
  * Query compiler — the single place where the Where DSL becomes SQL.
  *
  * The compiler produces parameterized SQL for SQLite and PostgreSQL, applies
- * tenant scope, and exposes the policy seams used by row and field filters.
+ * tenant scope, and supports scoped record IDs and permitted query fields.
  * Recurrence expansion is intentionally deferred: `occurs_between` clauses
  * are returned as post-filter descriptors while the SQL remains a safe
  * candidate prefilter.
@@ -268,36 +268,27 @@ export interface Principal {
   orgId: string;
 }
 
-const VARIABLE_TABLE: Record<string, keyof Principal> = {
-  "$user.id": "userId",
-  "$user.email": "userEmail",
-  "$org.id": "orgId",
-};
-
-export function substitute(where: Where, principal: Principal): Where {
-  return walk(where) as Where;
-
+/** Resolve proposed-record values without interpolating them into SQL. */
+export function substitute(where: Where, next: object): Where {
   function walk(node: unknown): unknown {
-    if (typeof node === "string") return resolveString(node);
+    if (typeof node === "string" && node.startsWith("$")) {
+      if (!/^\$next\.[a-zA-Z][a-zA-Z0-9_]*$/.test(node))
+        throw new InvalidQueryError(
+          "Unknown substitution variable; use $next.<field>",
+        );
+      const field = node.slice(6);
+      if (!Object.hasOwn(next, field))
+        throw new InvalidQueryError(`Unknown proposed field '${field}'`);
+      return (next as Record<string, unknown>)[field];
+    }
     if (Array.isArray(node)) return node.map(walk);
-    if (isPlainObject(node)) {
+    if (isPlainObject(node))
       return Object.fromEntries(
         Object.entries(node).map(([key, value]) => [key, walk(value)]),
       );
-    }
     return node;
   }
-
-  function resolveString(value: string): string {
-    if (!value.startsWith("$")) return value;
-    const principalKey = VARIABLE_TABLE[value];
-    if (!principalKey) {
-      throw new InvalidQueryError(
-        `Unknown substitution variable '${value}' (allowed: ${Object.keys(VARIABLE_TABLE).join(", ")})`,
-      );
-    }
-    return principal[principalKey];
-  }
+  return walk(where) as Where;
 }
 
 // ---------------------------------------------------------------------------
@@ -312,9 +303,8 @@ export function compileWhere(
 ): CompiledFragment {
   const requested = compileOptionalNode(where, schema, provider, options);
   // The injected predicate comes from policy code rather than from the caller,
-  // so it is exempt from the caller's field allowlist: a row filter keyed on a
-  // field the requester may not read must still narrow the result set instead
-  // of failing the whole query.
+  // so it may narrow the result set to permitted record IDs independently of
+  // the caller's readable fields.
   const injected = compileOptionalNode(options.extraWhere, schema, provider, {
     payloadOnly: options.payloadOnly,
   });
@@ -621,6 +611,13 @@ function compileFilterOp(
         );
       }
       if (value.length === 0) return sql`1 = 0`;
+      if (field === "id" && !payloadOnly) {
+        // Native IDs are strings. Keep conditional-read scopes in one bind
+        // parameter even when the collection contains thousands of rows.
+        return provider === "postgresql"
+          ? sql`${comparison} = ANY(${value}::text[])`
+          : sql`${comparison} IN (SELECT value FROM json_each(${JSON.stringify(value)}))`;
+      }
       return sql`${comparison} IN (${sql.join(value.map((item) => comparisonParam(item, provider)))})`;
     }
     case "is_null":

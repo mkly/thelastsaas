@@ -1,3 +1,5 @@
+import { addPolicy } from "../src/db/casbin";
+import { resolveCollectionAccess } from "../src/db/collection-access";
 import { jobsFor } from "../src/jobs";
 import { afterEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
@@ -79,7 +81,7 @@ describe(`transaction-composable record create (${provider})`, () => {
     );
     expect(record).toMatchObject({
       collection: "tasks",
-      data: { name: "One", due: "2026-10-10T00:00:00.000Z" },
+      data: { name: "One", due: "2026-10-10" },
       created_by: "worker",
     });
     expect(record).not.toHaveProperty("mutation");
@@ -143,6 +145,13 @@ describe(`transaction-composable record create (${provider})`, () => {
 
   test("mutation snapshots retain full normalized data without leaking through projection", async () => {
     const source = await fixture();
+    const permitted = await access(
+      source,
+      "create",
+      "r.next.data.name == 'Projected'",
+      ["name"],
+      ["name", "secret", "due"],
+    );
     const { single, batch } = await withUnitOfWork(source, async (context) => {
       const single = await insertRecordInTransaction(
         context,
@@ -150,15 +159,7 @@ describe(`transaction-composable record create (${provider})`, () => {
         "tasks",
         { name: "Projected", secret: "Internal", due: "2026-10-10" },
         "worker",
-        undefined,
-        [
-          {
-            where: { name: "Projected", created_by: "worker" },
-            readable: ["name"],
-            writable: ["name", "secret", "due"],
-            checkAfter: true,
-          },
-        ],
+        permitted,
       );
       const batch = await insertRecordsInTransaction(
         context,
@@ -179,7 +180,7 @@ describe(`transaction-composable record create (${provider})`, () => {
       after: {
         name: "Projected",
         secret: "Internal",
-        due: "2026-10-10T00:00:00.000Z",
+        due: "2026-10-10",
       },
       changed_fields: ["due", "name", "secret"],
     });
@@ -203,6 +204,13 @@ describe(`transaction-composable record create (${provider})`, () => {
 
   test("authorization failures roll back other writes and never become partial-validation errors", async () => {
     const source = await fixture();
+    const permitted = await access(
+      source,
+      "create",
+      "r.next.data.name == 'Allowed'",
+      ["name"],
+      ["name"],
+    );
     await expect(
       withUnitOfWork(source, async (context) => {
         await insertRecordInTransaction(context, source.orgId, "tasks", {
@@ -214,11 +222,10 @@ describe(`transaction-composable record create (${provider})`, () => {
           "tasks",
           [{ name: "Allowed" }, { name: "Denied" }],
           "worker",
-          undefined,
-          [{ where: { name: "Allowed" }, checkAfter: true }],
+          permitted,
         );
       }),
-    ).rejects.toThrow("No grant permits this record change");
+    ).rejects.toThrow("Permission denied");
     expect(
       await source.prisma.record.count({ where: { orgId: source.orgId } }),
     ).toBe(0);
@@ -233,10 +240,7 @@ describe(`transaction-composable record create (${provider})`, () => {
           "tasks",
           [{ name: "Allowed" }, { secret: "Denied" }],
           "worker",
-          {
-            readableFields: new Set(["name"]),
-            writableFields: new Set(["name"]),
-          },
+          permitted,
         );
       }),
     ).rejects.toThrow();
@@ -274,3 +278,43 @@ describe(`transaction-composable record create (${provider})`, () => {
     ).toBe(1);
   });
 });
+
+async function access(
+  source: Awaited<ReturnType<typeof fixture>>,
+  action: string,
+  cond: string,
+  readable: string[],
+  writable: string[],
+) {
+  await addPolicy(
+    source.prisma,
+    source.orgId,
+    "worker",
+    "/collections/tasks",
+    action,
+    { cond },
+  );
+  for (const field of readable)
+    await addPolicy(
+      source.prisma,
+      source.orgId,
+      "worker",
+      `/collections/tasks/fields/${field}`,
+      "read",
+    );
+  for (const field of writable)
+    await addPolicy(
+      source.prisma,
+      source.orgId,
+      "worker",
+      `/collections/tasks/fields/${field}`,
+      action,
+    );
+  return resolveCollectionAccess(
+    source.prisma,
+    { orgId: source.orgId, userId: "worker", userEmail: "worker@example.com" },
+    source.collection.id,
+    "/collections/tasks",
+    action,
+  );
+}

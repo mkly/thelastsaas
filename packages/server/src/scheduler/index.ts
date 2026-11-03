@@ -14,7 +14,7 @@ import {
 import { queryProvider } from "../db/provider";
 import { withUnitOfWork } from "../db/unit-of-work";
 import { notificationDeliveryInput } from "../db/notifications";
-import { parseRecurrence } from "../lib/recurrence";
+import { parseRecurrence } from "@lastsaas/shared";
 import { log } from "../logger";
 import type { NotificationQueue } from "../notifications/queue";
 import { maintainQueues } from "../queues/maintenance";

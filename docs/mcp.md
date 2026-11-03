@@ -52,7 +52,7 @@ controls are available.
 
 The `server_info` tool returns the API version and the authenticated `userId`
 and `orgId` (`null` when no organization is active). Authorization is identical to the REST API: collection tools apply
-Casbin permissions plus row and field filters, while administrative tools
+Casbin record conditions and independent field policies, while administrative tools
 require their corresponding management permissions. Tool failures are returned
 as structured MCP errors.
 
@@ -117,23 +117,21 @@ stable tool identifiers.
 | `records batch`             | `records_batch`             |
 | `records aggregate`         | `records_aggregate`         |
 
-| CLI command                                | MCP tool                                                       |
-| ------------------------------------------ | -------------------------------------------------------------- |
-| `permissions list`                         | `permissions_list`                                             |
-| `permissions grant`                        | `permissions_grant`                                            |
-| `permissions revoke`                       | `permissions_revoke`                                           |
-| `permissions assign`                       | `permissions_assign_role`                                      |
-| `permissions unassign`                     | `permissions_unassign_role`                                    |
-| `permissions check`                        | `permissions_check`                                            |
-| `permissions invite`                       | `invitations_create`                                           |
-| `permissions invitations`                  | `invitations_list`                                             |
-| `permissions accept-invite`                | `invitations_accept` (existing members only; see exclusions)   |
-| `permissions cancel-invite`                | `invitations_cancel`                                           |
-| `permissions row-filter set/list/delete`   | `row_filter_set`, `row_filter_list`, `row_filter_delete`       |
-| `permissions field-filter set/list/delete` | `field_filter_set`, `field_filter_list`, `field_filter_delete` |
-| `members list`                             | `members_list`                                                 |
-| `members role-change`                      | `members_change_role`                                          |
-| `members remove`                           | `members_remove`                                               |
+| CLI command                 | MCP tool                                                     |
+| --------------------------- | ------------------------------------------------------------ |
+| `permissions list`          | `permissions_list`                                           |
+| `permissions grant`         | `permissions_grant`                                          |
+| `permissions revoke`        | `permissions_revoke`                                         |
+| `permissions assign`        | `permissions_assign_role`                                    |
+| `permissions unassign`      | `permissions_unassign_role`                                  |
+| `permissions check`         | `permissions_check`                                          |
+| `permissions invite`        | `invitations_create`                                         |
+| `permissions invitations`   | `invitations_list`                                           |
+| `permissions accept-invite` | `invitations_accept` (existing members only; see exclusions) |
+| `permissions cancel-invite` | `invitations_cancel`                                         |
+| `members list`              | `members_list`                                               |
+| `members role-change`       | `members_change_role`                                        |
+| `members remove`            | `members_remove`                                             |
 
 | CLI command                             | MCP tool                                                                       |
 | --------------------------------------- | ------------------------------------------------------------------------------ |
@@ -176,75 +174,57 @@ Local CLI commands and browser flows complement MCP:
 - Use the CLI, browser flow, or REST endpoint to accept an invitation before
   joining an organization. `invitations_accept` operates within an active organization.
 
-## Conditional row and field grants
+## Conditional permissions
 
-`permissions_grant` accepts optional `where` and `fields` on a specific
-`/collections/<name>` resource, for either `user:<id|email>` or `role:<name>`.
-For example, let an agent edit the title and status of tasks it created:
+Policies accept `cond` (default `true`) and `msg` (default empty). Conditions use
+Casbin expressions with `&&`, `||`, comparisons and `in ('draft', 'pending')`.
+`r.obj.data` is the current record, `r.next.data` is the complete proposed record,
+and `r.usr` contains `id`, `email`, and `org`. Creates have empty `r.obj.data`;
+reads and deletes use the current record for both objects.
 
 ```json
 {
-  "subject": "user:<agent-id>",
-  "resource": "/collections/tasks",
+  "subject": "role:sales",
+  "resource": "/collections/quotes",
   "action": "update",
-  "where": { "created_by": "$user.id" },
-  "fields": ["title", "status"]
+  "cond": "r.obj.data.status == 'draft' && r.next.data.status in ('draft', 'pending') && r.next.data.discount <= 10",
+  "msg": "Sales can move drafts to pending with discounts up to 10%."
 }
 ```
 
-Use `permissions_grant` again with `action: "delete"`, the same `where`, and no
-`fields` to allow deleting its own tasks. Grant `create` separately to allow
-new tasks. `write` remains shorthand for both create and update.
+Policies are additive: any matching true condition grants the action. A denied
+write returns messages from applicable policies, or a plain permission error.
+`create`, `update`, `read`, and `delete` are distinct collection-record actions.
+`write` is used by resource APIs that explicitly request it, such as collection
+creation and trigger configuration; it does not imply create or update.
 
-Permissions are additive: no matching grant means no access; any matching grant
-adds access. Omitting `where` allows every row, and omitting `fields` allows
-every collection data field. An empty field list allows no data fields. Standard
-record metadata (`id`, `created_by`, `created_at`, `updated_at`) remains visible
-on readable records. An existing unrestricted admin grant continues to work.
-An unrestricted member grant also continues to work, so replace broad member
-grants when the intention is own-record access. Conditional grants do not need
-an additional unrestricted grant.
-
-Conditions use the existing Where language, including `$user.id`, `$user.email`,
-and `$org.id`. They may compare `created_by` or ordinary collection fields such
-as `owner_id` or `assigned_to`. They require a specific existing collection;
-resource wildcards, `manage`, `*`, and deferred `occurs_between` conditions are
-not supported with grant options. Delete applies to the whole row and rejects
-`fields`.
-
-Each grant keeps its condition and fields together. An update must have a grant
-for every submitted field, matching both the existing and proposed row. It
-cannot gain access by changing an ownership field or moving between two grants.
-Create checks the proposed row, including server-set creator metadata; batch
-requests with an unauthorized record save no records. Read results include only
-fields from grants matching that row. Filtering, sorting, counting, and
-aggregating on a field include only rows where that field is readable; a field
-with no applicable read grant is rejected.
-
-`permissions_list` includes the options. `permissions_revoke` removes the exact
-grant: supply the same `where` and `fields`; omit both to remove only an
-unrestricted grant. Field order does not matter. `permissions_check` reports
-`conditional: true` when access depends on a conditional grant; its resource-level
-answer does not authorize a particular row or field. Export/import preserves
-the options.
-
-The CLI accepts the same options as JSON:
+Field access is independent and does not vary by row. Grant `/collections/quotes/fields/*`
+for all fields, or specific paths such as `/collections/quotes/fields/discount`.
+Use `read` to expose a field and `create` or `update` to allow changes. Field
+conditions may use caller attributes but cannot depend on records. Hidden fields
+cannot be used in filters, sorting, aggregates or recurrence queries.
 
 ```sh
-saas permissions grant --subject 'user:<agent-id>' \
-  --resource /collections/tasks --action update \
-  --where '{"created_by":"$user.id"}' --fields '["title","status"]'
+saas permissions grant --subject role:sales --resource /collections/quotes \
+  --action read --cond 'r.obj.data.owner == r.usr.id'
+saas permissions grant --subject role:sales --resource '/collections/quotes/fields/*' --action read
+saas permissions grant --subject role:sales --resource /collections/quotes/fields/discount --action update
 ```
 
-Role row/field filter tools are resolved as paired grants. Conditional grants
-store their optional metadata in `casbin_rule.v3` and combine permission, row
-conditions, and field access in one operation.
+`permissions_list` returns conditions and messages. Revoke with the exact same
+subject, resource, action, `cond` and `msg`. `permissions_check` reports
+`conditional: true` when the resource has conditional policies; it does not
+approve a particular record or field. `collections_describe` includes the caller's
+applicable record and field policies. Export/import preserves them.
 
-`invitations_create` accepts optional `permissions`, an array of grants with
-`resource`, `action`, and optional `where`/`fields`. For read-only access to a
-reading list, include `[{"resource":"/collections/reading_list","action":"read"}]`.
-The grants are applied when the recipient accepts; no existing account is needed
-to send the invitation. `invitations_list` includes the pending grants.
+`r.obj.refs.customer` and `r.next.refs.customer` contain full data from a referenced
+record; multiple references yield arrays. References are tenant scoped and loaded
+only when an expression uses them. Their values are used only for evaluation.
+A missing attribute cannot grant access; only configured messages reach callers.
+
+`invitations_create` accepts `permissions` entries with `resource`, `action`, and
+optional `cond`/`msg`. Grant record and field paths explicitly. They are applied
+when the recipient accepts, and pending grants appear in `invitations_list`.
 
 ## Record history
 
@@ -262,16 +242,16 @@ whole-queue grants and native claim checks as REST. Organization-bound API keys 
 `x-api-key` and cannot switch organizations. Human OAuth clients use the browser
 flow above. Manage authority does not grant queue payload read.
 
-| CLI (`saas` prefix)                            | MCP tool                                                                                         |
-| ---------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| queues create/list/show/update/delete          | queues_create / queues_list / queues_show / queues_update / queues_delete                        |
-| queues enqueue/claim/ack/nack/extend           | queues_enqueue / queues_claim / queues_ack / queues_nack / queues_extend                         |
-| queues cancel/redrive                          | queues_cancel / queues_redrive                                                                   |
-| schedules create/list/show/update/delete       | schedules_create / schedules_list / schedules_show / schedules_update / schedules_delete         |
-| schedules pause/resume                         | schedules_update with enabled false/true                                                         |
-| triggers create/list/show/update/delete        | triggers_create / triggers_list / triggers_show / triggers_update / triggers_delete              |
-| triggers pause/resume                          | triggers_update with enabled false/true                                                          |
-| transactions execute                           | transactions_execute                                                                             |
+| CLI (`saas` prefix)                      | MCP tool                                                                                 |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------- |
+| queues create/list/show/update/delete    | queues_create / queues_list / queues_show / queues_update / queues_delete                |
+| queues enqueue/claim/ack/nack/extend     | queues_enqueue / queues_claim / queues_ack / queues_nack / queues_extend                 |
+| queues cancel/redrive                    | queues_cancel / queues_redrive                                                           |
+| schedules create/list/show/update/delete | schedules_create / schedules_list / schedules_show / schedules_update / schedules_delete |
+| schedules pause/resume                   | schedules_update with enabled false/true                                                 |
+| triggers create/list/show/update/delete  | triggers_create / triggers_list / triggers_show / triggers_update / triggers_delete      |
+| triggers pause/resume                    | triggers_update with enabled false/true                                                  |
+| transactions execute                     | transactions_execute                                                                     |
 
 Queue tools select `queue`, and settlement uses `job_id`. Schedule/trigger tools
 select `id`. DTO fields are snake_case. Lists accept limit/cursor and return

@@ -34,7 +34,7 @@ import {
   RecurrenceQueryLimitError,
   RecurrenceRecordLimitError,
   RecurrenceWindowLimitError,
-} from "../lib/recurrence";
+} from "@lastsaas/shared";
 import { requireCollectionPermission } from "../middleware/permission";
 
 const dataSchema = z.record(z.string(), z.unknown());
@@ -171,7 +171,6 @@ export const recordsRouter = new Hono<AppEnvironment>()
         context.req.param("name")!,
         body.data.records,
         context.get("userId"),
-        context.get("fieldFilter"),
         context.get("recordGrants"),
       );
       await context.get("audit")("insert_records", "record", null, {
@@ -195,8 +194,6 @@ export const recordsRouter = new Hono<AppEnvironment>()
         body.data.order_by,
         body.data.limit,
         body.data.offset,
-        context.get("rowFilter"),
-        context.get("fieldFilter"),
         context.get("recordGrants"),
         await principalFor(context),
       );
@@ -221,8 +218,6 @@ export const recordsRouter = new Hono<AppEnvironment>()
         context.get("orgId"),
         context.req.param("name")!,
         body.data.where,
-        context.get("rowFilter"),
-        context.get("fieldFilter"),
         context.get("recordGrants"),
         await principalFor(context),
       );
@@ -240,8 +235,6 @@ export const recordsRouter = new Hono<AppEnvironment>()
         context.get("orgId"),
         context.req.param("name")!,
         body.data as AggregateRequest,
-        context.get("rowFilter"),
-        context.get("fieldFilter"),
         context.get("recordGrants"),
         await principalFor(context),
       );
@@ -260,7 +253,6 @@ export const recordsRouter = new Hono<AppEnvironment>()
         context.req.param("name")!,
         body.data.data,
         context.get("userId"),
-        context.get("fieldFilter"),
         context.get("recordGrants"),
       );
       await context.get("audit")("insert_record", "record", result.id, {
@@ -302,8 +294,6 @@ export const recordsRouter = new Hono<AppEnvironment>()
           context.get("orgId"),
           context.req.param("name")!,
           context.req.param("id"),
-          context.get("rowFilter"),
-          context.get("fieldFilter"),
           context.get("recordGrants"),
         );
         const paths = context.req.query("expand");
@@ -330,8 +320,6 @@ export const recordsRouter = new Hono<AppEnvironment>()
         context.req.param("name")!,
         context.req.param("id"),
         body.data.data,
-        context.get("rowFilter"),
-        context.get("fieldFilter"),
         context.get("recordGrants"),
         context.get("userId"),
       );
@@ -351,7 +339,6 @@ export const recordsRouter = new Hono<AppEnvironment>()
         context.get("orgId"),
         context.req.param("name")!,
         id,
-        context.get("rowFilter"),
         context.get("recordGrants"),
         context.get("userId"),
       );

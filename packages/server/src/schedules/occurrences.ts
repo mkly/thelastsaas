@@ -1,5 +1,5 @@
 import { Prisma } from "@prisma/client";
-import { parseRecurrence } from "../lib/recurrence";
+import { parseRecurrence } from "@lastsaas/shared";
 import { executeStatement, queryRows, sql } from "../db/query/kysely";
 import type { UnitOfWork } from "../db/unit-of-work";
 

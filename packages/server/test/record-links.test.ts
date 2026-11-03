@@ -20,7 +20,7 @@ import {
   describeRelationships,
 } from "../src/db/record-expansion";
 import { addPolicy } from "../src/db/casbin";
-import { resolveRecordGrants } from "../src/db/record-grants";
+import { resolveCollectionAccess } from "../src/db/collection-access";
 import { registerDatabaseProvider } from "../src/db/provider";
 import {
   createUpload,
@@ -125,7 +125,7 @@ async function fixture() {
     rmSync(dir, { recursive: true, force: true });
   });
   const grants = (actor = admin, collection = contacts) =>
-    resolveRecordGrants(
+    resolveCollectionAccess(
       db,
       actor,
       collection.id,
@@ -212,7 +212,7 @@ test("references validate targets, preserve list order, and restrict record and 
       { partners: [a.id, a.id] },
       f.admin.userId,
     ),
-  ).rejects.toThrow("unique");
+  ).rejects.toThrow("partners: custom");
   await expect(deleteRecord(f.db, f.orgId, "companies", a.id)).rejects.toThrow(
     "referenced",
   );
@@ -228,8 +228,6 @@ test("references validate targets, preserve list order, and restrict record and 
     "contacts",
     contact.id,
     { company: null, partners: [] },
-    null,
-    null,
     undefined,
     f.admin.userId,
   );
@@ -277,7 +275,35 @@ test("relationship queries filter in SQL before count, aggregate and pagination;
     f.db,
     f.orgId,
     f.reader.userId,
+    "/collections/contacts/*",
+    "read",
+  );
+  await addPolicy(
+    f.db,
+    f.orgId,
+    f.reader.userId,
     "/collections/contacts",
+    "read",
+  );
+  await addPolicy(
+    f.db,
+    f.orgId,
+    f.reader.userId,
+    "/collections/companies/fields/name",
+    "read",
+  );
+  await addPolicy(
+    f.db,
+    f.orgId,
+    f.reader.userId,
+    "/collections/companies/fields/parent",
+    "read",
+  );
+  await addPolicy(
+    f.db,
+    f.orgId,
+    f.reader.userId,
+    "/collections/companies/fields/visible",
     "read",
   );
   await addPolicy(
@@ -286,7 +312,7 @@ test("relationship queries filter in SQL before count, aggregate and pagination;
     f.reader.userId,
     "/collections/companies",
     "read",
-    { where: { visible: true }, fields: ["name", "parent", "visible"] },
+    { cond: "r.obj.data.visible == true" },
   );
   const grants = await f.grants(f.reader);
   const page = await queryRecords(
@@ -297,8 +323,6 @@ test("relationship queries filter in SQL before count, aggregate and pagination;
     "name",
     1,
     1,
-    null,
-    null,
     grants,
     f.reader,
   );
@@ -312,8 +336,6 @@ test("relationship queries filter in SQL before count, aggregate and pagination;
     undefined,
     50,
     0,
-    null,
-    null,
     grants,
     f.reader,
   );
@@ -326,8 +348,6 @@ test("relationship queries filter in SQL before count, aggregate and pagination;
     undefined,
     50,
     0,
-    null,
-    null,
     grants,
     f.reader,
   );
@@ -340,8 +360,6 @@ test("relationship queries filter in SQL before count, aggregate and pagination;
     undefined,
     50,
     0,
-    null,
-    null,
     grants,
     f.reader,
   );
@@ -354,8 +372,6 @@ test("relationship queries filter in SQL before count, aggregate and pagination;
       where: { company: { some: { name: "Allowed" } } },
       metrics: [{ op: "count", as: "total" }],
     },
-    null,
-    null,
     grants,
     f.reader,
   );
@@ -368,8 +384,6 @@ test("relationship queries filter in SQL before count, aggregate and pagination;
     undefined,
     50,
     0,
-    null,
-    null,
     grants,
     f.reader,
   );
@@ -410,8 +424,6 @@ test("relationship queries filter in SQL before count, aggregate and pagination;
       undefined,
       50,
       0,
-      null,
-      null,
       grants,
       f.reader,
     ),
@@ -510,8 +522,6 @@ test("file delete grants can remove detached attachments after retained history 
     "contacts",
     record.id,
     { documents: [] },
-    null,
-    null,
     undefined,
     f.admin.userId,
   );
@@ -666,17 +676,38 @@ test("contextual uploads need record-field authority, remain private to the reco
     f.db,
     f.orgId,
     f.reader.userId,
-    "/collections/contacts",
+    "/collections/contacts/fields/name",
     "read",
-    { where: { visible: true }, fields: ["name", "documents"] },
+  );
+  await addPolicy(
+    f.db,
+    f.orgId,
+    f.reader.userId,
+    "/collections/contacts/fields/documents",
+    "read",
   );
   await addPolicy(
     f.db,
     f.orgId,
     f.reader.userId,
     "/collections/contacts",
-    "write",
-    { where: { visible: true }, fields: ["documents"] },
+    "read",
+    { cond: "r.obj.data.visible == true" },
+  );
+  await addPolicy(
+    f.db,
+    f.orgId,
+    f.reader.userId,
+    "/collections/contacts/fields/documents",
+    "update",
+  );
+  await addPolicy(
+    f.db,
+    f.orgId,
+    f.reader.userId,
+    "/collections/contacts",
+    "update",
+    { cond: "r.obj.data.visible == true" },
   );
   const file = await uploadAttachment(f, record.id, f.reader);
   expect(await listFiles(f.db, f.orgId)).toEqual([]);
@@ -711,8 +742,6 @@ test("contextual uploads need record-field authority, remain private to the reco
     "contacts",
     record.id,
     { documents: [] },
-    null,
-    null,
     undefined,
     f.admin.userId,
   );
@@ -760,9 +789,16 @@ test("file-library permissions cannot expose private attachments and upload comp
     f.db,
     f.orgId,
     f.reader.userId,
+    "/collections/contacts/fields/name",
+    "read",
+  );
+  await addPolicy(
+    f.db,
+    f.orgId,
+    f.reader.userId,
     "/collections/contacts",
     "read",
-    { fields: ["name"] },
+    { cond: "true" },
   );
   const visible = await f
     .appFor(f.reader)
@@ -866,9 +902,30 @@ test("MCP uploads and reads attachments using destination-field access", async (
     f.db,
     f.orgId,
     f.reader.userId,
+    "/collections/contacts/fields/name",
+    "read",
+  );
+  await addPolicy(
+    f.db,
+    f.orgId,
+    f.reader.userId,
+    "/collections/contacts/fields/documents",
+    "read",
+  );
+  await addPolicy(
+    f.db,
+    f.orgId,
+    f.reader.userId,
     "/collections/contacts",
     "read",
-    { fields: ["name", "documents"] },
+    { cond: "true" },
+  );
+  await addPolicy(
+    f.db,
+    f.orgId,
+    f.reader.userId,
+    "/collections/contacts/fields/documents",
+    "update",
   );
   await addPolicy(
     f.db,
@@ -876,7 +933,7 @@ test("MCP uploads and reads attachments using destination-field access", async (
     f.reader.userId,
     "/collections/contacts",
     "update",
-    { fields: ["documents"] },
+    { cond: "true" },
   );
   const server = new McpServer({ name: "attachment-test", version: "1.0.0" });
   const context = { ...f.reader, services: f.services, config: f.config };

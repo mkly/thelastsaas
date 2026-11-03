@@ -1,3 +1,4 @@
+import { jsonRequest, queryRequest } from "../lib/transport";
 import { errorResponse } from "@lastsaas/shared";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -15,14 +16,6 @@ const listMembersSchema = z.object({
 });
 const updateMemberRoleSchema = z.object({ role: memberRoleSchema }).strict();
 
-function invalidRequest(message: string) {
-  return errorResponse("InvalidRequest", message);
-}
-
-function validationMessage(error: z.ZodError): string {
-  return error.issues.map((issue) => issue.message).join("; ");
-}
-
 function failureMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
@@ -30,11 +23,8 @@ function failureMessage(error: unknown, fallback: string): string {
 const manageMembers = requirePermission("manage", () => "/members");
 
 export const memberRouter = new Hono<AppEnvironment>()
-  .get("/", async (context) => {
-    const parsed = listMembersSchema.safeParse(context.req.query());
-    if (!parsed.success) {
-      return context.json(invalidRequest(validationMessage(parsed.error)), 400);
-    }
+  .get("/", queryRequest(listMembersSchema), async (context) => {
+    const parsed = { data: context.req.valid("query") };
 
     const orgId = context.get("orgId");
     const prisma = context.get("services").prisma;
@@ -68,7 +58,7 @@ export const memberRouter = new Hono<AppEnvironment>()
       }),
     ]);
 
-    const rolePrefix = `org:${orgId}:user:`;
+    const rolePrefix = `org:${orgId}:role:`;
     const rolesByUser = new Map<string, string[]>();
     for (const rule of groupingRules) {
       if (!rule.v0 || !rule.v1?.startsWith(rolePrefix)) continue;
@@ -94,62 +84,62 @@ export const memberRouter = new Hono<AppEnvironment>()
       offset,
     });
   })
-  .patch("/:memberId/role", manageMembers, async (context) => {
-    const parsed = updateMemberRoleSchema.safeParse(
-      await context.req.json().catch(() => null),
-    );
-    if (!parsed.success) {
-      return context.json(invalidRequest(validationMessage(parsed.error)), 400);
-    }
+  .patch(
+    "/:memberId/role",
+    manageMembers,
+    jsonRequest(updateMemberRoleSchema),
+    async (context) => {
+      const parsed = { data: context.req.valid("json") };
 
-    const orgId = context.get("orgId");
-    const prisma = context.get("services").prisma;
-    const member = await prisma.member.findFirst({
-      where: { id: context.req.param("memberId"), organizationId: orgId },
-      select: { id: true, userId: true, role: true },
-    });
-    if (!member) {
-      return context.json(errorResponse("NotFound", "Member not found"), 404);
-    }
-    const previousRole = member.role;
-
-    try {
-      await context.get("services").auth.api.updateMemberRole({
-        body: {
-          memberId: member.id,
-          organizationId: orgId,
-          role: parsed.data.role,
-        },
-        headers: context.req.raw.headers,
+      const orgId = context.get("orgId");
+      const prisma = context.get("services").prisma;
+      const member = await prisma.member.findFirst({
+        where: { id: context.req.param("memberId"), organizationId: orgId },
+        select: { id: true, userId: true, role: true },
       });
-      await syncMemberRole(
-        prisma,
-        orgId,
-        member.userId,
-        previousRole,
-        parsed.data.role,
-      );
-    } catch (error) {
-      return context.json(
-        errorResponse(
-          "InvalidRequest",
-          failureMessage(error, "Failed to update member role"),
-        ),
-        400,
-      );
-    }
+      if (!member) {
+        return context.json(errorResponse("NotFound", "Member not found"), 404);
+      }
+      const previousRole = member.role;
 
-    await context.get("audit")("update_member_role", "member", member.id, {
-      user_id: member.userId,
-      previous_role: previousRole,
-      role: parsed.data.role,
-    });
-    return context.json({
-      status: "ok" as const,
-      user_id: member.userId,
-      role: parsed.data.role,
-    });
-  })
+      try {
+        await context.get("services").auth.api.updateMemberRole({
+          body: {
+            memberId: member.id,
+            organizationId: orgId,
+            role: parsed.data.role,
+          },
+          headers: context.req.raw.headers,
+        });
+        await syncMemberRole(
+          prisma,
+          orgId,
+          member.userId,
+          previousRole,
+          parsed.data.role,
+        );
+      } catch (error) {
+        return context.json(
+          errorResponse(
+            "InvalidRequest",
+            failureMessage(error, "Failed to update member role"),
+          ),
+          400,
+        );
+      }
+
+      await context.get("audit")("update_member_role", "member", member.id, {
+        user_id: member.userId,
+        previous_role: previousRole,
+        role: parsed.data.role,
+      });
+      return context.json({
+        status: "ok" as const,
+        user_id: member.userId,
+        role: parsed.data.role,
+      });
+    },
+  )
   .delete("/:memberId", manageMembers, async (context) => {
     const orgId = context.get("orgId");
     const prisma = context.get("services").prisma;

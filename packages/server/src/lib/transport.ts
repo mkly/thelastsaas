@@ -41,7 +41,8 @@ export function transportError(error: unknown) {
   ) {
     const code = error.code as keyof typeof AUTOMATION_ERROR_STATUS;
     const message =
-      error instanceof RequestValidationError
+      error instanceof RequestValidationError ||
+      (error instanceof SchemaValidationError && error.issues)
         ? error.message
         : error instanceof SchemaValidationError
           ? "Invalid request"

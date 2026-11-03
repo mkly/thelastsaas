@@ -16,7 +16,7 @@ import {
   type PageRequest,
 } from "./automation";
 import type { Schema } from "./types";
-import { validateRecordData } from "./validation";
+import { compileRecordSchema } from "./validation";
 import { whereSchema } from "./where";
 
 export interface Queue {
@@ -144,20 +144,9 @@ export type NackRequest = z.infer<typeof nackRequestSchema>;
 export type ExtendRequest = z.infer<typeof extendRequestSchema>;
 export type JobListRequest = z.infer<typeof jobListSchema>;
 
-/** Queue validation rejects underscore/unknown fields, unlike legacy record metadata. */
+/** Queue payloads use the same strict schema and normalization as records. */
 export function queuePayloadSchema(schema: Schema) {
-  return payloadSchema.superRefine((value, ctx) => {
-    for (const field of Object.keys(value)) {
-      if (!Object.hasOwn(schema, field))
-        ctx.addIssue({
-          code: "custom",
-          path: [field],
-          message: "Unknown payload field",
-        });
-    }
-    for (const message of validateRecordData(value, schema))
-      ctx.addIssue({ code: "custom", message });
-  });
+  return compileRecordSchema(schema).pipe(payloadSchema);
 }
 
 /** Implementations own outer transactions; nested producers use the supplied unit of work. */

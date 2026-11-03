@@ -1,3 +1,5 @@
+import { validateCollectionRules } from "./collection-rules";
+import type { CollectionValidation } from "@lastsaas/shared";
 import {
   cachedMetadata,
   collectionCacheKey,
@@ -10,21 +12,16 @@ import { queryAdapter } from "./query/adapters";
 import {
   CollectionExistsError,
   RelationshipConflictError,
-  isMultipleReference,
   CollectionNotFoundError,
   SchemaValidationError,
   applyFieldUpdate,
-  extractFieldType,
   genId,
   isPlainObject,
   validateFieldUpdates,
-  validateRecordData,
   validateSchema,
   type Schema,
 } from "@lastsaas/shared";
 import { Prisma, type PrismaClient } from "@prisma/client";
-
-import { validateRecurrence } from "../lib/recurrence";
 
 function asSchema(value: Prisma.JsonValue): Schema {
   if (!isPlainObject(value)) {
@@ -43,6 +40,7 @@ function serializeCollection(collection: {
   id: string;
   name: string;
   schema: Prisma.JsonValue;
+  validations: Prisma.JsonValue;
   description: string;
   createdAt: Date;
   updatedAt: Date;
@@ -51,6 +49,7 @@ function serializeCollection(collection: {
     id: collection.id,
     name: collection.name,
     schema: asSchema(collection.schema),
+    validations: collection.validations as unknown as CollectionValidation[],
     description: collection.description,
     created_at: collection.createdAt.toISOString(),
     updated_at: collection.updatedAt.toISOString(),
@@ -64,7 +63,9 @@ export async function createCollection(
   name: string,
   schema: Schema,
   description = "",
+  validations: CollectionValidation[] = [],
 ) {
+  validateCollectionRules(validations, schema);
   const errors = validateSchema(schema);
   if (errors.length > 0) throw new SchemaValidationError(errors);
 
@@ -76,18 +77,34 @@ export async function createCollection(
           orgId,
           name,
           schema: schemaJson(schema),
+          validations: validations as unknown as Prisma.InputJsonArray,
           description,
         },
       });
       if (creatorUserId) {
         await transaction.casbinRule.createMany({
-          data: ["read", "write", "manage", "delete"].map((action) => ({
-            orgId,
-            ptype: "p",
-            v0: creatorUserId,
-            v1: `/collections/${name}`,
-            v2: action,
-          })),
+          data: [
+            ...["read", "create", "update", "manage", "delete"].map(
+              (action) => ({
+                orgId,
+                ptype: "p",
+                v0: creatorUserId,
+                v1: `/collections/${name}`,
+                v2: action,
+                v3: "true",
+                v4: "",
+              }),
+            ),
+            ...["read", "create", "update"].map((action) => ({
+              orgId,
+              ptype: "p",
+              v0: creatorUserId,
+              v1: `/collections/${name}/fields/*`,
+              v2: action,
+              v3: "true",
+              v4: "",
+            })),
+          ],
         });
       }
       return created;
@@ -133,6 +150,7 @@ export async function updateCollectionSchema(
   addFields?: Schema,
   removeFields?: string[],
   updateFields?: Record<string, Record<string, unknown>>,
+  validations?: CollectionValidation[],
 ) {
   const collection = await getCollection(prisma, orgId, name);
   const schema = { ...asSchema(collection.schema) };
@@ -141,17 +159,11 @@ export async function updateCollectionSchema(
     const errors = validateSchema(addFields);
     if (errors.length > 0) throw new SchemaValidationError(errors);
     const adapter = queryAdapter(queryProvider(prisma));
-    for (const [field, definition] of Object.entries(addFields)) {
+    for (const field of Object.keys(addFields)) {
       if (Object.hasOwn(schema, field)) {
-        if (
-          extractFieldType(definition) !== extractFieldType(schema[field]!) ||
-          isMultipleReference(definition) !==
-            isMultipleReference(schema[field]!)
-        ) {
-          throw new SchemaValidationError([
-            `Field '${field}': changing an existing field type is unsupported`,
-          ]);
-        }
+        throw new SchemaValidationError([
+          `Field '${field}' already exists (use update_fields to change it)`,
+        ]);
       } else {
         // Removing a field leaves its JSON data intact. Do not let re-adding
         // that name silently reinterpret those values as a different schema.
@@ -185,6 +197,11 @@ export async function updateCollectionSchema(
     ]);
   }
 
+  const rules = validateCollectionRules(
+    validations ?? collection.validations,
+    schema,
+  );
+
   try {
     const updated = await prisma.$transaction(async (tx) => {
       if (removeFields?.length) {
@@ -198,7 +215,10 @@ export async function updateCollectionSchema(
       }
       return tx.collection.update({
         where: { id: collection.id },
-        data: { schema: schemaJson(schema) },
+        data: {
+          schema: schemaJson(schema),
+          validations: rules as unknown as Prisma.InputJsonArray,
+        },
       });
     });
     return serializeCollection(updated);
@@ -297,33 +317,4 @@ export async function getCollectionInTransaction(
   if (!row) throw new CollectionNotFoundError(name);
   asSchema(row.schema);
   return row;
-}
-
-/**
- * Validate data written against a collection schema. Recurrence values use the
- * full RFC 5545 parser rather than the shared package's inexpensive shape
- * check. Record-write routes should use this entry point.
- */
-export function validateCollectionRecordData(
-  data: Record<string, unknown>,
-  schema: Schema,
-): string[] {
-  const errors = validateRecordData(data, schema);
-  for (const [fieldName, fieldDefinition] of Object.entries(schema)) {
-    if (extractFieldType(fieldDefinition) !== "recurrence") continue;
-    const value = data[fieldName];
-    if (typeof value !== "string") continue;
-    // The engine, not the shared shape check, is authoritative here: it accepts
-    // folded lines and repeated EXDATEs that the cheap regex rejects. Drop the
-    // shape verdict for this field and re-decide with the parser.
-    const message = `Field '${fieldName}': invalid recurrence value`;
-    const shapeIndex = errors.indexOf(message);
-    if (shapeIndex !== -1) errors.splice(shapeIndex, 1);
-    try {
-      validateRecurrence(value);
-    } catch {
-      errors.push(message);
-    }
-  }
-  return errors;
 }

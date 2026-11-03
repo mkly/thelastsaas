@@ -17,14 +17,14 @@ import {
 } from "@lastsaas/shared";
 import { Prisma, type PrismaClient } from "@prisma/client";
 import { getCollectionInTransaction } from "../db/collections";
-import { filterReadableData } from "../db/fieldFilters";
+import { filterReadableData } from "../db/field-access";
 import { queryProvider } from "../db/provider";
 import { executeStatement, queryRows, sql } from "../db/query/kysely";
 import {
-  evaluateGrants,
-  grantFieldFilter,
-  resolveRecordGrants,
-} from "../db/record-grants";
+  checkRecordAccess,
+  projectAccess,
+  resolveCollectionAccess,
+} from "../db/collection-access";
 import {
   deleteRecordInTransaction,
   insertRecordInTransaction,
@@ -82,7 +82,7 @@ async function recordGrants(
     context.orgId,
     collectionName,
   );
-  const grants = await resolveRecordGrants(
+  const grants = await resolveCollectionAccess(
     unit.db,
     context,
     collection.id,
@@ -114,7 +114,7 @@ async function replay(
       operation.collection,
       operation.op === "record.delete" ? "delete" : "read",
     );
-    const matches = await evaluateGrants(
+    const matches = await checkRecordAccess(
       unit.db,
       grants,
       {
@@ -134,10 +134,7 @@ async function replay(
         ...result,
         record: {
           ...result.record,
-          data: filterReadableData(
-            result.record.data,
-            grantFieldFilter(allowed),
-          ),
+          data: filterReadableData(result.record.data, projectAccess(allowed)),
         },
       });
     } else results.push(result);
@@ -213,7 +210,6 @@ export function createTransactionService(
                     context.orgId,
                     operation.collection,
                     operation.id,
-                    undefined,
                     grants,
                     context.userId,
                   );
@@ -230,7 +226,6 @@ export function createTransactionService(
                           operation.collection,
                           operation.data,
                           context.userId,
-                          undefined,
                           grants,
                         )
                       : await updateRecordInTransaction(
@@ -239,8 +234,6 @@ export function createTransactionService(
                           operation.collection,
                           operation.id,
                           operation.data,
-                          undefined,
-                          undefined,
                           grants,
                           context.userId,
                         );

@@ -26,14 +26,16 @@ function createSystemApp(prisma: Record<string, unknown>) {
     findMany: mock().mockResolvedValue([
       {
         ptype: "p",
-        v0: "org:org_123:user:admin",
+        v0: "org:org_123:role:admin",
         v1: "/*",
         v2: "*",
+        v3: "true",
+        v4: "",
       },
       {
         ptype: "g",
         v0: user.id,
-        v1: "org:org_123:user:admin",
+        v1: "org:org_123:role:admin",
         v2: null,
       },
     ]),
@@ -41,7 +43,15 @@ function createSystemApp(prisma: Record<string, unknown>) {
 
   return createApp({
     config: {} as never,
-    services: { auth, prisma: { member, casbinRule, ...prisma } } as never,
+    services: {
+      auth,
+      prisma: {
+        member,
+        casbinRule,
+        user: { findUnique: async () => user },
+        ...prisma,
+      },
+    } as never,
   });
 }
 

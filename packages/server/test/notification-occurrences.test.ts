@@ -182,7 +182,7 @@ describe("atomic notification occurrences", () => {
                 orgId: "occurrence-org",
                 ptype: "g",
                 v0: "bob",
-                v1: "org:occurrence-org:user:team",
+                v1: "org:occurrence-org:role:team",
               },
             });
           return enqueue(...args);

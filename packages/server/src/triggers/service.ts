@@ -23,15 +23,10 @@ import {
 import { Prisma, type PrismaClient } from "@prisma/client";
 import { hasPermission } from "../db/casbin";
 import { queryProvider } from "../db/provider";
-import { compileWhere, substitute } from "../db/query/compile";
+import { compileWhere } from "../db/query/compile";
 import { executeStatement, queryRows, sql } from "../db/query/kysely";
-import { resolveRecordGrants } from "../db/record-grants";
-import {
-  grantProjection,
-  grantWhere,
-  metadataFields,
-  queryGrantWhere,
-} from "../db/resource-grants";
+import { resolveCollectionAccess } from "../db/collection-access";
+import { metadataFields } from "../db/collection-access";
 import { withUnitOfWork, type UnitOfWork } from "../db/unit-of-work";
 import {
   auditQueueConfiguration,
@@ -127,7 +122,7 @@ export async function validateTriggerConfiguration(
   const queue = await lockQueue(unit, creator, parsed.queue);
   const sourceSchema = collection.schema as Schema;
   const targetSchema = queue.schema as Schema;
-  const readGrants = await resolveRecordGrants(
+  const readGrants = await resolveCollectionAccess(
     unit.db,
     creator,
     collection.id,
@@ -137,7 +132,6 @@ export async function validateTriggerConfiguration(
   if (!readGrants.length) throw new PermissionDeniedError();
   await authorizeQueueAction(unit.db, creator, queue.name, "create");
   // Compile all retained row constraints now, so stale/invalid grants fail closed.
-  grantProjection(readGrants, sourceSchema, unit.provider);
   const sourceFields = new Set<string>();
   const sourceDataFields = new Set<string>();
   const requireSource = (field: string) => {
@@ -147,17 +141,12 @@ export async function validateTriggerConfiguration(
     sourceDataFields.add(field);
   };
   for (const field of parsed.watched_fields ?? []) requireSource(field);
-  const compiled = compileWhere(
-    parsed.where && substitute(parsed.where, creator),
-    sourceSchema,
-    unit.provider,
-    {
-      isFieldAllowed: (field) => {
-        sourceFields.add(field);
-        return true;
-      },
+  const compiled = compileWhere(parsed.where, sourceSchema, unit.provider, {
+    isFieldAllowed: (field) => {
+      sourceFields.add(field);
+      return true;
     },
-  );
+  });
   if (compiled.postFilters.length)
     throw new SchemaValidationError([
       "Deferred recurrence predicates are not supported by triggers",
@@ -186,13 +175,18 @@ export async function validateTriggerConfiguration(
   }
   // The frozen schema grammar has no required modifier; omitted/null fields
   // remain allowed. Literal types and byte bounds still use enqueue validation.
-  parse(queuePayloadSchema(targetSchema), literals);
+  parse(
+    queuePayloadSchema(
+      Object.fromEntries(
+        Object.keys(literals).map((field) => [field, targetSchema[field]!]),
+      ),
+    ),
+    literals,
+  );
   const deniedRead = [...sourceFields].filter(
     (field) =>
       (sourceDataFields.has(field) || !metadataFields.has(field)) &&
-      !readGrants.some(
-        (g) => g.readable === undefined || g.readable.includes(field),
-      ),
+      !readGrants.some((g) => g.readable.includes(field)),
   );
   if (deniedRead.length) throw new FieldPermissionDeniedError(deniedRead);
   return {
@@ -201,18 +195,6 @@ export async function validateTriggerConfiguration(
     readGrants,
     sourceFields,
     sourceDataFields,
-    readWhere: {
-      and: [
-        queryGrantWhere(readGrants, sourceFields),
-        ...[...sourceDataFields].map((field) =>
-          grantWhere(
-            readGrants.filter(
-              (g) => g.readable === undefined || g.readable.includes(field),
-            ),
-          ),
-        ),
-      ],
-    },
   };
 }
 

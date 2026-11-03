@@ -5,13 +5,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Schema, TriggerCreate, TriggerUpdate } from "@lastsaas/shared";
-import {
-  addPolicy,
-  removePolicy,
-  assignRole,
-  roleSubject,
-} from "../src/db/casbin";
-import { evaluateGrants } from "../src/db/resource-grants";
+import { addPolicy, removePolicy } from "../src/db/casbin";
+import { checkRecordAccess } from "../src/db/collection-access";
 import {
   createTriggerService,
   validateTriggerConfiguration,
@@ -95,6 +90,7 @@ async function fixture() {
   const permissions = async () => {
     await grant("/triggers", "write");
     await grant("/collections/tickets", "read");
+    await grant("/collections/tickets/fields/*", "read");
     await grant("/queues/jobs", "create");
   };
   const service = createTriggerService(prisma, "sqlite");
@@ -289,11 +285,12 @@ describe("collection trigger configuration", () => {
       code: "PermissionDeniedError",
     });
     await grant("/collections/tickets", "read");
+    await grant("/collections/tickets/fields/*", "read");
     await grant("/queues/jobs", "manage");
     await expect(service.create(context, input)).rejects.toMatchObject({
       code: "PermissionDeniedError",
     });
-    await grant("/queues/jobs", "write");
+    await grant("/queues/jobs", "create");
     const row = await service.create(context, input);
     await expect(service.show(context, row.id)).rejects.toMatchObject({
       code: "PermissionDeniedError",
@@ -305,7 +302,7 @@ describe("collection trigger configuration", () => {
       code: "PermissionDeniedError",
     });
     expect((await service.list(context, { limit: 100 })).items).toEqual([]);
-    await grant(`/triggers/${row.id}`, "write");
+    await grant(`/triggers/${row.id}`, "update");
     await expect(
       service.update(context, row.id, { enabled: false }),
     ).resolves.toHaveProperty("status", "paused");
@@ -318,7 +315,8 @@ describe("collection trigger configuration", () => {
   test("mapped, watched and predicate fields require collection source readability", async () => {
     const { service, grant, input, prisma } = await fixture();
     await grant("/triggers", "write");
-    await grant("/collections/tickets", "read", { fields: ["title"] });
+    await grant("/collections/tickets/fields/title", "read");
+    await grant("/collections/tickets", "read", { cond: "true" });
     await grant("/queues/jobs", "create");
     for (const patch of [
       { mapping: { title: { kind: "after", field: "private" } } },
@@ -334,7 +332,8 @@ describe("collection trigger configuration", () => {
     expect(await prisma.collectionTrigger.count()).toBe(0);
     await expect(service.create(context, input)).resolves.toHaveProperty("id");
     // Additive granting roles can expose another field; source constraints still apply per row.
-    await grant("/collections/tickets", "read", { fields: ["private"] });
+    await grant("/collections/tickets/fields/private", "read");
+    await grant("/collections/tickets", "read", { cond: "true" });
     await expect(
       service.create(context, {
         ...input,
@@ -343,12 +342,12 @@ describe("collection trigger configuration", () => {
     ).resolves.toHaveProperty("id");
   });
 
-  test("preserves collection row-dependent field reads and substitutions", async () => {
+  test("preserves conditional collection reads and caller attributes", async () => {
     const { service, grant, input, prisma } = await fixture();
     await grant("/triggers", "write");
+    await grant("/collections/tickets/fields/title", "read");
     await grant("/collections/tickets", "read", {
-      where: { private: "$user.email" },
-      fields: ["title"],
+      cond: "r.obj.data.private == r.usr.email",
     });
     await grant("/queues/jobs", "create");
     // Dynamic row checks wait for the mutation snapshot; configuration does not drop them.
@@ -359,12 +358,12 @@ describe("collection trigger configuration", () => {
         context,
         input,
       );
-      expect(JSON.stringify(validated.readWhere)).toContain(context.userEmail);
+      expect(validated.readGrants).toHaveLength(1);
       for (const [email, expected] of [
         [context.userEmail, true],
         ["other", false],
       ] as const) {
-        const result = await evaluateGrants(
+        const result = await checkRecordAccess(
           db,
           validated.readGrants,
           {
@@ -380,45 +379,6 @@ describe("collection trigger configuration", () => {
         expect(result).toEqual([expected]);
       }
     });
-  });
-
-  test("uses legacy role row and field filters for configuration", async () => {
-    const { prisma, service, grant, input } = await fixture();
-    await grant("/triggers", "write");
-    await grant("/queues/jobs", "create");
-    await assignRole(prisma, "org", "creator", "reader");
-    await addPolicy(
-      prisma,
-      "org",
-      roleSubject("org", "reader"),
-      "/collections/tickets",
-      "read",
-    );
-    await prisma.fieldFilter.create({
-      data: {
-        id: "filter",
-        orgId: "org",
-        collectionId: "org-tickets",
-        role: "reader",
-        action: "read",
-        readableFields: ["title"],
-        writableFields: [],
-      },
-    });
-    await prisma.rowFilter.create({
-      data: {
-        id: "row",
-        orgId: "org",
-        collectionId: "org-tickets",
-        role: "reader",
-        action: "read",
-        condition: { private: "$user.email" },
-      },
-    });
-    await expect(
-      service.create(context, { ...input, watched_fields: ["private"] }),
-    ).rejects.toMatchObject({ code: "FieldPermissionDeniedError" });
-    await expect(service.create(context, input)).resolves.toHaveProperty("id");
   });
 
   test("admin edits retain original creator and cannot use admin grants after creator revocation", async () => {
@@ -510,6 +470,7 @@ describe("collection trigger configuration", () => {
       },
     });
     await grant("/collections/other", "read");
+    await grant("/collections/other/fields/*", "read");
     const other = await service.create(context, {
       ...input,
       collection: "other",
@@ -582,7 +543,7 @@ describe("collection trigger configuration", () => {
     ).rejects.toMatchObject({ code: "SchemaValidationError" });
   });
 
-  test("edits revalidate current source grants and destination schemas; legacy collection names remain supported", async () => {
+  test("edits revalidate current source grants and destination schemas", async () => {
     const { prisma, service, permissions, input, grant } = await fixture();
     await permissions();
     const row = await service.create(context, input);
@@ -598,6 +559,7 @@ describe("collection trigger configuration", () => {
       service.update(context, row.id, { enabled: true }),
     ).rejects.toMatchObject({ code: "PermissionDeniedError" });
     await grant("/collections/tickets", "read");
+    await grant("/collections/tickets/fields/*", "read");
     await prisma.queue.update({
       where: { id: "org-jobs" },
       data: { schema: { title: "number" } },
@@ -609,18 +571,6 @@ describe("collection trigger configuration", () => {
       where: { id: "org-jobs" },
       data: { schema: { title: "string" } },
     });
-    await prisma.collection.create({
-      data: {
-        id: "legacy",
-        orgId: "org",
-        name: "old-name",
-        schema: { title: "string" },
-      },
-    });
-    await grant("/collections/old-name", "read");
-    expect(
-      await service.update(context, row.id, { collection: "old-name" }),
-    ).toMatchObject({ collection: "old-name", created_by: "creator" });
   });
 
   test("configuration and audit are atomic on persistence failure", async () => {

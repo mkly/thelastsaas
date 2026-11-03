@@ -1,3 +1,9 @@
+import {
+  createCollection,
+  updateCollectionSchema,
+  describeCollection,
+} from "../src/db/collections";
+import { insertRecord } from "../src/db/records";
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -43,15 +49,17 @@ async function createRecordsApp(schema: Schema) {
       {
         orgId: "org_test",
         ptype: "p",
-        v0: "org:org_test:user:admin",
+        v0: "org:org_test:role:admin",
         v1: "/*",
         v2: "*",
+        v3: "true",
+        v4: "",
       },
       {
         orgId: "org_test",
         ptype: "g",
         v0: "user_test",
-        v1: "org:org_test:user:admin",
+        v1: "org:org_test:role:admin",
       },
     ],
   });
@@ -80,6 +88,211 @@ const jsonRequest = (body: unknown): RequestInit => ({
 });
 
 describe("records routes", () => {
+  test("collection expression rules constrain admin writes and replace atomically", async () => {
+    const { app, services } = await createRecordsApp({
+      start: "number",
+      end: "number",
+      status: "enum:draft,approved",
+    });
+    const base = "/v1/orgs/org_test/collections/contacts/records";
+    const rules = [
+      {
+        name: "range",
+        rule: "r.next.data.end > r.next.data.start",
+        message: "End must follow start.",
+      },
+      {
+        name: "no_reopen",
+        rule: "r.obj.data.status != 'approved' || r.next.data.status == 'approved'",
+        message: "Approved records cannot reopen.",
+      },
+    ];
+    await updateCollectionSchema(
+      services.prisma,
+      "org_test",
+      "contacts",
+      undefined,
+      undefined,
+      undefined,
+      rules,
+    );
+    expect(
+      (await describeCollection(services.prisma, "org_test", "contacts"))
+        .validations,
+    ).toEqual(rules);
+    const denied = await app.request(
+      base,
+      jsonRequest({ data: { start: 10, end: 5, status: "draft" } }),
+    );
+    expect(denied.status).toBe(400);
+    expect(await denied.text()).toContain("End must follow start.");
+    const created = await app.request(
+      base,
+      jsonRequest({ data: { start: 1, end: 2, status: "approved" } }),
+    );
+    expect(created.status).toBe(200);
+    const record = (await created.json()) as { id: string };
+    const update = await app.request(`${base}/${record.id}`, {
+      ...jsonRequest({ data: { status: "draft" } }),
+      method: "PATCH",
+    });
+    expect(update.status).toBe(400);
+    expect(await update.text()).toContain("Approved records cannot reopen.");
+    expect(await services.prisma.record.count()).toBe(1);
+    expect(
+      (
+        await services.prisma.record.findUniqueOrThrow({
+          where: { id: record.id },
+        })
+      ).data,
+    ).toMatchObject({ status: "approved" });
+    const batch = await app.request(
+      `${base}/batch`,
+      jsonRequest({
+        records: [
+          { start: 2, end: 3, status: "draft" },
+          { start: 3, end: 2, status: "draft" },
+        ],
+      }),
+    );
+    expect(await batch.json()).toMatchObject({
+      inserted: 1,
+      errors: [{ index: 1, errors: ["End must follow start."] }],
+    });
+    await expect(
+      updateCollectionSchema(
+        services.prisma,
+        "org_test",
+        "contacts",
+        undefined,
+        undefined,
+        undefined,
+        [{ name: "bad", rule: "r.next.data.", message: "invalid" }],
+      ),
+    ).rejects.toThrow("Invalid rule expression");
+    expect(
+      (await describeCollection(services.prisma, "org_test", "contacts"))
+        .validations,
+    ).toEqual(rules);
+    await updateCollectionSchema(
+      services.prisma,
+      "org_test",
+      "contacts",
+      undefined,
+      undefined,
+      undefined,
+      [],
+    );
+    expect(
+      (
+        await app.request(`${base}/${record.id}`, {
+          ...jsonRequest({ data: { status: "draft" } }),
+          method: "PATCH",
+        })
+      ).status,
+    ).toBe(200);
+  });
+
+  test("related-record validation uses full target data and reports only its message", async () => {
+    const { app, services } = await createRecordsApp({
+      customer: "ref:customers",
+      discount: "number",
+    });
+    await createCollection(services.prisma, "org_test", null, "customers", {
+      limit: "number",
+      secret: "string",
+    });
+    const customer = await insertRecord(
+      services.prisma,
+      "org_test",
+      "customers",
+      { limit: 10, secret: "private-target" },
+    );
+    await updateCollectionSchema(
+      services.prisma,
+      "org_test",
+      "contacts",
+      undefined,
+      undefined,
+      undefined,
+      [
+        {
+          name: "limit",
+          rule: "r.next.data.discount <= r.next.refs.customer.limit",
+          message: "Discount exceeds customer limit.",
+        },
+      ],
+    );
+    const base = "/v1/orgs/org_test/collections/contacts/records";
+    const result = await app.request(
+      base,
+      jsonRequest({ data: { customer: customer.id, discount: 20 } }),
+    );
+    expect(result.status).toBe(400);
+    const text = await result.text();
+    expect(text).toContain("Discount exceeds customer limit.");
+    expect(text).not.toContain("private-target");
+    expect(
+      (
+        await app.request(
+          base,
+          jsonRequest({ data: { customer: customer.id, discount: 5 } }),
+        )
+      ).status,
+    ).toBe(200);
+    await expect(
+      updateCollectionSchema(
+        services.prisma,
+        "org_test",
+        "contacts",
+        undefined,
+        ["customer"],
+      ),
+    ).rejects.toThrow("reference field");
+  });
+
+  test("enforces validation and uniqueness for admins, batches, and updates", async () => {
+    const { app } = await createRecordsApp({
+      email: {
+        type: "string",
+        required: true,
+        unique: true,
+        pattern: "^[^@]+@[^@]+$",
+      },
+      discount: { type: "number", min: 0, max: 100 },
+    });
+    const base = "/v1/orgs/org_test/collections/contacts/records";
+    for (const data of [
+      { discount: 10 },
+      { email: "invalid" },
+      { email: "a@b", discount: 101 },
+    ])
+      expect((await app.request(base, jsonRequest({ data }))).status).toBe(400);
+    const first = await app.request(
+      base,
+      jsonRequest({ data: { email: "a@b" } }),
+    );
+    expect(first.status).toBe(200);
+    const body = (await first.json()) as { id: string };
+    expect(
+      (await app.request(base, jsonRequest({ data: { email: "a@b" } }))).status,
+    ).toBe(400);
+    expect(
+      (
+        await app.request(`${base}/${body.id}`, {
+          ...jsonRequest({ data: { email: "a@b" } }),
+          method: "PATCH",
+        })
+      ).status,
+    ).toBe(200);
+    const batch = await app.request(
+      `${base}/batch`,
+      jsonRequest({ records: [{ email: "c@d" }, { email: "c@d" }] }),
+    );
+    expect(batch.status).toBe(200);
+    expect(await batch.json()).toMatchObject({ inserted: 1 });
+  });
+
   test("invalid query operands and undeclared inherited fields return 400", async () => {
     const { app } = await createRecordsApp({
       name: "string",
@@ -144,7 +357,7 @@ describe("records routes", () => {
         collection: "contacts",
         created_by: "user_test",
         data: expect.objectContaining({
-          due: "2026-08-19T00:00:00.000Z",
+          due: "2026-08-19",
           starts_at: "2026-08-19T16:30:00.000Z",
         }),
       }),
@@ -459,4 +672,124 @@ describe("records routes", () => {
       expect.objectContaining({ error: "RECURRENCE_WINDOW_LIMIT" }),
     );
   });
+});
+
+test("query validation prevents overlaps, excludes the updated record and sees accepted batch rows", async () => {
+  const { app, services } = await createRecordsApp({
+    equipment: "string",
+    start: "number",
+    end: "number",
+    status: "string",
+  });
+  await updateCollectionSchema(
+    services.prisma,
+    "org_test",
+    "contacts",
+    undefined,
+    undefined,
+    undefined,
+    [
+      {
+        name: "no_overlap",
+        count: {
+          where: {
+            and: [
+              { equipment: "$next.equipment" },
+              { start: { lt: "$next.end" } },
+              { end: { gt: "$next.start" } },
+              { status: { not: "cancelled" } },
+            ],
+          },
+        },
+        max: 0,
+        message: "Equipment is already booked.",
+      },
+    ],
+  );
+  const base = "/v1/orgs/org_test/collections/contacts/records";
+  const data = { equipment: "A", start: 1, end: 3, status: "booked" };
+  const first = await app.request(base, jsonRequest({ data }));
+  expect(first.status).toBe(200);
+  const row = await first.json();
+  const denied = await app.request(
+    base,
+    jsonRequest({ data: { ...data, start: 2, end: 4 } }),
+  );
+  expect(denied.status).toBe(400);
+  expect(await denied.text()).toContain("Equipment is already booked.");
+  expect(
+    (
+      await app.request(`${base}/${row.id}`, {
+        ...jsonRequest({ data: { end: 4 } }),
+        method: "PATCH",
+      })
+    ).status,
+  ).toBe(200);
+  const batch = await app.request(
+    `${base}/batch`,
+    jsonRequest({
+      records: [
+        { ...data, equipment: "B" },
+        { ...data, equipment: "B" },
+      ],
+    }),
+  );
+  expect(await batch.json()).toMatchObject({
+    inserted: 1,
+    errors: [{ index: 1, errors: ["Equipment is already booked."] }],
+  });
+  expect(await services.prisma.record.count()).toBe(2);
+});
+
+test("sum rules include proposed values, exclude prior values and apply to admins", async () => {
+  const { app, services } = await createRecordsApp({
+    item: "string",
+    qty: "number",
+  });
+  await updateCollectionSchema(
+    services.prisma,
+    "org_test",
+    "contacts",
+    undefined,
+    undefined,
+    undefined,
+    [
+      {
+        name: "stock",
+        sum: { field: "qty", where: { item: "$next.item" } },
+        min: 0,
+        message: "Stock cannot be negative.",
+      },
+    ],
+  );
+  const base = "/v1/orgs/org_test/collections/contacts/records";
+  const first = await app.request(
+    base,
+    jsonRequest({ data: { item: "A", qty: 5 } }),
+  );
+  const row = await first.json();
+  expect(first.status).toBe(200);
+  expect(
+    (await app.request(base, jsonRequest({ data: { item: "A", qty: -4 } })))
+      .status,
+  ).toBe(200);
+  expect(
+    (await app.request(base, jsonRequest({ data: { item: "B", qty: -1 } })))
+      .status,
+  ).toBe(400);
+  const denied = await app.request(`${base}/${row.id}`, {
+    ...jsonRequest({ data: { qty: 3 } }),
+    method: "PATCH",
+  });
+  expect(denied.status).toBe(400);
+  expect(await denied.text()).toContain("Stock cannot be negative.");
+  expect(
+    (
+      await app.request(`${base}/${row.id}`, {
+        ...jsonRequest({ data: { qty: 4 } }),
+        method: "PATCH",
+      })
+    ).status,
+  ).toBe(200);
+  expect(await services.prisma.record.count()).toBe(2);
 });

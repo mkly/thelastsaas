@@ -22,9 +22,9 @@ saas orgs use <org-id>
 
 # Collections (alias: c)
 saas collections list
-saas collections create <name> --schema <json> [--description <text>]
+saas collections create <name> --schema <json> [--description <text>] [--validations <json>]
 saas collections describe <name>
-saas collections update-schema <name> [--add <json>] [--remove <fields>] [--update <json>]
+saas collections update-schema <name> [--add <json>] [--remove <fields>] [--update <json>] [--validations <json>]
 saas collections delete <name> --confirm
 
 # Records (alias: r)
@@ -42,17 +42,11 @@ saas records aggregate <collection> [--where <json>] [--group-by <fields>] --met
 
 # Policies and filters (alias: p)
 saas permissions list
-saas permissions grant --subject <subject> --resource <path> --action <action>
-saas permissions revoke --subject <subject> --resource <path> --action <action>
+saas permissions grant --subject <subject> --resource <path> --action <action> [--cond <expression>] [--msg <text>]
+saas permissions revoke --subject <subject> --resource <path> --action <action> [--cond <expression>] [--msg <text>]
 saas permissions assign --user <id-or-email> --role <name>
 saas permissions unassign --user <id-or-email> --role <name>
 saas permissions check --user <id-or-email> --resource <path> --action <action>
-saas permissions row-filter set --collection <name> --role <name> --action <action> --condition <where-json>
-saas permissions row-filter list [--collection <name>]
-saas permissions row-filter delete <id>
-saas permissions field-filter set --collection <name> --role <name> --action <action> --readable-fields <json-array> --writable-fields <json-array>
-saas permissions field-filter list [--collection <name>]
-saas permissions field-filter delete <id>
 
 # Membership (alias: m)
 saas members list [--role <role>] [--search <query>] [--limit <n>] [--offset <n>]
@@ -171,7 +165,7 @@ saas permissions invite --email reader@example.com --permissions '[{"resource":"
 ```
 
 Optional `--permissions` accepts an array of grants (`resource`, `action`, and
-optional `where`/`fields`). Grants are saved on the invitation and applied when
+optional `cond`/`msg`). Grants are saved on the invitation and applied when
 it is accepted. Setting grants requires permission to manage permissions.
 `permissions invitations --json` includes the pending grants.
 

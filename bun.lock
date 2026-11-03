@@ -34,6 +34,7 @@
         "@better-auth/api-key": "1.7.1",
         "@better-auth/mcp": "1.7.1",
         "@better-auth/oauth-provider": "1.7.1",
+        "@casbin/expression-eval": "5.3.0",
         "@hono/mcp": "^0.3.2",
         "@hono/zod-validator": "0.9.1",
         "@lastsaas/shared": "workspace:*",
@@ -71,9 +72,17 @@
       "name": "@lastsaas/shared",
       "version": "0.0.0",
       "dependencies": {
+        "luxon": "^3.7.2",
+        "rrule": "^2.8.1",
         "zod": "^4.1.11",
       },
+      "devDependencies": {
+        "@types/luxon": "^3.7.1",
+      },
     },
+  },
+  "patchedDependencies": {
+    "casbin@5.51.1": "patches/casbin@5.51.1.patch",
   },
   "packages": {
     "@aws-sdk/checksums": ["@aws-sdk/checksums@3.1001.0", "", { "dependencies": { "@aws-sdk/core": "^3.978.0", "@aws-sdk/types": "^3.974.5", "@smithy/core": "^3.33.3", "@smithy/types": "^4.17.2", "tslib": "^2.6.2" } }, "sha512-6uTniZc87q+B5eXouGTl+7Tmc482rEeCcvxpsvREP8EfF0gvloRZ41UOA9sbSJlyy8TbqIBXb3kKfKarEArUQA=="],

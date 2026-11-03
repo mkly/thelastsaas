@@ -171,6 +171,14 @@ for (const transport of ["REST", "MCP"] as const) {
       ]);
     }
     async function grant(action: string, options = {}) {
+      if (!Object.keys(options).length)
+        await addPolicy(
+          services.prisma,
+          "one",
+          "worker",
+          "/collections/tasks/fields/*",
+          action,
+        );
       await addPolicy(
         services.prisma,
         "one",
@@ -215,6 +223,13 @@ for (const transport of ["REST", "MCP"] as const) {
     // ingress validation and replay projection below.
     test("later permission denial rolls back a service-account write", async () => {
       await grant("create");
+      await addPolicy(
+        services.prisma,
+        "one",
+        "worker",
+        "/collections/tasks/fields/*",
+        "read",
+      );
       await grant("read");
       const failed = await call(
         { operations: [create, note], idempotency_key: "denial" },
@@ -225,12 +240,19 @@ for (const transport of ["REST", "MCP"] as const) {
       expect(await counts()).toEqual([0, 0, 0, 0]);
       // Preserve the distinct field-denial envelope without rebuilding the
       // service's 25-operation and rollback matrix at each transport.
-      await grant("create", { fields: ["title"] });
+      await addPolicy(
+        services.prisma,
+        "one",
+        "worker",
+        "/collections/tasks/fields/title",
+        "create",
+      );
+      await grant("create", { cond: "true" });
       await removePolicy(
         services.prisma,
         "one",
         "worker",
-        "/collections/tasks",
+        "/collections/tasks/fields/*",
         "create",
       );
       const fieldDenied = await call({ operations: [create] }, "worker");
@@ -240,17 +262,33 @@ for (const transport of ["REST", "MCP"] as const) {
     });
     test("row/field constraints and revocation apply to idempotent replay", async () => {
       await grant("create");
-      const readOptions = {
-        where: { owner: "$user.email" },
-        fields: ["title"],
-      };
+      await addPolicy(
+        services.prisma,
+        "one",
+        "worker",
+        "/collections/tasks/fields/*",
+        "read",
+      );
+      await removePolicy(
+        services.prisma,
+        "one",
+        "worker",
+        "/collections/tasks/fields/*",
+        "read",
+      );
+      const readOptions = { cond: "r.obj.data.owner == r.usr.email" };
+      await addPolicy(
+        services.prisma,
+        "one",
+        "worker",
+        "/collections/tasks/fields/title",
+        "read",
+      );
       await grant("read", readOptions);
       const input = { operations: [create], idempotency_key: "replay" };
       const first = await call(input, "worker");
       expect(first.body.status).toBe("ok");
-      expect(first.body.results[0].record.data).toEqual(
-        create.op === "record.create" ? create.data : {},
-      );
+      expect(first.body.results[0].record.data).toEqual({ title: "Work" });
       const replay = await call(input, "worker");
       expect(replay.body.results[0].record.data).toEqual({ title: "Work" });
       expect(replay.body.results[0].record.id).toBe(
@@ -276,6 +314,13 @@ for (const transport of ["REST", "MCP"] as const) {
         services.prisma,
         "one",
         "worker",
+        "/collections/tasks/fields/title",
+        "read",
+      );
+      await removePolicy(
+        services.prisma,
+        "one",
+        "worker",
         "/collections/tasks",
         "read",
         readOptions,
@@ -287,6 +332,13 @@ for (const transport of ["REST", "MCP"] as const) {
     });
     test("idempotency is scoped to authenticated principal; identity overrides and foreign resources fail", async () => {
       await grant("create");
+      await addPolicy(
+        services.prisma,
+        "one",
+        "worker",
+        "/collections/tasks/fields/*",
+        "read",
+      );
       await grant("read");
       const input = { operations: [create], idempotency_key: "shared" };
       const admin = await call(input);

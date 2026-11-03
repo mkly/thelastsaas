@@ -27,7 +27,7 @@ const indexAt = schema.indexOf(recordIndex, recordStart);
 if (
   recordStart < 0 ||
   indexAt < 0 ||
-  indexAt > schema.indexOf("model RowFilter {")
+  indexAt > schema.indexOf("\n}", recordStart)
 ) {
   throw new Error("Could not locate the Record model scope index");
 }

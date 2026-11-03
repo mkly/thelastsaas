@@ -6,7 +6,7 @@ import {
   type NotificationAudience,
 } from "@lastsaas/shared";
 import { Prisma, type PrismaClient } from "@prisma/client";
-import { InvalidRecurrenceError, parseRecurrence } from "../lib/recurrence";
+import { InvalidRecurrenceError, parseRecurrence } from "@lastsaas/shared";
 import { resolveNotificationAudience } from "./notification-audiences";
 
 export interface ScheduleRow {

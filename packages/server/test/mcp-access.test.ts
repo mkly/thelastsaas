@@ -23,12 +23,6 @@ const toolNames = [
   "permissions_assign_role",
   "permissions_unassign_role",
   "permissions_check",
-  "row_filter_set",
-  "row_filter_list",
-  "row_filter_delete",
-  "field_filter_set",
-  "field_filter_list",
-  "field_filter_delete",
   "invitations_create",
   "invitations_list",
   "invitations_accept",
@@ -130,6 +124,8 @@ describe("MCP access tools", () => {
           v0: roleSubject("org_test", "admin"),
           v1: "/*",
           v2: "*",
+          v3: "true",
+          v4: "",
         },
         {
           orgId: "org_test",
@@ -231,33 +227,6 @@ describe("MCP access tools", () => {
     expect(invalid.structuredContent).toMatchObject({
       status: "error",
       error: "InvalidRequest",
-    });
-  });
-
-  test("filter tools return success and structured permission errors", async () => {
-    const admin = await clientFor("user_admin");
-    const reader = await clientFor("user_reader");
-
-    const created = await admin.callTool({
-      name: "row_filter_set",
-      arguments: {
-        collection: "tasks",
-        role: "member",
-        action: "read",
-        condition: {},
-      },
-    });
-    expect(created.isError).not.toBe(true);
-    expect(created.structuredContent).toMatchObject({ status: "ok" });
-
-    const denied = await reader.callTool({
-      name: "row_filter_list",
-      arguments: {},
-    });
-    expect(denied.isError).toBe(true);
-    expect(denied.structuredContent).toMatchObject({
-      status: "error",
-      error: "PermissionDenied",
     });
   });
 

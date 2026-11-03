@@ -39,6 +39,8 @@ interface RuleRow {
   v0: string | null;
   v1: string | null;
   v2: string | null;
+  v3?: string;
+  v4?: string;
 }
 
 function createFixture() {
@@ -73,16 +75,18 @@ function createFixture() {
       id: 1,
       orgId: "org_123",
       ptype: "p",
-      v0: "org:org_123:user:admin",
+      v0: "org:org_123:role:admin",
       v1: "/*",
       v2: "*",
+      v3: "true",
+      v4: "",
     },
     {
       id: 2,
       orgId: "org_123",
       ptype: "g",
       v0: "user_admin",
-      v1: "org:org_123:user:admin",
+      v1: "org:org_123:role:admin",
       v2: null,
     },
   ];
@@ -131,6 +135,10 @@ function createFixture() {
   }
 
   const prisma = {
+    user: {
+      findUnique: async ({ where }: { where: { id: string } }) =>
+        users.find((user) => user.id === where.id) ?? null,
+    },
     casbinRule,
     member: {
       findMany: async ({
@@ -316,7 +324,7 @@ describe("organization members and invitations", () => {
       orgId: "org_123",
       ptype: "g",
       v0: "user_agent",
-      v1: "org:org_123:user:member",
+      v1: "org:org_123:role:member",
       v2: null,
     });
     const memberHeaders = { "x-user-id": "user_agent" };
@@ -454,7 +462,7 @@ describe("organization members and invitations", () => {
         orgId: "org_123",
         ptype: "g",
         v0: "user_agent",
-        v1: "org:org_123:user:member",
+        v1: "org:org_123:role:member",
         v2: null,
       },
       {
@@ -464,6 +472,8 @@ describe("organization members and invitations", () => {
         v0: "user_agent",
         v1: "/collections/tasks",
         v2: "read",
+        v3: "true",
+        v4: "",
       },
     );
 

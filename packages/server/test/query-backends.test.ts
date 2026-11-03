@@ -10,7 +10,7 @@ import {
   updateCollectionSchema,
 } from "../src/db/collections";
 import { addPolicy } from "../src/db/casbin";
-import { resolveRecordGrants } from "../src/db/record-grants";
+import { resolveCollectionAccess } from "../src/db/collection-access";
 import {
   aggregateRecords,
   countRecords,
@@ -244,8 +244,8 @@ describe(`query backend contract (${provider})`, () => {
     expect((await query({ status: "temporary" })).total).toBe(0);
   });
 
-  test("contains follows PostgreSQL case-sensitive literal matching, including grants", async () => {
-    const { prisma, orgId, insert, query } = await fixture();
+  test("contains follows PostgreSQL case-sensitive literal matching", async () => {
+    const { insert, query } = await fixture();
     const literal = "Alice Éclair %_\\[*]?";
     await insert({ title: "E", status: literal });
     await insert({ title: "F", status: "alice éclair" });
@@ -273,33 +273,6 @@ describe(`query backend contract (${provider})`, () => {
     expect(titles(await query({ active: { contains: "true" } }))).toEqual([
       "A",
     ]);
-    const grants = [
-      { where: { status: { contains: "Alice" } }, checkAfter: true },
-    ];
-    const visible = await queryRecords(
-      prisma,
-      orgId,
-      "tasks",
-      undefined,
-      "title",
-      50,
-      0,
-      null,
-      null,
-      grants,
-    );
-    expect(titles(visible)).toEqual(["E"]);
-    await expect(
-      insertRecord(
-        prisma,
-        orgId,
-        "tasks",
-        { title: "Denied", status: "alice" },
-        "reader",
-        null,
-        grants,
-      ),
-    ).rejects.toThrow("No grant");
   });
 
   test("invalid comparisons fail before executing database-specific queries", async () => {
@@ -325,18 +298,35 @@ describe(`query backend contract (${provider})`, () => {
 
   test("conditional grants constrain reads, query inputs, writes and deletes", async () => {
     const { prisma, orgId, collection, query } = await fixture();
-    const condition = { status: "open" };
     for (const action of ["read", "create", "update"]) {
+      await addPolicy(
+        prisma,
+        orgId,
+        "reader",
+        "/collections/tasks/fields/title",
+        action,
+      );
+      await addPolicy(
+        prisma,
+        orgId,
+        "reader",
+        "/collections/tasks/fields/status",
+        action,
+      );
       await addPolicy(prisma, orgId, "reader", "/collections/tasks", action, {
-        where: condition,
-        fields: ["title", "status"],
+        cond:
+          action === "create"
+            ? "r.next.data.status == 'open'"
+            : action === "update"
+              ? "r.obj.data.status == 'open' && r.next.data.status == 'open'"
+              : "r.obj.data.status == 'open'",
       });
     }
     await addPolicy(prisma, orgId, "reader", "/collections/tasks", "delete", {
-      where: condition,
+      cond: "r.obj.data.status == 'open'",
     });
     const grants = (action: string) =>
-      resolveRecordGrants(
+      resolveCollectionAccess(
         prisma,
         { orgId, userId: "reader", userEmail: "reader@example.com" },
         collection.id,
@@ -352,15 +342,11 @@ describe(`query backend contract (${provider})`, () => {
       "title",
       50,
       0,
-      null,
-      null,
       read,
     );
     expect(visible.total).toBe(1);
     expect(visible.records[0]?.data).toEqual({ title: "A", status: "open" });
-    expect(
-      await countRecords(prisma, orgId, "tasks", undefined, null, null, read),
-    ).toBe(1);
+    expect(await countRecords(prisma, orgId, "tasks", undefined, read)).toBe(1);
     await expect(
       queryRecords(
         prisma,
@@ -370,8 +356,6 @@ describe(`query backend contract (${provider})`, () => {
         undefined,
         50,
         0,
-        null,
-        null,
         read,
       ),
     ).rejects.toThrow("not allowed");
@@ -381,53 +365,23 @@ describe(`query backend contract (${provider})`, () => {
         orgId,
         "tasks",
         { metrics: [{ op: "sum", field: "amount" }] },
-        null,
-        null,
         read,
       ),
     ).rejects.toThrow("not allowed");
     const a = visible.records[0]!.id;
     const b = (await query({ status: "done" })).records[0]!.id;
-    expect(
-      (await getRecord(prisma, orgId, "tasks", a, null, null, read)).data,
-    ).toEqual({ title: "A", status: "open" });
-    await expect(
-      getRecord(prisma, orgId, "tasks", b, null, null, read),
-    ).rejects.toThrow();
+    expect((await getRecord(prisma, orgId, "tasks", a, read)).data).toEqual({
+      title: "A",
+      status: "open",
+    });
+    await expect(getRecord(prisma, orgId, "tasks", b, read)).rejects.toThrow();
     const update = await grants("update");
-    await updateRecord(
-      prisma,
-      orgId,
-      "tasks",
-      a,
-      { title: "Updated" },
-      null,
-      null,
-      update,
-    );
+    await updateRecord(prisma, orgId, "tasks", a, { title: "Updated" }, update);
     await expect(
-      updateRecord(
-        prisma,
-        orgId,
-        "tasks",
-        a,
-        { status: "done" },
-        null,
-        null,
-        update,
-      ),
-    ).rejects.toThrow("No grant");
+      updateRecord(prisma, orgId, "tasks", a, { status: "done" }, update),
+    ).rejects.toThrow("Permission denied");
     await expect(
-      updateRecord(
-        prisma,
-        orgId,
-        "tasks",
-        a,
-        { secret: "changed" },
-        null,
-        null,
-        update,
-      ),
+      updateRecord(prisma, orgId, "tasks", a, { secret: "changed" }, update),
     ).rejects.toThrow();
     const create = await grants("create");
     await insertRecord(
@@ -436,7 +390,6 @@ describe(`query backend contract (${provider})`, () => {
       "tasks",
       { title: "New", status: "open" },
       "reader",
-      null,
       create,
     );
     await expect(
@@ -446,15 +399,14 @@ describe(`query backend contract (${provider})`, () => {
         "tasks",
         { title: "Denied", status: "done" },
         "reader",
-        null,
         create,
       ),
-    ).rejects.toThrow("No grant");
+    ).rejects.toThrow("Permission denied");
     const remove = await grants("delete");
     await expect(
-      deleteRecord(prisma, orgId, "tasks", b, null, remove),
+      deleteRecord(prisma, orgId, "tasks", b, remove),
     ).rejects.toThrow();
-    await deleteRecord(prisma, orgId, "tasks", a, null, remove);
+    await deleteRecord(prisma, orgId, "tasks", a, remove);
     expect(
       await countRecords(prisma, orgId, "tasks", { title: "Updated" }),
     ).toBe(0);
@@ -462,11 +414,17 @@ describe(`query backend contract (${provider})`, () => {
 
   test("negated grants never expose records with missing or null fields", async () => {
     const { prisma, orgId, collection } = await fixture();
+    await addPolicy(
+      prisma,
+      orgId,
+      "reader",
+      "/collections/tasks/fields/title",
+      "read",
+    );
     await addPolicy(prisma, orgId, "reader", "/collections/tasks", "read", {
-      where: { not: { status: "open" } },
-      fields: ["title"],
+      cond: "r.obj.data.status != null && r.obj.data.status != 'open'",
     });
-    const grants = await resolveRecordGrants(
+    const grants = await resolveCollectionAccess(
       prisma,
       { orgId, userId: "reader", userEmail: "" },
       collection.id,
@@ -481,8 +439,6 @@ describe(`query backend contract (${provider})`, () => {
       "title",
       50,
       0,
-      null,
-      null,
       grants,
     );
     expect(titles(result)).toEqual(["B"]);
@@ -520,12 +476,12 @@ describe(`query backend contract (${provider})`, () => {
     ).rejects.toThrow("unsupported");
     await expect(
       updateCollectionSchema(prisma, orgId, "tasks", { amount: "string" }),
-    ).rejects.toThrow("unsupported");
+    ).rejects.toThrow("already exists");
     await expect(
       updateCollectionSchema(prisma, orgId, "tasks", { amount: "string" }, [
         "amount",
       ]),
-    ).rejects.toThrow("unsupported");
+    ).rejects.toThrow("already exists");
     expect(
       (
         await prisma.collection.findUniqueOrThrow({
@@ -576,4 +532,61 @@ describe(`query backend contract (${provider})`, () => {
       expect(collection.id).toBeTruthy();
     });
   }
+});
+
+test(`query rules run in the same transaction on ${provider}`, async () => {
+  const { prisma, orgId } = await fixture();
+  await createCollection(
+    prisma,
+    orgId,
+    null,
+    "inventory",
+    { item: "string", qty: "number" },
+    "",
+    [
+      {
+        name: "floor",
+        sum: { field: "qty", where: { item: "$next.item" } },
+        min: 0,
+        message: "Insufficient stock.",
+      },
+    ],
+  );
+  const initial = await insertRecord(prisma, orgId, "inventory", {
+    item: "A",
+    qty: 5,
+  });
+  await insertRecord(prisma, orgId, "inventory", { item: "A", qty: -4 });
+  await expect(
+    updateRecord(prisma, orgId, "inventory", initial.id, { qty: 3 }),
+  ).rejects.toThrow("Insufficient stock.");
+  await expect(
+    insertRecord(prisma, orgId, "inventory", { item: "B", qty: -1 }),
+  ).rejects.toThrow("Insufficient stock.");
+  expect(
+    (await getRecord(prisma, orgId, "inventory", initial.id)).data.qty,
+  ).toBe(5);
+  await createCollection(
+    prisma,
+    orgId,
+    null,
+    "bookings",
+    { slot: "string" },
+    "",
+    [
+      {
+        name: "slot",
+        count: { where: { slot: "$next.slot" } },
+        max: 0,
+        message: "Slot occupied.",
+      },
+    ],
+  );
+  const booking = await insertRecord(prisma, orgId, "bookings", { slot: "A" });
+  await expect(
+    updateRecord(prisma, orgId, "bookings", booking.id, { slot: "A" }),
+  ).resolves.toHaveProperty("id", booking.id);
+  await expect(
+    insertRecord(prisma, orgId, "bookings", { slot: "A" }),
+  ).rejects.toThrow("Slot occupied.");
 });

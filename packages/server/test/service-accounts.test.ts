@@ -75,7 +75,7 @@ describe("service accounts", () => {
           orgId: organization.id,
           ptype: "g",
           v0: created.user.id,
-          v1: `org:${organization.id}:user:member`,
+          v1: `org:${organization.id}:role:member`,
         },
       }),
     ).not.toBeNull();

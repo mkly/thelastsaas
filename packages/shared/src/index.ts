@@ -19,3 +19,7 @@ export * from "./notify";
 export * from "./record-history";
 
 export * from "./relationships";
+
+export * from "./recurrence";
+
+export * from "./collection-rules";

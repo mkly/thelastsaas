@@ -128,6 +128,8 @@ describe("organization export and import", () => {
             v0: roleSubject(orgId, "admin"),
             v1: "/*",
             v2: "*",
+            v3: "true",
+            v4: "",
           },
           {
             orgId,
@@ -146,6 +148,8 @@ describe("organization export and import", () => {
           v0: roleSubject(sourceOrg, "reader"),
           v1: "/collections/tasks",
           v2: "read",
+          v3: "true",
+          v4: "",
         },
         {
           orgId: sourceOrg,
@@ -159,6 +163,8 @@ describe("organization export and import", () => {
           v0: reader,
           v1: "/collections/tasks",
           v2: "write",
+          v3: "true",
+          v4: "",
         },
       ],
     });
@@ -179,31 +185,6 @@ describe("organization export and import", () => {
         collectionId: "collection_source",
         data: { title: "Ship export", owner },
         createdBy: owner,
-        createdAt,
-        updatedAt,
-      },
-    });
-    await prisma.rowFilter.create({
-      data: {
-        id: "row_filter_source",
-        orgId: sourceOrg,
-        collectionId: "collection_source",
-        role: "reader",
-        action: "read",
-        condition: { owner: "$user.id" },
-        createdAt,
-        updatedAt,
-      },
-    });
-    await prisma.fieldFilter.create({
-      data: {
-        id: "field_filter_source",
-        orgId: sourceOrg,
-        collectionId: "collection_source",
-        role: "reader",
-        action: "read",
-        readableFields: ["title"],
-        writableFields: [],
         createdAt,
         updatedAt,
       },
@@ -262,12 +243,10 @@ describe("organization export and import", () => {
     expect(Object.keys(sourceData).sort()).toEqual(
       [
         "collections",
-        "field_filters",
         "files",
         "notification_schedules",
         "policies",
         "role_assignments",
-        "row_filters",
         "version",
         "queues",
         "queue_schedules",
@@ -292,8 +271,6 @@ describe("organization export and import", () => {
       imported_files: 1,
       imported_policies: 2,
       imported_role_assignments: 1,
-      imported_row_filters: 1,
-      imported_field_filters: 1,
       imported_notification_schedules: 1,
     });
 
@@ -338,6 +315,8 @@ describe("organization export and import", () => {
           v0: roleSubject(orgId, "admin"),
           v1: "/*",
           v2: "*",
+          v3: "true",
+          v4: "",
         },
         { orgId, ptype: "g", v0: owner, v1: roleSubject(orgId, "admin") },
       ],
@@ -361,8 +340,6 @@ describe("organization export and import", () => {
           files: [],
           policies: [],
           role_assignments: [],
-          row_filters: [],
-          field_filters: [],
           notification_schedules: [],
         } satisfies ExportData),
       },
@@ -425,6 +402,8 @@ async function automationFixture() {
       v0: "producer",
       v1: "/queues/work",
       v2: "create",
+      v3: "true",
+      v4: "",
     },
   });
   await createQueueEnqueueService(db).enqueue(
@@ -477,6 +456,8 @@ async function automationFixture() {
         v0: "producer",
         v1: "/schedules/source-schedule",
         v2: "update",
+        v3: "true",
+        v4: "",
       },
       {
         orgId: "source",
@@ -484,6 +465,8 @@ async function automationFixture() {
         v0: "producer",
         v1: "/triggers/source-trigger",
         v2: "update",
+        v3: "true",
+        v4: "",
       },
       {
         orgId: "source",
@@ -491,6 +474,8 @@ async function automationFixture() {
         v0: "producer",
         v1: "/queues/work",
         v2: "read",
+        v3: "true",
+        v4: "",
       },
     ],
   });

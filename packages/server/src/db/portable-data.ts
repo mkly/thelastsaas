@@ -1,9 +1,10 @@
 import {
+  collectionValidationsSchema,
   notificationAudienceSchema,
   portableAutomationShape,
 } from "@lastsaas/shared";
 import { z } from "zod";
-import { grantOptionSchema } from "./grant-options";
+import { policyOptionsSchema } from "./policy-options";
 
 const dateString = z.iso.datetime();
 const collectionSchema = z.record(z.string(), z.unknown());
@@ -27,6 +28,7 @@ export const portableDataSchema = z
           name: z.string().min(1),
           schema: collectionSchema,
           description: z.string(),
+          validations: collectionValidationsSchema.optional(),
           records: z.array(recordSchema),
         })
         .strict(),
@@ -53,34 +55,13 @@ export const portableDataSchema = z
           subject: z.string().min(1),
           resource: z.string().min(1),
           action: z.string().min(1),
-          ...grantOptionSchema,
+          ...policyOptionsSchema,
         })
         .strict(),
     ),
     role_assignments: z.array(
       z
         .object({ user_id: z.string().min(1), role: z.string().min(1) })
-        .strict(),
-    ),
-    row_filters: z.array(
-      z
-        .object({
-          collection: z.string().min(1),
-          role: z.string().min(1),
-          action: z.string().min(1),
-          condition: z.record(z.string(), z.unknown()),
-        })
-        .strict(),
-    ),
-    field_filters: z.array(
-      z
-        .object({
-          collection: z.string().min(1),
-          role: z.string().min(1),
-          action: z.string().min(1),
-          readable_fields: z.array(z.string()),
-          writable_fields: z.array(z.string()),
-        })
         .strict(),
     ),
     notification_schedules: z.array(

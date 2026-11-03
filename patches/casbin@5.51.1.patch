@@ -1,0 +1,164 @@
+diff --git a/lib/cjs/coreEnforcer.js b/lib/cjs/coreEnforcer.js
+index f23611025c6621a8243ccfcb335a457c2c159d9c..3567e729f42e945270f91a8d27adc2adc15a3c3f 100644
+--- a/lib/cjs/coreEnforcer.js
++++ b/lib/cjs/coreEnforcer.js
+@@ -53,7 +53,7 @@ class CoreEnforcer {
+     }
+     getExpression(asyncCompile, exp) {
+         const matcherKey = `${asyncCompile ? 'ASYNC[' : 'SYNC['}${exp}]`;
+-        (0, expression_eval_1.addBinaryOp)('in', 1, util_1.customIn);
++        (0, expression_eval_1.addBinaryOp)('in', 7, util_1.customIn);
+         let expression = this.matcherMap.get(matcherKey);
+         if (!expression) {
+             exp = (0, util_1.bracketCompatible)(exp);
+@@ -441,7 +441,19 @@ class CoreEnforcer {
+                     }
+                 }
+                 const context = Object.assign(Object.assign({}, parameters), functions);
+-                const result = asyncCompile ? yield expression(context) : expression(context);
++                let result;
++                try {
++                    result = asyncCompile ? yield Promise.resolve(expression(context)).catch(error => {
++                      if (!HasEval || !(error instanceof TypeError)) throw error;
++                      return false;
++                    }) : expression(context);
++                }
++                catch (error) {
++                    // An unavailable ABAC attribute cannot grant access. Continue
++                    // evaluating independent policies in the allow effect.
++                    if (!HasEval || !(error instanceof TypeError)) throw error;
++                    result = false;
++                }
+                 let eftRes;
+                 switch (typeof result) {
+                     case 'boolean':
+diff --git a/lib/cjs/util/util.js b/lib/cjs/util/util.js
+index b3e4b94bd648492b67fc9314bed3e147fb1d2472..ac87ab0398758f19c200e7f99e78b3b641824cea 100644
+--- a/lib/cjs/util/util.js
++++ b/lib/cjs/util/util.js
+@@ -191,21 +191,32 @@ function customIn(a, b) {
+ }
+ exports.customIn = customIn;
+ function bracketCompatible(exp) {
+-    // TODO: This function didn't support nested bracket.
+-    if (!(exp.includes(' in ') && exp.includes(' ('))) {
+-        return exp;
+-    }
+-    const re = / \([^)]*\)/g;
+-    const array = exp.split('');
+-    let reResult;
+-    while ((reResult = re.exec(exp)) !== null) {
+-        if (!reResult[0].includes(',')) {
+-            continue;
++    // Rewrite only comma-separated tuples on the RHS of `in`. Track delimiters
++    // and quoted strings so matcher/eval wrappers and nested expressions survive.
++    const chars = exp.split('');
++    const stack = [];
++    const tokens = /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[A-Za-z_$][\w$]*|\s+|./g;
++    let previous = '';
++    let beforePrevious = '';
++    let token;
++    while ((token = tokens.exec(exp)) !== null) {
++        const value = token[0];
++        if (/^\s+$/.test(value)) continue;
++        if (value === '(' || value === '[' || value === '{') {
++            stack.push({ index: token.index, open: value,
++                tuple: value === '(' && previous === 'in' && beforePrevious !== '.', comma: false });
++        } else if (value === ',' && stack.length) {
++            stack[stack.length - 1].comma = true;
++        } else if (value === ')' || value === ']' || value === '}') {
++            const frame = stack.pop();
++            if (frame && frame.tuple && frame.comma && value === ')') {
++                chars[frame.index] = '[';
++                chars[token.index] = ']';
++            }
+         }
+-        array[reResult.index + 1] = '[';
+-        array[re.lastIndex - 1] = ']';
++        beforePrevious = previous;
++        previous = value;
+     }
+-    exp = array.join('');
+-    return exp;
++    return chars.join('');
+ }
+ exports.bracketCompatible = bracketCompatible;
+diff --git a/lib/esm/index.mjs b/lib/esm/index.mjs
+index 501b058017a167087b153564ab1fcc30e2ca1626..35d8668b76f183eef8c49043b9e888b3418cbfeb 100644
+--- a/lib/esm/index.mjs
++++ b/lib/esm/index.mjs
+@@ -1071,21 +1071,33 @@ function customIn(a, b) {
+   return a in b;
+ }
+ function bracketCompatible(exp) {
+-  if (!(exp.includes(" in ") && exp.includes(" ("))) {
+-    return exp;
+-  }
+-  const re = / \([^)]*\)/g;
+-  const array = exp.split("");
+-  let reResult;
+-  while ((reResult = re.exec(exp)) !== null) {
+-    if (!reResult[0].includes(",")) {
+-      continue;
++    // Rewrite only comma-separated tuples on the RHS of `in`. Track delimiters
++    // and quoted strings so matcher/eval wrappers and nested expressions survive.
++    const chars = exp.split('');
++    const stack = [];
++    const tokens = /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[A-Za-z_$][\w$]*|\s+|./g;
++    let previous = '';
++    let beforePrevious = '';
++    let token;
++    while ((token = tokens.exec(exp)) !== null) {
++        const value = token[0];
++        if (/^\s+$/.test(value)) continue;
++        if (value === '(' || value === '[' || value === '{') {
++            stack.push({ index: token.index, open: value,
++                tuple: value === '(' && previous === 'in' && beforePrevious !== '.', comma: false });
++        } else if (value === ',' && stack.length) {
++            stack[stack.length - 1].comma = true;
++        } else if (value === ')' || value === ']' || value === '}') {
++            const frame = stack.pop();
++            if (frame && frame.tuple && frame.comma && value === ')') {
++                chars[frame.index] = '[';
++                chars[token.index] = ']';
++            }
++        }
++        beforePrevious = previous;
++        previous = value;
+     }
+-    array[reResult.index + 1] = "[";
+-    array[re.lastIndex - 1] = "]";
+-  }
+-  exp = array.join("");
+-  return exp;
++    return chars.join('');
+ }
+ 
+ // src/config.ts
+@@ -2346,7 +2358,7 @@ var CoreEnforcer = class {
+   }
+   getExpression(asyncCompile, exp) {
+     const matcherKey = `${asyncCompile ? "ASYNC[" : "SYNC["}${exp}]`;
+-    addBinaryOp("in", 1, customIn);
++    addBinaryOp("in", 7, customIn);
+     let expression = this.matcherMap.get(matcherKey);
+     if (!expression) {
+       exp = bracketCompatible(exp);
+@@ -2746,7 +2758,16 @@ var CoreEnforcer = class {
+           }
+         }
+         const context = __spreadValues(__spreadValues({}, parameters), functions);
+-        const result = asyncCompile ? yield expression(context) : expression(context);
++        let result;
++        try {
++          result = asyncCompile ? yield Promise.resolve(expression(context)).catch(error => {
++                      if (!HasEval || !(error instanceof TypeError)) throw error;
++                      return false;
++                    }) : expression(context);
++        } catch (error) {
++          if (!HasEval || !(error instanceof TypeError)) throw error;
++          result = false;
++        }
+         let eftRes;
+         switch (typeof result) {
+           case "boolean":

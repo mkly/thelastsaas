@@ -364,8 +364,6 @@ export async function completeUpload(
             destination.collection,
             destination.record_id,
             { [destination.field]: [...existing, upload.id] },
-            null,
-            null,
             grants,
             upload.userId,
           );

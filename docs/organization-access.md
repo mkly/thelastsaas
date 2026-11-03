@@ -5,12 +5,10 @@ explicit organization path: `/v1/orgs/:orgId/...`.
 
 Agents can act through a delegated user session or a service account with its
 own identity. Grant access directly to `user:<id|email>` or through a role.
-Collection grants can include an optional row condition and field list, for
-example `where: {"created_by":"$user.id"}` and `fields: ["title","status"]`.
-Grant `create`, `update`, `read`, and `delete` as needed; `write` covers create
-and update. All grants are additive, so unrestricted grants still give full
-access. See [conditional row and field grants](mcp.md#conditional-row-and-field-grants)
-for MCP and CLI examples.
+Collection policies accept `cond` and `msg`; field policies use paths such as
+`/collections/tasks/fields/title`. Grant `create`, `update`, `read`, and `delete`
+as needed. All policies are additive, including the administrator wildcard.
+See [conditional permissions](mcp.md#conditional-permissions) for syntax and examples.
 
 Member management is available under `/v1/orgs/:orgId/members`; invitations are
 created, listed, accepted, and canceled under

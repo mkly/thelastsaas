@@ -1,10 +1,8 @@
 import type { AppConfig } from "./config";
-import type { Where } from "@lastsaas/shared";
 import type { AuditWriter } from "./db/audit";
-import type { ResolvedFieldFilter } from "./db/fieldFilters";
 import type { AppServices } from "./services";
 
-import type { RecordGrants } from "./db/record-grants";
+import type { CollectionAccess } from "./db/collection-access";
 
 export interface AppVariables {
   config: AppConfig;
@@ -12,9 +10,7 @@ export interface AppVariables {
   orgId: string;
   userId: string;
   audit: AuditWriter;
-  recordGrants: RecordGrants;
-  rowFilter: Where | null;
-  fieldFilter: ResolvedFieldFilter | null;
+  recordGrants: CollectionAccess;
 }
 
 export interface AppEnvironment {

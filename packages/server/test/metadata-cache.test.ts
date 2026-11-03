@@ -106,7 +106,7 @@ test("rule cache avoids repeat reads and invalidates grants, roles, member remov
   await addPolicy(
     prisma,
     "one",
-    "org:one:user:reader",
+    "org:one:role:reader",
     "/collections/tasks",
     "read",
   );
@@ -135,7 +135,7 @@ test("rule cache avoids repeat reads and invalidates grants, roles, member remov
   await addPolicy(
     prisma,
     "one",
-    "org:one:user:reader",
+    "org:one:role:reader",
     "/collections/tasks",
     "read",
   );

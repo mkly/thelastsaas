@@ -1,11 +1,28 @@
+import { recordPrincipal } from "./record-links";
+import {
+  resolveCollectionAccess,
+  accessScope,
+  projectAccess,
+} from "./collection-access";
+import { filterReadableData } from "./field-access";
+import { canReadFile } from "./attachment-access";
+import {
+  compileWhere,
+  applyOrgScope,
+  type DbProvider,
+  type Principal,
+} from "./query/compile";
+import { sql, queryRows } from "./query/kysely";
+import {
+  enforceCollectionRules,
+  validateCollectionRules,
+} from "./collection-rules";
+import { compileRecordSchema, parseRecordData } from "@lastsaas/shared";
+import { validateUniqueFields } from "./records";
 import { extractFieldType } from "@lastsaas/shared";
 import { appendRecordHistory } from "./record-history-storage";
 import { withUnitOfWork, type UnitOfWork } from "./unit-of-work";
-import {
-  decodeGrantOptions,
-  encodeGrantOptions,
-  validateGrantOptions,
-} from "./grant-options";
+import { validatePolicyOptions } from "./policy-options";
 import {
   exportAutomation,
   importAutomation,
@@ -27,12 +44,10 @@ import {
   type ExportData,
   type ImportResult,
   type Schema,
-  type Where,
 } from "@lastsaas/shared";
 import { Prisma, type PrismaClient } from "@prisma/client";
 
 import { roleSubject } from "./casbin";
-import { validateCollectionRecordData } from "./collections";
 
 const ROLE_SUBJECT = "role:";
 const USER_SUBJECT = "user:";
@@ -47,16 +62,6 @@ function asObject(value: Prisma.JsonValue): Record<string, unknown> {
 
 function asSchema(value: Prisma.JsonValue): Schema {
   return asObject(value) as Schema;
-}
-
-function asWhere(value: Prisma.JsonValue): Where {
-  return asObject(value) as Where;
-}
-
-function asStrings(value: Prisma.JsonValue): string[] {
-  return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === "string")
-    : [];
 }
 
 function contractSubject(subject: string, orgId: string): string {
@@ -88,47 +93,73 @@ async function availableId(
 async function exportInTransaction(
   prisma: Prisma.TransactionClient,
   orgId: string,
+  provider: DbProvider,
+  principal?: Principal,
 ): Promise<ExportData> {
-  const [collections, files, rules, rowFilters, fieldFilters, schedules] =
-    await Promise.all([
-      prisma.collection.findMany({
-        where: { orgId },
-        orderBy: { name: "asc" },
-        include: { records: { orderBy: { id: "asc" } } },
-      }),
-      prisma.file.findMany({
-        where: { orgId },
-        orderBy: [{ path: "asc" }, { id: "asc" }],
-        include: { collection: { select: { name: true } } },
-      }),
-      prisma.casbinRule.findMany({
-        where: { orgId, ptype: { in: ["p", "g"] } },
-        orderBy: { id: "asc" },
-      }),
-      prisma.rowFilter.findMany({
-        where: { orgId },
-        orderBy: [
-          { collection: { name: "asc" } },
-          { role: "asc" },
-          { action: "asc" },
-        ],
-        include: { collection: { select: { name: true } } },
-      }),
-      prisma.fieldFilter.findMany({
-        where: { orgId },
-        orderBy: [
-          { collection: { name: "asc" } },
-          { role: "asc" },
-          { action: "asc" },
-        ],
-        include: { collection: { select: { name: true } } },
-      }),
-      prisma.notificationSchedule.findMany({
-        where: { orgId },
-        orderBy: { id: "asc" },
-      }),
-    ]);
+  const [collections, files, rules, schedules] = await Promise.all([
+    prisma.collection.findMany({
+      where: { orgId },
+      orderBy: { name: "asc" },
+      include: { records: { orderBy: { id: "asc" } } },
+    }),
+    prisma.file.findMany({
+      where: { orgId },
+      orderBy: [{ path: "asc" }, { id: "asc" }],
+      include: { collection: { select: { name: true } } },
+    }),
+    prisma.casbinRule.findMany({
+      where: { orgId, ptype: { in: ["p", "g"] } },
+      orderBy: { id: "asc" },
+    }),
+    prisma.notificationSchedule.findMany({
+      where: { orgId },
+      orderBy: { id: "asc" },
+    }),
+  ]);
 
+  const visibleCollections = [];
+  for (const collection of collections) {
+    if (!principal) {
+      visibleCollections.push(collection);
+      continue;
+    }
+    const access = await resolveCollectionAccess(
+      prisma,
+      principal,
+      collection.id,
+      `/collections/${collection.name}`,
+      "read",
+    );
+    if (!access.length) continue;
+    const compiled = compileWhere(
+      accessScope(access),
+      asSchema(collection.schema),
+      provider,
+    );
+    const scope = applyOrgScope(orgId, collection.id, compiled.expression);
+    const rows = await queryRows<{ id: string }>(
+      prisma,
+      provider,
+      sql`SELECT id FROM records WHERE ${scope}`,
+    );
+    const ids = new Set(rows.map((row) => row.id));
+    visibleCollections.push({
+      ...collection,
+      records: collection.records
+        .filter((record) => ids.has(record.id))
+        .map((record) => ({
+          ...record,
+          data: filterReadableData(
+            asObject(record.data),
+            projectAccess(access),
+          ) as Prisma.JsonObject,
+        })),
+    });
+  }
+  const visibleFiles = [];
+  for (const file of files)
+    if (!principal || (await canReadFile(prisma, provider, principal, file)))
+      visibleFiles.push(file);
   const rolePrefix = roleSubject(orgId, "");
   const policies: ExportData["policies"] = [];
   const roleAssignments: ExportData["role_assignments"] = [];
@@ -138,7 +169,8 @@ async function exportInTransaction(
         subject: contractSubject(rule.v0, orgId),
         resource: rule.v1,
         action: rule.v2,
-        ...decodeGrantOptions(rule.v3),
+        cond: rule.v3!,
+        msg: rule.v4!,
       });
     } else if (
       rule.ptype === "g" &&
@@ -165,10 +197,12 @@ async function exportInTransaction(
   return {
     version: 1,
     ...(await exportAutomation(prisma, orgId)),
-    collections: collections.map((collection) => ({
+    collections: visibleCollections.map((collection) => ({
       name: collection.name,
       schema: asSchema(collection.schema),
       description: collection.description,
+      validations:
+        collection.validations as unknown as import("@lastsaas/shared").CollectionValidation[],
       records: collection.records.map((record) => ({
         id: record.id,
         data: asObject(record.data),
@@ -177,7 +211,7 @@ async function exportInTransaction(
         updated_at: record.updatedAt.toISOString(),
       })),
     })),
-    files: files.map((file) => ({
+    files: visibleFiles.map((file) => ({
       id: file.id,
       path: file.path,
       filename: file.filename,
@@ -191,19 +225,6 @@ async function exportInTransaction(
     })),
     policies,
     role_assignments: roleAssignments,
-    row_filters: rowFilters.map((filter) => ({
-      collection: filter.collection.name,
-      role: filter.role,
-      action: filter.action,
-      condition: asWhere(filter.condition),
-    })),
-    field_filters: fieldFilters.map((filter) => ({
-      collection: filter.collection.name,
-      role: filter.role,
-      action: filter.action,
-      readable_fields: asStrings(filter.readableFields),
-      writable_fields: asStrings(filter.writableFields),
-    })),
     notification_schedules: schedules.map((schedule) => ({
       id: schedule.id,
       user_id: schedule.userId,
@@ -227,10 +248,19 @@ async function exportInTransaction(
 export async function exportData(
   prisma: PrismaClient,
   orgId: string,
+  userId?: string,
 ): Promise<ExportData> {
-  return prisma.$transaction((db) => exportInTransaction(db, orgId), {
-    timeout: 60_000,
-  });
+  const provider = queryProvider(prisma);
+  return prisma.$transaction(
+    async (db) =>
+      exportInTransaction(
+        db,
+        orgId,
+        provider,
+        userId ? await recordPrincipal(db, orgId, userId) : undefined,
+      ),
+    { timeout: 60_000 },
+  );
 }
 
 export async function importData(
@@ -295,8 +325,6 @@ async function importInTransaction(
     importedFiles = 0,
     importedPolicies = 0,
     importedRoleAssignments = 0,
-    importedRowFilters = 0,
-    importedFieldFilters = 0,
     importedSchedules = 0;
   const warnings: string[] = [];
   const collectionIds = new Map<string, string>();
@@ -313,6 +341,10 @@ async function importInTransaction(
           name: c.name,
           schema: jsonObject(c.schema),
           description: c.description,
+          validations: validateCollectionRules(
+            c.validations ?? [],
+            c.schema,
+          ) as unknown as Prisma.InputJsonArray,
         },
       });
     else if (JSON.stringify(collection.schema) !== JSON.stringify(c.schema))
@@ -320,10 +352,29 @@ async function importInTransaction(
         `Collection '${c.name}' exists with a different schema; using the existing schema`,
       );
     collectionIds.set(c.name, collection.id);
+    const schema = asSchema(collection.schema);
+    const compiledSchema = compileRecordSchema(schema);
     for (const r of c.records) {
-      if (
-        validateCollectionRecordData(r.data, asSchema(collection.schema)).length
-      ) {
+      let normalized;
+      try {
+        normalized = parseRecordData(r.data, compiledSchema);
+        await enforceCollectionRules(
+          unit,
+          orgId,
+          { ...collection, schema },
+          null,
+          normalized,
+          actorId,
+        );
+        await validateUniqueFields(
+          unit,
+          orgId,
+          collection.name,
+          schema,
+          normalized,
+        );
+      } catch (error) {
+        if (!(error instanceof SchemaValidationError)) throw error;
         skippedRecords++;
         continue;
       }
@@ -337,7 +388,7 @@ async function importInTransaction(
           id,
           orgId,
           collectionId: collection.id,
-          data: jsonObject(r.data),
+          data: jsonObject(normalized),
           createdBy: r.created_by || "import",
           createdAt: new Date(r.created_at),
           updatedAt: new Date(r.updated_at),
@@ -357,46 +408,6 @@ async function importInTransaction(
     }
   }
   const automation = await importAutomation(prisma, orgId, data, collectionIds);
-  for (const f of data.row_filters) {
-    const collectionId = collectionIds.get(f.collection);
-    if (!collectionId) {
-      warnings.push(
-        `Skipped row filter for missing collection '${f.collection}'`,
-      );
-      continue;
-    }
-    const key = { orgId, collectionId, role: f.role, action: f.action };
-    await prisma.rowFilter.upsert({
-      where: { orgId_collectionId_role_action: key },
-      create: { id: genId(), ...key, condition: jsonObject(f.condition) },
-      update: { condition: jsonObject(f.condition) },
-    });
-    importedRowFilters++;
-  }
-  for (const f of data.field_filters) {
-    const collectionId = collectionIds.get(f.collection);
-    if (!collectionId) {
-      warnings.push(
-        `Skipped field filter for missing collection '${f.collection}'`,
-      );
-      continue;
-    }
-    const key = { orgId, collectionId, role: f.role, action: f.action };
-    await prisma.fieldFilter.upsert({
-      where: { orgId_collectionId_role_action: key },
-      create: {
-        id: genId(),
-        ...key,
-        readableFields: f.readable_fields,
-        writableFields: f.writable_fields,
-      },
-      update: {
-        readableFields: f.readable_fields,
-        writableFields: f.writable_fields,
-      },
-    });
-    importedFieldFilters++;
-  }
   // IDs may collide when cloning to another organization. Remap per-resource
   // policy paths using the actual imported IDs, before writing policy rows.
   for (const p of data.policies) {
@@ -405,9 +416,9 @@ async function importInTransaction(
       warnings.push(`Skipped policy with invalid subject '${p.subject}'`);
       continue;
     }
-    await validateGrantOptions(prisma, orgId, p.resource, p.action, {
-      where: p.where,
-      fields: p.fields,
+    await validatePolicyOptions(prisma, orgId, p.resource, p.action, {
+      cond: p.cond,
+      msg: p.msg,
     });
     const rule = {
       orgId,
@@ -415,7 +426,8 @@ async function importInTransaction(
       v0: subject,
       v1: automation.resourceIds.get(p.resource) ?? p.resource,
       v2: p.action,
-      v3: encodeGrantOptions({ where: p.where, fields: p.fields }),
+      v3: p.cond ?? "true",
+      v4: p.msg ?? "",
     };
     if (!(await prisma.casbinRule.findFirst({ where: rule }))) {
       await prisma.casbinRule.create({ data: rule });
@@ -539,8 +551,6 @@ async function importInTransaction(
     imported_files: importedFiles,
     imported_policies: importedPolicies,
     imported_role_assignments: importedRoleAssignments,
-    imported_row_filters: importedRowFilters,
-    imported_field_filters: importedFieldFilters,
     imported_notification_schedules: importedSchedules,
     ...automation.counts,
     ...(skippedRecords ? { skipped_records: skippedRecords } : {}),

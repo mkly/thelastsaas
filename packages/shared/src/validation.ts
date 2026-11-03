@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { validateRecurrence } from "./recurrence";
+import { SchemaValidationError } from "./errors";
 
 import type { FieldDef, Schema } from "./types";
 
@@ -18,37 +20,31 @@ export const FIELD_TYPES = [
 
 const VALID_FIELD_TYPES = new Set<string>(FIELD_TYPES);
 const FIELD_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_]*$/;
-const DATE_TIME_VALUE = String.raw`\d{8}T\d{6}`;
-const DTSTART_RE = new RegExp(
-  String.raw`^DTSTART;TZID=[^:;\r\n]+:${DATE_TIME_VALUE}$`,
-);
-const RRULE_RE =
-  /^RRULE:FREQ=(?:DAILY|WEEKLY|MONTHLY|YEARLY)(?:;[A-Z][A-Z0-9-]*=[^:;\r\n]+)*$/;
-const EXDATE_RE = new RegExp(
-  String.raw`^EXDATE(?:;TZID=[^:;\r\n]+)?:${DATE_TIME_VALUE}(?:,${DATE_TIME_VALUE})*$`,
-);
-
-export const recurrenceValueSchema = z.string().refine(
-  (value) => {
-    const lines = value.replaceAll("\r\n", "\n").split("\n");
-    return (
-      (lines.length === 2 || lines.length === 3) &&
-      DTSTART_RE.test(lines[0] ?? "") &&
-      RRULE_RE.test(lines[1] ?? "") &&
-      (lines.length === 2 || EXDATE_RE.test(lines[2] ?? ""))
-    );
-  },
-  {
-    message:
-      "recurrence must contain DTSTART;TZID, RRULE, and optionally EXDATE",
-  },
-);
-
-const fieldUpdateSchema = z.object({
-  type: z.string().optional(),
-  description: z.string().optional(),
-  multiple: z.boolean().optional(),
+export const recurrenceValueSchema = z.string().refine((value) => {
+  try {
+    validateRecurrence(value);
+    return true;
+  } catch {
+    return false;
+  }
 });
+
+const validationOptions = {
+  required: z.boolean().optional(),
+  unique: z.boolean().optional(),
+  min: z.number().finite().optional(),
+  max: z.number().finite().optional(),
+  pattern: z.string().optional(),
+};
+
+const fieldUpdateSchema = z
+  .object({
+    ...validationOptions,
+    type: z.string().optional(),
+    description: z.string().optional(),
+    multiple: z.boolean().optional(),
+  })
+  .strict();
 
 export function isPlainObject(
   value: unknown,
@@ -97,6 +93,47 @@ export function validateSchema(schema: Schema): string[] {
       errors.push(
         `Field '${fieldName}': multiple is only valid for reference fields`,
       );
+    }
+    if (isPlainObject(fieldDef)) {
+      const parsed = fieldUpdateSchema.safeParse(fieldDef);
+      if (!parsed.success)
+        errors.push(`Field '${fieldName}': invalid field options`);
+      const type = extractFieldType(fieldDef);
+      const bounded = ["string", "text", "number", "integer", "float"].includes(
+        type ?? "",
+      );
+      if (
+        (fieldDef.min !== undefined || fieldDef.max !== undefined) &&
+        !bounded
+      )
+        errors.push(
+          `Field '${fieldName}': min and max require a string or numeric type`,
+        );
+      if (["string", "text"].includes(type ?? "")) {
+        for (const bound of [fieldDef.min, fieldDef.max])
+          if (
+            bound !== undefined &&
+            (!Number.isInteger(bound) || Number(bound) < 0)
+          )
+            errors.push(
+              `Field '${fieldName}': length bounds must be nonnegative integers`,
+            );
+      }
+      if (
+        typeof fieldDef.min === "number" &&
+        typeof fieldDef.max === "number" &&
+        fieldDef.min > fieldDef.max
+      )
+        errors.push(`Field '${fieldName}': min cannot exceed max`);
+      if (fieldDef.pattern !== undefined) {
+        if (!["string", "text"].includes(type ?? ""))
+          errors.push(`Field '${fieldName}': pattern requires a string type`);
+        try {
+          new RegExp(String(fieldDef.pattern));
+        } catch {
+          errors.push(`Field '${fieldName}': invalid pattern`);
+        }
+      }
     }
     if (!isValidFieldName(fieldName)) {
       errors.push(
@@ -153,7 +190,11 @@ export function validateFieldUpdates(
       errors.push(`Field '${fieldName}': unknown type '${parsed.data.type}'`);
     } else if (
       (parsed.data.type !== undefined &&
-        parsed.data.type !== extractFieldType(schema[fieldName]!)) ||
+        parsed.data.type !== extractFieldType(schema[fieldName]!) &&
+        !isEnumExtension(
+          extractFieldType(schema[fieldName]!)!,
+          parsed.data.type,
+        )) ||
       (parsed.data.multiple !== undefined &&
         parsed.data.multiple !== isMultipleReference(schema[fieldName]!))
     ) {
@@ -162,114 +203,122 @@ export function validateFieldUpdates(
       );
     }
   }
+  if (!errors.length) {
+    for (const [name, update] of Object.entries(updateFields))
+      errors.push(
+        ...validateSchema({
+          [name]: applyFieldUpdate(
+            schema[name]!,
+            update as Record<string, unknown>,
+          ),
+        }),
+      );
+  }
   return errors;
+}
+
+function isEnumExtension(before: string, after: string): boolean {
+  if (!before.startsWith("enum:") || !after.startsWith("enum:")) return false;
+  const values = new Set(
+    after
+      .slice(5)
+      .split(",")
+      .map((value) => value.trim()),
+  );
+  return before
+    .slice(5)
+    .split(",")
+    .every((value) => values.has(value.trim()));
 }
 
 export function applyFieldUpdate(
   existingDef: FieldDef,
   updateDef: Record<string, unknown>,
-): { type: string; description?: string; multiple?: boolean } {
-  const result: { type: string; description?: string; multiple?: boolean } = {
-    type:
-      (typeof updateDef.type === "string"
-        ? updateDef.type
-        : extractFieldType(existingDef)) ?? "string",
+): FieldDef {
+  return {
+    ...(typeof existingDef === "string" ? { type: existingDef } : existingDef),
+    ...fieldUpdateSchema.parse(updateDef),
   };
-  if (
-    isPlainObject(existingDef) &&
-    existingDef.description !== undefined &&
-    !("description" in updateDef)
-  ) {
-    result.description = existingDef.description;
+}
+
+/** Compile a strict schema once for all records in an operation. */
+export function compileRecordSchema(schema: Schema) {
+  const shape: Record<string, z.ZodType> = {};
+  for (const [name, definition] of Object.entries(schema)) {
+    const options =
+      typeof definition === "string" ? { type: definition } : definition;
+    const type = options.type;
+    let value: z.ZodType;
+    if (type === "attachments" || isMultipleReference(definition)) {
+      value = z
+        .array(z.string().min(1))
+        .max(100)
+        .refine((ids) => new Set(ids).size === ids.length);
+    } else if (["string", "text"].includes(type)) {
+      let text = z.string();
+      if (options.min !== undefined) text = text.min(options.min);
+      if (options.max !== undefined) text = text.max(options.max);
+      if (options.pattern !== undefined)
+        text = text.regex(new RegExp(options.pattern));
+      value = text;
+    } else if (["number", "float", "integer"].includes(type)) {
+      let number = type === "integer" ? z.number().int() : z.number();
+      if (options.min !== undefined) number = number.min(options.min);
+      if (options.max !== undefined) number = number.max(options.max);
+      value = number;
+    } else if (type === "date") {
+      value = z.iso.date().transform((value) => value);
+    } else if (type === "datetime") {
+      value = z.iso
+        .datetime({ offset: true })
+        .transform((value) => new Date(value).toISOString());
+    } else if (type === "boolean") value = z.boolean();
+    else if (type === "json") value = z.json();
+    else if (type === "recurrence") value = recurrenceValueSchema;
+    else if (type.startsWith("enum:"))
+      value = z.enum(
+        type
+          .slice(5)
+          .split(",")
+          .map((value) => value.trim()),
+      );
+    else if (type.startsWith("ref:")) value = z.string().min(1);
+    else value = z.never();
+    shape[name] = options.required
+      ? value.refine((value) => value !== null)
+      : value.nullable().optional();
   }
-  if (isMultipleReference(existingDef)) result.multiple = true;
-  if (typeof updateDef.description === "string") {
-    result.description = updateDef.description;
-  }
-  return result;
+  return z.object(shape).strict();
 }
 
 export function validateRecordData(
   data: Record<string, unknown>,
   schema: Schema,
 ): string[] {
-  const errors: string[] = [];
-  for (const [fieldName, value] of Object.entries(data)) {
-    if (fieldName.startsWith("_")) continue;
-    if (!(fieldName in schema)) {
-      errors.push(`Unknown field '${fieldName}' (not in schema)`);
-      continue;
-    }
-    if (value === null || value === undefined) continue;
-    const fieldType = extractFieldType(schema[fieldName]!);
-    if (fieldType === null) {
-      errors.push(`Field '${fieldName}': schema has invalid type definition`);
-      continue;
-    }
-    if (
-      fieldType === "attachments" ||
-      isMultipleReference(schema[fieldName]!)
-    ) {
-      if (
-        !Array.isArray(value) ||
-        value.some((id) => typeof id !== "string" || !id.length) ||
-        new Set(value).size !== value.length ||
-        value.length > 100
-      ) {
-        errors.push(
-          `Field '${fieldName}': expected at most 100 unique nonempty IDs`,
-        );
-      }
-      continue;
-    }
-    const error = validateValue(fieldName, value, fieldType);
-    if (error) errors.push(error);
-  }
-  return errors;
+  const result = compileRecordSchema(schema).safeParse(data);
+  return result.success
+    ? []
+    : result.error.issues.map(
+        (issue) => `${issue.path.join(".") || "record"}: ${issue.code}`,
+      );
 }
 
-function validateValue(
-  fieldName: string,
-  value: unknown,
-  fieldType: string,
-): string | null {
-  const schema = buildValueSchema(fieldType);
-  if (!schema || schema.safeParse(value).success) return null;
-  if (fieldType === "recurrence") {
-    return `Field '${fieldName}': invalid recurrence value`;
-  }
-  if (fieldType.startsWith("enum:")) {
-    const allowed = fieldType
-      .slice(5)
-      .split(",")
-      .map((item) => item.trim());
-    return `Field '${fieldName}': value '${value}' not in allowed values: ${JSON.stringify(allowed)}`;
-  }
-  if (fieldType.startsWith("ref:")) {
-    return `Field '${fieldName}': ref must be a string (record ID), got ${typeof value}`;
-  }
-  return `Field '${fieldName}': expected ${fieldType}, got ${typeof value}`;
-}
-
-function buildValueSchema(fieldType: string): z.ZodType<unknown> | null {
-  if (["string", "text", "date", "datetime"].includes(fieldType)) {
-    return z.string();
-  }
-  if (["number", "float"].includes(fieldType)) return z.number();
-  if (fieldType === "integer") return z.number().int();
-  if (fieldType === "boolean") return z.boolean();
-  if (fieldType === "json") return z.unknown();
-  if (fieldType === "recurrence") return recurrenceValueSchema;
-  if (fieldType.startsWith("enum:")) {
-    const allowed = fieldType
-      .slice(5)
-      .split(",")
-      .map((item) => item.trim())
-      .filter(Boolean);
-    return allowed.length ? z.enum([allowed[0]!, ...allowed.slice(1)]) : null;
-  }
-  if (fieldType.startsWith("ref:")) return z.string();
-  return null;
+export function parseRecordData(
+  data: Record<string, unknown>,
+  compiled: ReturnType<typeof compileRecordSchema>,
+): Record<string, unknown> {
+  const result = compiled.safeParse(data);
+  if (!result.success)
+    throw new SchemaValidationError(
+      result.error.issues.map(
+        (issue) => `${issue.path.join(".") || "record"}: ${issue.code}`,
+      ),
+      result.error.issues.map((issue) => ({
+        path: issue.path.map(String),
+        code: issue.code,
+      })),
+    );
+  return result.data;
 }
 
 export function sanitizePathComponent(name: string): string {
@@ -294,6 +343,7 @@ export const fieldDefinitionSchema = z.union([
   z.string(),
   z
     .object({
+      ...validationOptions,
       type: z.string(),
       description: z.string().optional(),
       multiple: z.boolean().optional(),

@@ -14,7 +14,7 @@ import {
   type Principal,
 } from "./query/compile";
 import { sql, type SqlFragment } from "./query/kysely";
-import { queryGrantWhere, resolveRecordGrants } from "./record-grants";
+import { queryAccessScope, resolveCollectionAccess } from "./collection-access";
 
 /** Resolve target permissions once, then compile relational filters into scoped SQL subqueries. */
 export async function relationshipPredicates(
@@ -64,7 +64,7 @@ export async function relationshipPredicates(
           );
         const nested = condition[operator] as Where;
         const targetSchema = target.schema as Schema;
-        const grants = await resolveRecordGrants(
+        const grants = await resolveCollectionAccess(
           db,
           principal,
           target.id,
@@ -93,7 +93,7 @@ export async function relationshipPredicates(
             "Recurrence expansion cannot be used inside a relationship predicate",
           );
         const permitted = compileWhere(
-          queryGrantWhere(grants, fields),
+          queryAccessScope(grants, fields),
           targetSchema,
           provider,
         );

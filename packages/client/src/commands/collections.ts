@@ -1,4 +1,4 @@
-import type { Schema } from "@lastsaas/shared";
+import type { CollectionValidation, Schema } from "@lastsaas/shared";
 import type { Command } from "commander";
 
 import { parseJson, withErrorHandling } from "../api-client";
@@ -15,6 +15,7 @@ interface CollectionSummary {
   name: string;
   schema: Schema;
   description?: string;
+  validations?: CollectionValidation[];
 }
 
 function globalOptions(command: Command): GlobalOptions {
@@ -67,11 +68,16 @@ export function registerCollections(
     .description("Create a new collection")
     .requiredOption("-s, --schema <json>", "Schema as JSON")
     .option("-d, --description <text>", "Collection description")
+    .option("--validations <json>", "Collection validation rules as JSON")
     .action(
       withErrorHandling(
         async (
           name: string,
-          commandOptions: { schema: string; description?: string },
+          commandOptions: {
+            schema: string;
+            description?: string;
+            validations?: string;
+          },
           command: Command,
         ) => {
           const options = globalOptions(command);
@@ -85,10 +91,24 @@ export function registerCollections(
               name,
               schema,
               description: commandOptions.description ?? "",
+              ...(commandOptions.validations === undefined
+                ? {}
+                : {
+                    validations: parseJson<CollectionValidation[]>(
+                      commandOptions.validations,
+                      "--validations",
+                    ),
+                  }),
             },
           });
           const result = await dependencies.handleResponse<{
             status: "ok";
+            policies?: Array<{
+              resource: string;
+              action: string;
+              cond: string;
+              msg: string;
+            }>;
             id: string;
             name: string;
           }>(response);
@@ -115,6 +135,12 @@ export function registerCollections(
         const result = await dependencies.handleResponse<
           CollectionSummary & {
             status: "ok";
+            policies?: Array<{
+              resource: string;
+              action: string;
+              cond: string;
+              msg: string;
+            }>;
           }
         >(response);
 
@@ -133,6 +159,25 @@ export function registerCollections(
             lines.push(`  ${field.padEnd(24)} ${rendered}`);
           }
         }
+        if (result.validations?.length) {
+          lines.push(
+            "",
+            "Validations:",
+            ...result.validations.map(
+              (rule) =>
+                `  ${rule.name}: ${"rule" in rule ? rule.rule : JSON.stringify(rule)} — ${rule.message}`,
+            ),
+          );
+        }
+        if (result.policies?.length)
+          lines.push(
+            "",
+            "Policies:",
+            ...result.policies.map(
+              (policy) =>
+                `  ${policy.action} ${policy.resource}: ${policy.cond}${policy.msg ? ` — ${policy.msg}` : ""}`,
+            ),
+          );
         dependencies.writeOutput(result, options, lines.join("\n"));
       }),
     );
@@ -143,14 +188,28 @@ export function registerCollections(
     .option("--add <json>", "Fields to add as JSON")
     .option("--remove <fields>", "Comma-separated field names to remove")
     .option("--update <json>", "Field definitions to update as JSON")
+    .option(
+      "--validations <json>",
+      "Replace collection expression rules as JSON",
+    )
     .action(
       withErrorHandling(
         async (
           name: string,
-          commandOptions: { add?: string; remove?: string; update?: string },
+          commandOptions: {
+            add?: string;
+            remove?: string;
+            update?: string;
+            validations?: string;
+          },
           command: Command,
         ) => {
           const body: Record<string, unknown> = {};
+          if (commandOptions.validations !== undefined)
+            body.validations = parseJson<CollectionValidation[]>(
+              commandOptions.validations,
+              "--validations",
+            );
           if (commandOptions.add) {
             body.add_fields = parseJson<Schema>(commandOptions.add, "--add");
           }
@@ -165,7 +224,7 @@ export function registerCollections(
           }
           if (Object.keys(body).length === 0) {
             throw new CliError(
-              "Provide at least one of --add, --remove, or --update.",
+              "Provide at least one of --add, --remove, --update, or --validations.",
             );
           }
 
@@ -179,6 +238,12 @@ export function registerCollections(
           });
           const result = await dependencies.handleResponse<{
             status: "ok";
+            policies?: Array<{
+              resource: string;
+              action: string;
+              cond: string;
+              msg: string;
+            }>;
             name: string;
           }>(response);
           dependencies.writeOutput(
@@ -217,6 +282,12 @@ export function registerCollections(
           });
           const result = await dependencies.handleResponse<{
             status: "ok";
+            policies?: Array<{
+              resource: string;
+              action: string;
+              cond: string;
+              msg: string;
+            }>;
             message: string;
           }>(response);
           dependencies.writeOutput(result, options, result.message);

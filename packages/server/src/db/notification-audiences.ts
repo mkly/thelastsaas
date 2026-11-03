@@ -88,6 +88,10 @@ async function authorizeNotificationRecipients(
     throw new PermissionDeniedError(
       "Notification sender is no longer an organization member",
     );
+  const sender = await prisma.user.findUniqueOrThrow({
+    where: { id: senderId },
+    select: { email: true },
+  });
   for (const recipient of recipients) {
     if (recipient.id === senderId) continue;
     const resources = [
@@ -96,7 +100,15 @@ async function authorizeNotificationRecipients(
     ];
     let allowed = false;
     for (const resource of resources) {
-      if (await enforcer.enforce(senderId, resource, "write")) {
+      if (
+        await enforcer.enforce(
+          senderId,
+          { path: resource, data: {}, refs: {} },
+          "write",
+          { data: {}, refs: {} },
+          { id: senderId, email: sender.email, org: orgId },
+        )
+      ) {
         allowed = true;
         break;
       }

@@ -3,7 +3,7 @@ import type { Context, MiddlewareHandler } from "hono";
 
 import { hasPermission } from "../db/casbin";
 import { getCollection } from "../db/collections";
-import { resolveRecordGrants } from "../db/record-grants";
+import { resolveCollectionAccess } from "../db/collection-access";
 
 import type { AppEnvironment } from "../env";
 
@@ -53,7 +53,7 @@ export function requireCollectionPermission(
         where: { id: userId },
         select: { email: true },
       });
-      const grants = await resolveRecordGrants(
+      const grants = await resolveCollectionAccess(
         prisma,
         { orgId, userId, userEmail: user?.email ?? "" },
         collection.id,
@@ -69,8 +69,6 @@ export function requireCollectionPermission(
           403,
         );
       context.set("recordGrants", grants);
-      context.set("rowFilter", null);
-      context.set("fieldFilter", null);
     } catch (error) {
       if (!(error instanceof CollectionNotFoundError)) throw error;
       return context.json(error.toResponse(), 404);

@@ -7,7 +7,10 @@ import {
 } from "@lastsaas/shared";
 import type { Prisma } from "@prisma/client";
 import type { UnitOfWork } from "./unit-of-work";
-import { evaluateGrants, resolveRecordGrants } from "./record-grants";
+import {
+  checkRecordAccess,
+  resolveCollectionAccess,
+} from "./collection-access";
 import { canReadFile } from "./attachment-access";
 
 export async function recordPrincipal(
@@ -67,7 +70,7 @@ export async function synchronizeRecordLinks(
             `Field '${field}': reference target is unavailable`,
           ]);
         if (actorId !== "system") {
-          const grants = await resolveRecordGrants(
+          const grants = await resolveCollectionAccess(
             db,
             principal,
             target.id,
@@ -77,7 +80,7 @@ export async function synchronizeRecordLinks(
           for (const row of rows) {
             if (
               !(
-                await evaluateGrants(
+                await checkRecordAccess(
                   db,
                   grants,
                   row,

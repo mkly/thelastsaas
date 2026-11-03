@@ -21,6 +21,4 @@ export const sqliteAdapter: QueryAdapter = {
     return sql`instr(${text}, ${value}) > 0`;
   },
   fieldExists: (field) => sql`json_type(data, ${`$.${field}`}) IS NOT NULL`,
-  candidateJson: (value) => sql`${JSON.stringify(value)}`,
-  candidateTimestamp: (value) => sql`${value.getTime()}`,
 };

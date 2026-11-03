@@ -815,6 +815,7 @@ function registerSystemTools(server: McpServer, context: McpToolContext): void {
         const data = await exportData(
           context.services.prisma,
           requireOrganization(context),
+          context.userId,
         );
         await audit(context, "export_data", "system", null);
         return toolSuccess({ ...data });

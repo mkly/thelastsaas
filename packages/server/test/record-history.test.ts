@@ -112,28 +112,9 @@ async function fixture() {
     id: string,
     data: Record<string, unknown>,
     actor = admin.userId,
-  ) =>
-    updateRecord(
-      prisma,
-      orgId,
-      "tasks",
-      id,
-      data,
-      undefined,
-      undefined,
-      undefined,
-      actor,
-    );
+  ) => updateRecord(prisma, orgId, "tasks", id, data, undefined, actor);
   const remove = (id: string) =>
-    deleteRecord(
-      prisma,
-      orgId,
-      "tasks",
-      id,
-      undefined,
-      undefined,
-      admin.userId,
-    );
+    deleteRecord(prisma, orgId, "tasks", id, undefined, admin.userId);
   const history = (query = {}, actor = admin, now?: Date) =>
     queryRecordHistory(prisma, actor, "tasks", query, now);
   return {
@@ -377,12 +358,23 @@ describe(`record history (${provider})`, () => {
       f.prisma,
       f.orgId,
       f.worker.userId,
+      "/collections/tasks/fields/title",
+      "read",
+    );
+    await addPolicy(
+      f.prisma,
+      f.orgId,
+      f.worker.userId,
+      "/collections/tasks/fields/owner",
+      "read",
+    );
+    await addPolicy(
+      f.prisma,
+      f.orgId,
+      f.worker.userId,
       "/collections/tasks",
       "read",
-      {
-        where: { owner: "$user.id" },
-        fields: ["title", "owner"],
-      },
+      { cond: "r.obj.data.owner == r.usr.id" },
     );
     const own = await f.create({
       title: "Visible",
@@ -438,12 +430,16 @@ describe(`record history (${provider})`, () => {
       f.prisma,
       f.orgId,
       f.worker.userId,
+      "/collections/tasks/fields/title",
+      "read",
+    );
+    await addPolicy(
+      f.prisma,
+      f.orgId,
+      f.worker.userId,
       "/collections/tasks",
       "read",
-      {
-        where: { owner: { lt: 1 } },
-        fields: ["title"],
-      },
+      { cond: "r.obj.data.owner < 1" },
     );
     const filtered = await f.history({}, f.worker);
     expect(filtered.items.map((item) => item.record_id)).toEqual([current.id]);
@@ -452,12 +448,16 @@ describe(`record history (${provider})`, () => {
       f.prisma,
       f.orgId,
       f.worker.userId,
+      "/collections/tasks/fields/title",
+      "read",
+    );
+    await addPolicy(
+      f.prisma,
+      f.orgId,
+      f.worker.userId,
       "/collections/tasks",
       "read",
-      {
-        where: { title: "Historical" },
-        fields: ["title"],
-      },
+      { cond: 'r.obj.data.title == "Historical"' },
     );
     const allowed = await f.history({}, f.worker);
     expect(allowed.items.map((item) => item.record_id)).toEqual([
@@ -488,12 +488,16 @@ describe(`record history (${provider})`, () => {
       f.prisma,
       f.orgId,
       f.worker.userId,
+      "/collections/tasks/fields/title",
+      "read",
+    );
+    await addPolicy(
+      f.prisma,
+      f.orgId,
+      f.worker.userId,
       "/collections/tasks",
       "read",
-      {
-        where: { schedule },
-        fields: ["title"],
-      },
+      { cond: "r.obj.data.schedule == " + JSON.stringify(schedule) },
     );
     expect((await f.history({}, f.worker)).items).toMatchObject([
       { record_id: row.id, after: { title: "Recurring" } },
@@ -517,10 +521,14 @@ describe(`record history (${provider})`, () => {
         },
       ],
     });
-    const options = {
-      where: { created_by: f.admin.userId },
-      fields: ["title"],
-    };
+    const options = { cond: "r.obj.data.title == 'Visible'" };
+    await addPolicy(
+      f.prisma,
+      f.orgId,
+      f.worker.userId,
+      "/collections/tasks/fields/title",
+      "read",
+    );
     await addPolicy(
       f.prisma,
       f.orgId,
@@ -542,6 +550,13 @@ describe(`record history (${provider})`, () => {
       f.prisma,
       f.orgId,
       f.worker.userId,
+      "/collections/tasks/fields/title",
+      "read",
+    );
+    await removePolicy(
+      f.prisma,
+      f.orgId,
+      f.worker.userId,
       "/collections/tasks",
       "read",
       options,
@@ -555,9 +570,16 @@ describe(`record history (${provider})`, () => {
       f.prisma,
       f.orgId,
       f.worker.userId,
+      "/collections/tasks/fields/title",
+      "read",
+    );
+    await addPolicy(
+      f.prisma,
+      f.orgId,
+      f.worker.userId,
       "/collections/tasks",
       "read",
-      { where: { owner: "$user.id" }, fields: ["title"] },
+      { cond: "r.obj.data.owner == r.usr.id" },
     );
     await f.create({ title: "Oldest", owner: f.worker.userId });
     await insertRecords(

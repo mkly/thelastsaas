@@ -61,7 +61,7 @@ async function createHarness() {
       orgId: "org_test",
       name: "entries",
       description: "Filtered entries",
-      schema: { title: "string", secret: "string" },
+      schema: { title: "string", secret: "string", owner: "string" },
     },
   });
   await services.prisma.casbinRule.createMany({
@@ -69,50 +69,43 @@ async function createHarness() {
       {
         orgId: "org_test",
         ptype: "p",
-        v0: "org:org_test:user:admin",
+        v0: "org:org_test:role:admin",
         v1: "/*",
         v2: "*",
+        v3: "true",
+        v4: "",
       },
       {
         orgId: "org_test",
         ptype: "g",
         v0: "user_admin",
-        v1: "org:org_test:user:admin",
+        v1: "org:org_test:role:admin",
       },
       {
         orgId: "org_test",
         ptype: "p",
-        v0: "org:org_test:user:reader",
+        v0: "org:org_test:role:reader",
         v1: "/collections/entries",
         v2: "read",
+        v3: "r.obj.data.owner == r.usr.id",
       },
       {
         orgId: "org_test",
         ptype: "g",
         v0: "user_reader",
-        v1: "org:org_test:user:reader",
+        v1: "org:org_test:role:reader",
       },
     ],
   });
-  await services.prisma.rowFilter.create({
+  await services.prisma.casbinRule.create({
     data: {
-      id: "row_filter_reader",
       orgId: "org_test",
-      collectionId: "collection_entries",
-      role: "reader",
-      action: "read",
-      condition: { created_by: "$user.id" },
-    },
-  });
-  await services.prisma.fieldFilter.create({
-    data: {
-      id: "field_filter_reader",
-      orgId: "org_test",
-      collectionId: "collection_entries",
-      role: "reader",
-      action: "read",
-      readableFields: ["title"],
-      writableFields: [],
+      ptype: "p",
+      v0: "org:org_test:role:reader",
+      v1: "/collections/entries/fields/title",
+      v2: "read",
+      v3: "true",
+      v4: "",
     },
   });
   const now = new Date();
@@ -122,7 +115,7 @@ async function createHarness() {
         id: "record_own",
         orgId: "org_test",
         collectionId: "collection_entries",
-        data: { title: "Visible", secret: "hidden" },
+        data: { title: "Visible", secret: "hidden", owner: "user_reader" },
         createdBy: "user_reader",
         createdAt: now,
         updatedAt: now,

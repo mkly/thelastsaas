@@ -9,7 +9,7 @@ import {
 import type { PrismaClient } from "@prisma/client";
 import type { Principal } from "./query/compile";
 import { getCollection } from "./collections";
-import { resolveRecordGrants } from "./record-grants";
+import { resolveCollectionAccess } from "./collection-access";
 import { getRecord, queryRecords } from "./records";
 import { formatFile } from "./files";
 import { linkIds, referenceDefinitions } from "./record-links";
@@ -84,7 +84,7 @@ export async function expandRecords(
         "Expansion exceeds 2000 objects; reduce the page size or expand paths",
       );
     const grants = target
-      ? await resolveRecordGrants(
+      ? await resolveCollectionAccess(
           db,
           principal,
           target.id,
@@ -103,8 +103,6 @@ export async function expandRecords(
           undefined,
           500,
           0,
-          null,
-          null,
           grants,
           principal,
         );
@@ -150,7 +148,7 @@ export async function describeRelationships(
     multiple: boolean;
   }> = [];
   for (const collection of collections) {
-    const grants = await resolveRecordGrants(
+    const grants = await resolveCollectionAccess(
       db,
       principal,
       collection.id,
@@ -158,13 +156,7 @@ export async function describeRelationships(
       "read",
     );
     for (const reference of referenceDefinitions(collection.schema as Schema)) {
-      if (
-        !grants.some(
-          (grant) =>
-            grant.readable === undefined ||
-            grant.readable.includes(reference.field),
-        )
-      )
+      if (!grants.some((grant) => grant.readable.includes(reference.field)))
         continue;
       if (collection.name === collectionName) outbound.push(reference);
       if (reference.collection === collectionName)
@@ -182,22 +174,14 @@ export async function relatedRecords(
   input: import("@lastsaas/shared").RelatedRecordsQuery,
 ) {
   const target = await getCollection(db, principal.orgId, collectionName);
-  const targetGrants = await resolveRecordGrants(
+  const targetGrants = await resolveCollectionAccess(
     db,
     principal,
     target.id,
     `/collections/${collectionName}`,
     "read",
   );
-  await getRecord(
-    db,
-    principal.orgId,
-    collectionName,
-    recordId,
-    null,
-    null,
-    targetGrants,
-  );
+  await getRecord(db, principal.orgId, collectionName, recordId, targetGrants);
   const source = await getCollection(
     db,
     principal.orgId,
@@ -208,7 +192,7 @@ export async function relatedRecords(
     throw new InvalidQueryError(
       "Source field does not reference this collection",
     );
-  const grants = await resolveRecordGrants(
+  const grants = await resolveCollectionAccess(
     db,
     principal,
     source.id,
@@ -229,8 +213,6 @@ export async function relatedRecords(
     input.order_by,
     input.limit,
     input.offset,
-    null,
-    null,
     grants,
     principal,
   );

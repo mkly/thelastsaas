@@ -8,10 +8,10 @@ import {
 import type { File, Prisma } from "@prisma/client";
 import { hasPermission } from "./casbin";
 import {
-  evaluateGrants,
-  resolveRecordGrants,
-  assertGrantedWrite,
-} from "./record-grants";
+  checkRecordAccess,
+  resolveCollectionAccess,
+  enforceRecordChange,
+} from "./collection-access";
 import type { DbProvider, Principal } from "./query/compile";
 import { canReadHistoryFile } from "./record-history";
 
@@ -41,19 +41,17 @@ export async function canReadFile(
     const row = link.record;
     const schema = row.collection.schema as Schema;
     if (extractFieldType(schema[link.field]!) !== "attachments") continue;
-    const grants = await resolveRecordGrants(
+    const grants = await resolveCollectionAccess(
       db,
       principal,
       row.collectionId,
       `/collections/${row.collection.name}`,
       "read",
     );
-    const matches = await evaluateGrants(db, grants, row, schema, provider);
+    const matches = await checkRecordAccess(db, grants, row, schema, provider);
     if (
       grants.some(
-        (grant, i) =>
-          matches[i] &&
-          (grant.readable === undefined || grant.readable.includes(link.field)),
+        (grant, i) => matches[i] && grant.readable.includes(link.field),
       )
     )
       return true;
@@ -105,20 +103,20 @@ export async function attachmentDestination(
     ) !== "attachments"
   )
     throw new PermissionDeniedError("Attachment destination is unavailable");
-  const grants = await resolveRecordGrants(
+  const grants = await resolveCollectionAccess(
     db,
     principal,
     record.collectionId,
     `/collections/${destination.collection}`,
     "update",
   );
-  const matches = await evaluateGrants(
+  await enforceRecordChange(
     db,
     grants,
-    record,
     record.collection.schema as Schema,
-    provider,
+    record.data as Record<string, unknown>,
+    record.data as Record<string, unknown>,
+    [destination.field],
   );
-  assertGrantedWrite(grants, matches, matches, [destination.field]);
   return { record, grants };
 }

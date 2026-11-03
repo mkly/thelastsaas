@@ -1,3 +1,4 @@
+import { jsonRequest } from "../lib/transport";
 import { errorResponse } from "@lastsaas/shared";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -18,14 +19,6 @@ const invitationActionSchema = z
   .object({ invitation_id: z.string().min(1) })
   .strict();
 
-function invalidRequest(message: string) {
-  return errorResponse("InvalidRequest", message);
-}
-
-function validationMessage(error: z.ZodError): string {
-  return error.issues.map((issue) => issue.message).join("; ");
-}
-
 function failureMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
@@ -33,50 +26,50 @@ function failureMessage(error: unknown, fallback: string): string {
 const manageMembers = requirePermission("manage", () => "/members");
 
 export const invitationRouter = new Hono<AppEnvironment>()
-  .post("/", manageMembers, async (context) => {
-    const parsed = createInvitationSchema.safeParse(
-      await context.req.json().catch(() => null),
-    );
-    if (!parsed.success) {
-      return context.json(invalidRequest(validationMessage(parsed.error)), 400);
-    }
+  .post(
+    "/",
+    manageMembers,
+    jsonRequest(createInvitationSchema),
+    async (context) => {
+      const parsed = { data: context.req.valid("json") };
 
-    try {
-      const invitation = await context
-        .get("services")
-        .auth.api.createInvitation({
-          body: {
-            ...parsed.data,
-            permissions: JSON.stringify(parsed.data.permissions ?? []),
-            organizationId: context.get("orgId"),
+      try {
+        const invitation = await context
+          .get("services")
+          .auth.api.createInvitation({
+            body: {
+              ...parsed.data,
+              permissions: JSON.stringify(parsed.data.permissions ?? []),
+              organizationId: context.get("orgId"),
+            },
+            headers: context.req.raw.headers,
+          });
+        await context.get("audit")(
+          "create_invitation",
+          "invitation",
+          invitation.id,
+          { email: parsed.data.email, role: parsed.data.role },
+        );
+        return context.json(
+          {
+            status: "ok" as const,
+            invitation_id: invitation.id,
+            email: parsed.data.email,
+            role: parsed.data.role,
           },
-          headers: context.req.raw.headers,
-        });
-      await context.get("audit")(
-        "create_invitation",
-        "invitation",
-        invitation.id,
-        { email: parsed.data.email, role: parsed.data.role },
-      );
-      return context.json(
-        {
-          status: "ok" as const,
-          invitation_id: invitation.id,
-          email: parsed.data.email,
-          role: parsed.data.role,
-        },
-        201,
-      );
-    } catch (error) {
-      return context.json(
-        errorResponse(
-          "InvalidRequest",
-          failureMessage(error, "Failed to create invitation"),
-        ),
-        400,
-      );
-    }
-  })
+          201,
+        );
+      } catch (error) {
+        return context.json(
+          errorResponse(
+            "InvalidRequest",
+            failureMessage(error, "Failed to create invitation"),
+          ),
+          400,
+        );
+      }
+    },
+  )
   .get("/", manageMembers, async (context) => {
     const invitations = await context
       .get("services")
@@ -101,13 +94,8 @@ export const invitationRouter = new Hono<AppEnvironment>()
       })),
     });
   })
-  .post("/accept", async (context) => {
-    const parsed = invitationActionSchema.safeParse(
-      await context.req.json().catch(() => null),
-    );
-    if (!parsed.success) {
-      return context.json(invalidRequest(validationMessage(parsed.error)), 400);
-    }
+  .post("/accept", jsonRequest(invitationActionSchema), async (context) => {
+    const parsed = { data: context.req.valid("json") };
 
     const orgId = context.get("orgId");
     const prisma = context.get("services").prisma;
@@ -143,52 +131,52 @@ export const invitationRouter = new Hono<AppEnvironment>()
 
     return context.json({ status: "ok" as const });
   })
-  .post("/cancel", manageMembers, async (context) => {
-    const parsed = invitationActionSchema.safeParse(
-      await context.req.json().catch(() => null),
-    );
-    if (!parsed.success) {
-      return context.json(invalidRequest(validationMessage(parsed.error)), 400);
-    }
+  .post(
+    "/cancel",
+    manageMembers,
+    jsonRequest(invitationActionSchema),
+    async (context) => {
+      const parsed = { data: context.req.valid("json") };
 
-    const orgId = context.get("orgId");
-    const invitation = await context
-      .get("services")
-      .prisma.invitation.findUnique({
-        where: { id: parsed.data.invitation_id },
-        select: { organizationId: true, status: true },
-      });
-    if (
-      !invitation ||
-      invitation.organizationId !== orgId ||
-      invitation.status !== "pending"
-    ) {
-      return context.json(
-        errorResponse("NotFound", "Invitation not found"),
-        404,
+      const orgId = context.get("orgId");
+      const invitation = await context
+        .get("services")
+        .prisma.invitation.findUnique({
+          where: { id: parsed.data.invitation_id },
+          select: { organizationId: true, status: true },
+        });
+      if (
+        !invitation ||
+        invitation.organizationId !== orgId ||
+        invitation.status !== "pending"
+      ) {
+        return context.json(
+          errorResponse("NotFound", "Invitation not found"),
+          404,
+        );
+      }
+
+      try {
+        await context.get("services").auth.api.cancelInvitation({
+          body: { invitationId: parsed.data.invitation_id },
+          headers: context.req.raw.headers,
+        });
+      } catch (error) {
+        return context.json(
+          errorResponse(
+            "InvalidRequest",
+            failureMessage(error, "Failed to cancel invitation"),
+          ),
+          400,
+        );
+      }
+
+      await context.get("audit")(
+        "cancel_invitation",
+        "invitation",
+        parsed.data.invitation_id,
+        {},
       );
-    }
-
-    try {
-      await context.get("services").auth.api.cancelInvitation({
-        body: { invitationId: parsed.data.invitation_id },
-        headers: context.req.raw.headers,
-      });
-    } catch (error) {
-      return context.json(
-        errorResponse(
-          "InvalidRequest",
-          failureMessage(error, "Failed to cancel invitation"),
-        ),
-        400,
-      );
-    }
-
-    await context.get("audit")(
-      "cancel_invitation",
-      "invitation",
-      parsed.data.invitation_id,
-      {},
-    );
-    return context.json({ status: "ok" as const });
-  });
+      return context.json({ status: "ok" as const });
+    },
+  );

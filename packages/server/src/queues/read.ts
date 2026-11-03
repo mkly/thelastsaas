@@ -11,7 +11,6 @@ import type { PrismaClient, QueueEntry as EntryRow } from "@prisma/client";
 import { createHash } from "node:crypto";
 import { queryProvider } from "../db/provider";
 import { compileWhere } from "../db/query/compile";
-import { queryAdapter } from "../db/query/adapters";
 import { queryRows, sql } from "../db/query/kysely";
 import { withUnitOfWork, type UnitOfWork } from "../db/unit-of-work";
 import {
@@ -32,9 +31,10 @@ function cursorPredicate(
   if (!position.OR) return sql`1=1`;
   const createdAt = position.OR[0]!.createdAt as { gt: Date };
   const id = position.OR[1]!.id as { gt: string };
-  const timestamp = queryAdapter(unit.provider).candidateTimestamp(
-    createdAt.gt,
-  );
+  const timestamp =
+    unit.provider === "postgresql"
+      ? sql`CAST(${createdAt.gt.toISOString()} AS timestamp)`
+      : sql`${createdAt.gt.getTime()}`;
   return sql`(created_at > ${timestamp} OR (created_at = ${timestamp} AND id > ${id.gt}))`;
 }
 

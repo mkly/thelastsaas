@@ -1,13 +1,13 @@
 import type { RecordMutationEvent } from "@lastsaas/shared";
 import { executeRecordTriggers } from "../triggers/execute";
-import type { GrantRecord } from "./resource-grants";
+import type { AccessRecord } from "./collection-access";
 import type { UnitOfWork } from "./unit-of-work";
 import { appendRecordHistory } from "./record-history-storage";
 
 /** Internal full snapshots, including metadata used by source row conditions. */
 export interface MutationSnapshots {
-  before: GrantRecord | null;
-  after: GrantRecord | null;
+  before: AccessRecord | null;
+  after: AccessRecord | null;
 }
 
 /** Every publisher joins the source transaction. Never swallow persistence errors. */

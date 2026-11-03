@@ -1,3 +1,5 @@
+import { describeCollectionPolicies } from "../db/casbin";
+import { collectionValidationsSchema } from "@lastsaas/shared";
 import { describeRelationships } from "../db/record-expansion";
 import { recordPrincipal } from "../db/record-links";
 import { RelationshipConflictError } from "@lastsaas/shared";
@@ -20,7 +22,7 @@ import {
   listCollections,
   updateCollectionSchema,
 } from "../db/collections";
-import { resolveRecordGrants } from "../db/record-grants";
+import { resolveCollectionAccess } from "../db/collection-access";
 import type { AppEnvironment } from "../env";
 import {
   requirePermission,
@@ -32,11 +34,13 @@ const createBodySchema = z
   .object({
     name: z.string().min(1),
     schema: collectionSchema,
+    validations: collectionValidationsSchema.optional(),
     description: z.string().optional().default(""),
   })
   .strict();
 const updateBodySchema = z
   .object({
+    validations: collectionValidationsSchema.optional(),
     add_fields: collectionSchema.optional(),
     remove_fields: z.array(z.string()).optional(),
     update_fields: z
@@ -46,6 +50,7 @@ const updateBodySchema = z
   .strict()
   .refine(
     (body) =>
+      body.validations !== undefined ||
       body.add_fields !== undefined ||
       body.remove_fields !== undefined ||
       body.update_fields !== undefined,
@@ -114,6 +119,7 @@ export const collectionsRouter = new Hono<AppEnvironment>()
         body.data.name,
         body.data.schema as Schema,
         body.data.description,
+        body.data.validations,
       );
       await context.get("audit")("create_collection", "collection", null, {
         collection: body.data.name,
@@ -138,7 +144,7 @@ export const collectionsRouter = new Hono<AppEnvironment>()
     const visibleCollections = (
       await Promise.all(
         collections.map(async (collection) => {
-          const grants = await resolveRecordGrants(
+          const grants = await resolveCollectionAccess(
             prisma,
             { orgId, userId, userEmail: user?.email ?? "" },
             collection.id,
@@ -174,6 +180,12 @@ export const collectionsRouter = new Hono<AppEnvironment>()
         status: "ok" as const,
         ...collection,
         relationships,
+        policies: await describeCollectionPolicies(
+          context.get("services").prisma,
+          context.get("orgId"),
+          context.get("userId"),
+          context.req.param("name"),
+        ),
       });
     } catch (error) {
       return collectionError(context, error);
@@ -190,6 +202,7 @@ export const collectionsRouter = new Hono<AppEnvironment>()
         body.data.add_fields as Schema | undefined,
         body.data.remove_fields,
         body.data.update_fields,
+        body.data.validations,
       );
       await context.get("audit")(
         "update_collection_schema",

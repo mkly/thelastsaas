@@ -258,9 +258,11 @@ describe("private collection authorization", () => {
         where: {
           orgId,
           ptype: "p",
-          v0: `org:${orgId}:user:member`,
+          v0: `org:${orgId}:role:member`,
           v1: "/*",
           v2: "read",
+          v3: "true",
+          v4: "",
         },
       }),
     ).toBeNull();
@@ -271,15 +273,18 @@ describe("private collection authorization", () => {
           ptype: "p",
           v0: creator.id,
           v1: "/collections/notes",
+          v3: "true",
+          v4: "",
         },
         orderBy: { v2: "asc" },
         select: { v2: true },
       }),
     ).toEqual([
+      { v2: "create" },
       { v2: "delete" },
       { v2: "manage" },
       { v2: "read" },
-      { v2: "write" },
+      { v2: "update" },
     ]);
 
     expect(
@@ -300,7 +305,13 @@ describe("private collection authorization", () => {
     ).toBe(200);
     expect(
       await services.prisma.casbinRule.count({
-        where: { orgId, ptype: "p", v1: "/collections/notes" },
+        where: {
+          orgId,
+          ptype: "p",
+          v1: "/collections/notes",
+          v3: "true",
+          v4: "",
+        },
       }),
     ).toBe(0);
   });

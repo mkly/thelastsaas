@@ -11,7 +11,7 @@ resource gates; the CLI consumes the Hono route type through `hc`.
 2. BetterAuth validates the user's cookie or bearer session.
 3. The `:orgId` path segment is checked against the user's membership.
 4. Casbin evaluates the requested resource and action.
-5. Collection middleware resolves row and field filters for record operations.
+5. Collection middleware resolves conditional record and field policies.
 6. Zod validates input, the database layer performs the operation, and Hono
    returns a typed response.
 
@@ -26,13 +26,11 @@ Collections own dynamic schemas. Records store schema-validated JSON plus
 native database timestamps and creator identity. Record mutations append full
 before/after snapshots in the same transaction to a separate 30-day history.
 History reads apply current row and field permissions to saved versions, including
-deleted records. The audit log and idempotency receipts have independent retention. The recursive Where DSL is
-shared by record queries and row filters, avoiding a second condition language.
-
-Casbin policies provide the coarse gate. Row filters narrow visible records;
-field filters narrow readable and writable field names. Read filtering also
-applies to query predicates, aggregate fields, exports, and recurrence
-expansion.
+deleted records. The audit log and idempotency receipts have independent retention. The recursive Where DSL powers record queries and count/sum validation rules.
+Casbin conditions evaluate current/proposed records and caller attributes.
+Allowed record IDs scope pagination, counts, aggregates and relationship queries;
+field policies project results and reject hidden query inputs. Collection field
+and expression/query validations run inside writes, including administrator writes.
 
 Recurrence is a field type, not a separate domain model. Values contain
 `DTSTART;TZID`, `RRULE`, and optional `EXDATE`. `occurs_between` performs an SQL

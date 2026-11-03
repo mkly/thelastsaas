@@ -102,19 +102,7 @@ describe("access-control command registration", () => {
       "invitations",
       "accept-invite",
       "cancel-invite",
-      "row-filter",
-      "field-filter",
     ]);
-    expect(
-      permissions?.commands
-        .find((command) => command.name() === "row-filter")
-        ?.commands.map((command) => command.name()),
-    ).toEqual(["set", "list", "delete"]);
-    expect(
-      permissions?.commands
-        .find((command) => command.name() === "field-filter")
-        ?.commands.map((command) => command.name()),
-    ).toEqual(["set", "list", "delete"]);
     expect(members?.alias()).toBe("m");
     expect(members?.commands.map((command) => command.name())).toEqual([
       "list",
@@ -274,96 +262,6 @@ describe("invitation commands", () => {
   });
 });
 
-describe("row and field filter commands", () => {
-  test("sets, lists, and deletes row filters", async () => {
-    await runPermission(
-      [
-        "permissions",
-        "row-filter",
-        "set",
-        "--collection",
-        "tickets",
-        "--role",
-        "agent",
-        "--action",
-        "read",
-        "--condition",
-        '{"created_by":{"eq":"$user.id"}}',
-      ],
-      { status: "ok", id: "row_filter_1" },
-    );
-    await runPermission(
-      ["permissions", "row-filter", "list", "--collection", "tickets"],
-      { status: "ok", row_filters: [] },
-    );
-    await runPermission([
-      "permissions",
-      "row-filter",
-      "delete",
-      "row_filter_1",
-    ]);
-
-    expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
-      "/v1/orgs/org_default/permissions/row-filters",
-      "/v1/orgs/org_default/permissions/row-filters",
-      "/v1/orgs/org_default/permissions/row-filters/row_filter_1",
-    ]);
-    expect(new URL(requests[1]!.url).searchParams.get("collection")).toBe(
-      "tickets",
-    );
-    expect(await requestBody(0)).toEqual({
-      collection: "tickets",
-      role: "agent",
-      action: "read",
-      condition: { created_by: { eq: "$user.id" } },
-    });
-  });
-
-  test("sets, lists, and deletes field filters", async () => {
-    await runPermission(
-      [
-        "permissions",
-        "field-filter",
-        "set",
-        "--collection",
-        "tickets",
-        "--role",
-        "agent",
-        "--action",
-        "write",
-        "--readable-fields",
-        '["title","status"]',
-        "--writable-fields",
-        '["status"]',
-      ],
-      { status: "ok", id: "field_filter_1" },
-    );
-    await runPermission(
-      ["permissions", "field-filter", "list", "--collection", "tickets"],
-      { status: "ok", field_filters: [] },
-    );
-    await runPermission([
-      "permissions",
-      "field-filter",
-      "delete",
-      "field_filter_1",
-    ]);
-
-    expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
-      "/v1/orgs/org_default/permissions/field-filters",
-      "/v1/orgs/org_default/permissions/field-filters",
-      "/v1/orgs/org_default/permissions/field-filters/field_filter_1",
-    ]);
-    expect(await requestBody(0)).toEqual({
-      collection: "tickets",
-      role: "agent",
-      action: "write",
-      readable_fields: ["title", "status"],
-      writable_fields: ["status"],
-    });
-  });
-});
-
 describe("member commands", () => {
   test("lists, changes the role of, and removes members", async () => {
     await runMember(
@@ -468,7 +366,7 @@ describe("member commands", () => {
 });
 
 describe("conditional permission grants", () => {
-  test("passes row and field options for grant and exact revoke", async () => {
+  test("passes conditions and messages for grant and exact revoke", async () => {
     for (const command of ["grant", "revoke"]) {
       await runPermission([
         "permissions",
@@ -479,10 +377,10 @@ describe("conditional permission grants", () => {
         "/collections/tasks",
         "--action",
         "update",
-        "--where",
-        '{"created_by":"$user.id"}',
-        "--fields",
-        '["title","status"]',
+        "--cond",
+        "r.obj.data.owner == r.usr.id",
+        "--msg",
+        "Only your tasks.",
       ]);
     }
     for (const index of [0, 1])
@@ -490,8 +388,8 @@ describe("conditional permission grants", () => {
         subject: "user:agent",
         resource: "/collections/tasks",
         action: "update",
-        where: { created_by: "$user.id" },
-        fields: ["title", "status"],
+        cond: "r.obj.data.owner == r.usr.id",
+        msg: "Only your tasks.",
       });
     expect(requests[0]?.method).toBe("POST");
     expect(requests[1]?.method).toBe("DELETE");

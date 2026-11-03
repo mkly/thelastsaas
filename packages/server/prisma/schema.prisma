@@ -325,8 +325,6 @@ model Organization {
   queues                Queue[]
   queueSchedules        QueueSchedule[]
   records               Record[]
-  rowFilters            RowFilter[]
-  fieldFilters          FieldFilter[]
   files                 File[]
   notifications         Notification[]
   notificationSchedules NotificationSchedule[]
@@ -375,6 +373,7 @@ model Invitation {
 // --- Application models ---
 
 model Collection {
+  validations Json @default("[]")
   id           String              @id
   orgId        String              @map("org_id")
   name         String
@@ -385,8 +384,6 @@ model Collection {
   org          Organization        @relation(fields: [orgId], references: [id], onDelete: Cascade)
   records      Record[]
   files        File[]
-  rowFilters   RowFilter[]
-  fieldFilters FieldFilter[]
   triggers     CollectionTrigger[]
   history      RecordHistory[]
 
@@ -442,40 +439,7 @@ model RecordHistory {
   @@map("record_history")
 }
 
-model RowFilter {
-  id           String       @id
-  orgId        String       @map("org_id")
-  collectionId String       @map("collection_id")
-  role         String
-  action       String
-  condition    Json
-  createdAt    DateTime     @default(now()) @map("created_at")
-  updatedAt    DateTime     @updatedAt @map("updated_at")
-  org          Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  collection   Collection   @relation(fields: [orgId, collectionId], references: [orgId, id], onDelete: Cascade)
 
-  @@unique([orgId, collectionId, role, action])
-  @@index([orgId, collectionId, action])
-  @@map("row_filters")
-}
-
-model FieldFilter {
-  id             String       @id
-  orgId          String       @map("org_id")
-  collectionId   String       @map("collection_id")
-  role           String
-  action         String
-  readableFields Json         @map("readable_fields")
-  writableFields Json         @map("writable_fields")
-  createdAt      DateTime     @default(now()) @map("created_at")
-  updatedAt      DateTime     @updatedAt @map("updated_at")
-  org            Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  collection     Collection   @relation(fields: [orgId, collectionId], references: [orgId, id], onDelete: Cascade)
-
-  @@unique([orgId, collectionId, role, action])
-  @@index([orgId, collectionId, action])
-  @@map("field_filters")
-}
 
 model File {
   id           String       @id
@@ -570,8 +534,8 @@ model CasbinRule {
   v0    String?
   v1    String?
   v2    String?
-  v3    String?
-  v4    String?
+  v3    String?      @default("true")
+  v4    String?      @default("")
   v5    String?
   org   Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
 

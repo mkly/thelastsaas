@@ -100,7 +100,7 @@ describe("recurrence values", () => {
         { schedule: "DTSTART:20260818T090000\nRRULE:FREQ=WEEKLY" },
         { schedule: "recurrence" },
       ),
-    ).toEqual(["Field 'schedule': invalid recurrence value"]);
+    ).toEqual(["schedule: custom"]);
   });
 });
 
@@ -109,10 +109,10 @@ describe("record and utility validation", () => {
     const schema = { name: "string", age: "integer", active: "boolean" };
     expect(validateRecordData({ name: "Ada", age: 37 }, schema)).toEqual([]);
     expect(validateRecordData({ age: 3.5 }, schema)).toEqual([
-      "Field 'age': expected integer, got number",
+      "age: invalid_type",
     ]);
     expect(validateRecordData({ unknown: true }, schema)).toEqual([
-      "Unknown field 'unknown' (not in schema)",
+      "record: unrecognized_keys",
     ]);
   });
 

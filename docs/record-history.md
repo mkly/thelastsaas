@@ -53,7 +53,7 @@ Query each authorized collection to inspect its entries from that change set.
 
 ## Permissions and pagination
 
-Current membership, collection read grants, row conditions and field filters
+Current membership, collection read grants, record conditions and field policies
 apply to saved versions. Each version is checked independently against its
 stored data and record metadata. A reader can inspect an allowed before-version
 even if the after-version moves outside their row access. Deleted records use

@@ -7,7 +7,7 @@ description: Use the saas CLI to manage The Last SaaS collections, records, acce
 
 The Last SaaS is an organization-scoped data store for assistants. Its server
 provides horizontal primitives; compose application behavior from collections,
-records, Casbin policies, row filters, field filters, recurrence values,
+records, Casbin record and field policies, recurrence values,
 notifications, files, durable queues, schedules, triggers and transactions.
 
 Assume `saas` is installed and available on `PATH`. Add `--json` when another
@@ -85,8 +85,7 @@ saas --org <org-id> records aggregate orders \
 The recursive Where DSL accepts `and`, `or`, and `not` nodes. Leaf operators
 are `eq`, `not`, `gt`, `lt`, `gte`, `lte`, `contains`, `in`, `is_null`,
 `between`, and `occurs_between`. A bare scalar means equality. Metadata fields
-such as `_id`, `_created_at`, and `_updated_at` may be available alongside
-schema fields.
+are `id`, `created_by`, `created_at`, and `updated_at`.
 
 ## Relationships and record attachments
 
@@ -177,42 +176,62 @@ saas --org <org-id> records query appointments \
   --to 2026-09-01T00:00:00Z
 ```
 
-The server applies ordinary Where clauses and row filters before expansion,
+The server applies ordinary Where clauses and permitted record IDs before expansion,
 then returns each matching record once with its occurrences in the requested
 window. A hidden recurrence field cannot be queried. Keep windows narrow; the
 server enforces window and occurrence caps.
 
-## Compose restricted data entry
+## Conditional permissions
 
-A permission grant can specify both which records and which fields an account
-or role may use. For example, respondents can create submissions and edit only
-the answers on submissions they created. Validation stays in the collection
-schema.
+Policies accept `cond` (default `true`) and `msg` (default empty). Conditions use
+Casbin expressions with `&&`, `||`, comparisons and `in ('draft', 'pending')`.
+`r.obj.data` is the current record, `r.next.data` is the complete proposed record,
+and `r.usr` contains `id`, `email`, and `org`. Creates have empty `r.obj.data`;
+reads and deletes use the current record for both objects.
 
-```bash
-saas --org <org-id> permissions assign \
-  --user respondent@example.com --role respondent
-saas --org <org-id> permissions grant \
-  --subject role:respondent --resource /collections/responses --action create \
-  --where '{"created_by":"$user.id"}' --fields '["question","answer"]'
-saas --org <org-id> permissions grant \
-  --subject role:respondent --resource /collections/responses --action update \
-  --where '{"created_by":"$user.id"}' --fields '["answer"]'
+```json
+{
+  "subject": "role:sales",
+  "resource": "/collections/quotes",
+  "action": "update",
+  "cond": "r.obj.data.status == 'draft' && r.next.data.status in ('draft', 'pending') && r.next.data.discount <= 10",
+  "msg": "Sales can move drafts to pending with discounts up to 10%."
+}
 ```
 
-Add separate read grants if the role must retrieve its submissions. Grants can
-also target `user:<id|email>` directly; no custom role is needed for one agent.
-Optional `--where` and `--fields` stay paired within each grant. Matching grants
-add access; an unrestricted grant still allows all rows and fields. `write`
-allows both create and update. Use `delete` with a row condition and no fields.
-Conditions support `$user.id`, `$user.email`, and `$org.id`. Ownership can use
-`created_by` or an ordinary field such as `owner_id`. Updates must satisfy the
-same grant before and after the change. Queries using a field only include rows
-where that field is readable. Revoke a conditional grant with the same `--where`
-and `--fields`; omitting them revokes only the unrestricted grant.
+Policies are additive: any matching true condition grants the action. A denied
+write returns messages from applicable policies, or a plain permission error.
+`create`, `update`, `read`, and `delete` are distinct collection-record actions.
+`write` is used by resource APIs that explicitly request it, such as collection
+creation and trigger configuration; it does not imply create or update.
 
-Use conditional grants to combine permission, row conditions, and field access
-in one operation. A conditional grant already supplies the permission.
+Field access is independent and does not vary by row. Grant `/collections/quotes/fields/*`
+for all fields, or specific paths such as `/collections/quotes/fields/discount`.
+Use `read` to expose a field and `create` or `update` to allow changes. Field
+conditions may use caller attributes but cannot depend on records. Hidden fields
+cannot be used in filters, sorting, aggregates or recurrence queries.
+
+```sh
+saas permissions grant --subject role:sales --resource /collections/quotes \
+  --action read --cond 'r.obj.data.owner == r.usr.id'
+saas permissions grant --subject role:sales --resource '/collections/quotes/fields/*' --action read
+saas permissions grant --subject role:sales --resource /collections/quotes/fields/discount --action update
+```
+
+`permissions_list` returns conditions and messages. Revoke with the exact same
+subject, resource, action, `cond` and `msg`. `permissions_check` reports
+`conditional: true` when the resource has conditional policies; it does not
+approve a particular record or field. `collections_describe` includes the caller's
+applicable record and field policies. Export/import preserves them.
+
+`r.obj.refs.customer` and `r.next.refs.customer` contain full data from a referenced
+record; multiple references yield arrays. References are tenant scoped and loaded
+only when an expression uses them. Their values are used only for evaluation.
+A missing attribute cannot grant access; only configured messages reach callers.
+
+`invitations_create` accepts `permissions` entries with `resource`, `action`, and
+optional `cond`/`msg`. Grant record and field paths explicitly. They are applied
+when the recipient accepts, and pending grants appear in `invitations_list`.
 
 ## Compose a calendar collection
 
@@ -256,34 +275,31 @@ This recipe preserves history without introducing a special override entity.
 ## Manage permissions and membership
 
 Casbin subjects are `role:<name>` or `user:<id|email>`. Actions are `read`, `create`, `update`,
-`write` (create+update), `delete`, `manage`, and `*`.
+`write` (resource-specific), `delete`, `manage`, and `*`.
 
 ```bash
 saas --org <org-id> permissions list
 saas --org <org-id> permissions grant \
-  --subject role:editor --resource '/collections/*' --action write
+  --subject role:editor --resource '/collections/*' --action update
 saas --org <org-id> permissions revoke \
-  --subject role:editor --resource '/collections/*' --action write
+  --subject role:editor --resource '/collections/*' --action update
 saas --org <org-id> permissions check \
   --user alice@example.com --resource /collections/contacts --action read
 
-saas --org <org-id> permissions row-filter list --collection contacts
-saas --org <org-id> permissions field-filter list --collection contacts
 saas --org <org-id> members list
 saas --org <org-id> permissions invite --email alice@example.com --role member
 saas --org <org-id> permissions invitations
 saas --org <org-id> permissions accept-invite --id <invitation-id>
 ```
 
-Casbin is the collection-level gate. Row filters use the same Where DSL as
-record queries and support `$user.id`, `$user.email`, and `$org.id`. Field
-filters are plain arrays. If access is surprising, inspect all three layers.
+Inspect the caller's record and field policies and their conditions when access
+is surprising. `collections describe` also shows schema validation and rules.
 
 Organization membership does not grant data access. Admins have full
 organization access; members need explicit user or role policies for each
 resource. Creating a collection requires `write` on `/collections` and grants
-the creator `read`, `write`, and `manage` on that new collection, but not
-`delete`. Collection listings omit resources the caller cannot read. Files use
+the creator `read`, `create`, `update`, `manage`, and `delete` on that collection,
+plus read/create/update permissions on its fields. Collection listings omit resources the caller cannot read. Files use
 the separate `/files` resource, and organization statistics and audit logs use
 `/system/stats` and `/system/audit`.
 
@@ -530,3 +546,68 @@ saas skills install --directory /path/to/agent-skills
 The default install destination is
 `~/.lastsaas/skills/lastsaas/SKILL.md`. `skills install` prints the resulting
 path. `skill` is an alias for `skills`, and `path` is an alias for `install`.
+
+### Field validation
+
+Collection field definitions accept `required`, `min`, `max`, `pattern`, and `unique`. These validations apply to every writer, including admins. For example:
+
+```json
+{
+  "discount": { "type": "number", "min": 0, "max": 100 },
+  "email": { "type": "string", "pattern": "^[^@]+@[^@]+$", "unique": true },
+  "customer": { "type": "ref:customers", "required": true }
+}
+```
+
+Use `collections_update_schema` with `update_fields` to merge options into existing definitions. Enum updates may add values; other type changes and enum removals are rejected. `add_fields` only adds new names. Existing records are not rechecked until written. Required fields reject missing or null values; optional fields accept both. Dates are ISO calendar dates and datetimes require a timezone. Validation errors identify paths and issue codes without returning submitted values.
+
+### Collection expression rules
+
+`collections_create` and `collections_update_schema` accept `validations`, an array that replaces the collection's rules. An empty array removes them. `collections_describe` returns the rules. CLI create and update-schema accept `--validations '<json-array>'`.
+
+```json
+[
+  {
+    "name": "end_after_start",
+    "rule": "r.next.data.end > r.next.data.start",
+    "message": "End must be after start."
+  },
+  {
+    "name": "no_reopen",
+    "rule": "r.obj.data.status != 'approved' || r.next.data.status == 'approved'",
+    "message": "Approved records cannot reopen."
+  }
+]
+```
+
+Rules apply to every writer, including admins, inside the write transaction. `r.obj.data` is the current record and `r.next.data` is the proposed complete record. Transition rules using `r.obj` are skipped on creates. `r.usr` contains `id`, `email`, and `org`. Reference data is available as `r.next.refs.customer.limit` for a `ref:` field named `customer`; multiple references resolve to arrays. Related data stays private: failures return only the configured message. Existing records are not revalidated when rules are saved.
+
+## Cross-record validation
+
+Collection `validations` are replacement arrays supplied through `--validations`
+on collection create/schema update. Each rule has a unique `name` and a safe
+`message`, plus an expression `rule`, a `count` query, or a `sum` query.
+Query rules require `min` or `max` and support `$next.<field>` in their Where DSL:
+
+```json
+[
+  {
+    "name": "stock_floor",
+    "sum": { "field": "qty", "where": { "item": "$next.item" } },
+    "min": 0,
+    "message": "Stock cannot be negative."
+  },
+  {
+    "name": "end_after_start",
+    "rule": "r.next.data.end > r.next.data.start",
+    "message": "End must be after start."
+  }
+]
+```
+
+Count checks exclude the current record; sum checks also add its proposed value.
+Rules run inside the write transaction and apply to administrators. Transition
+expressions referencing `r.obj` skip creates. Expressions may use related values
+such as `r.next.refs.customer.max_discount`. Only rule messages are returned.
+Simultaneous conflicting PostgreSQL writes may both pass application-level
+uniqueness or query checks; these rules do not add database locks.

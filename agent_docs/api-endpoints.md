@@ -97,19 +97,13 @@ PATCH  /v1/orgs/:orgId/triggers/:id    update
 DELETE /v1/orgs/:orgId/triggers/:id    delete
 POST   /v1/orgs/:orgId/transactions   each operation's record gates
 
-# Casbin policies and data filters
+# Casbin record and field policies
 GET    /v1/orgs/:orgId/permissions
 POST   /v1/orgs/:orgId/permissions/policies
 DELETE /v1/orgs/:orgId/permissions/policies
 POST   /v1/orgs/:orgId/permissions/roles
 DELETE /v1/orgs/:orgId/permissions/roles
 POST   /v1/orgs/:orgId/permissions/check
-GET    /v1/orgs/:orgId/permissions/row-filters
-POST   /v1/orgs/:orgId/permissions/row-filters
-DELETE /v1/orgs/:orgId/permissions/row-filters/:id
-GET    /v1/orgs/:orgId/permissions/field-filters
-POST   /v1/orgs/:orgId/permissions/field-filters
-DELETE /v1/orgs/:orgId/permissions/field-filters/:id
 
 # Organization access
 # Every organization member may read the member directory. Membership changes
@@ -199,3 +193,9 @@ replaces the library write gate for these uploads. File metadata/content/downloa
 link requests resolve library, current attachment, or retained-history access;
 file deletion requires library delete authority and zero live/history references.
 See [attachments](../docs/attachments.md).
+
+Policy create/revoke bodies accept `{subject, resource, action, cond?, msg?}`.
+Collection create and schema update bodies accept `validations`, a replacement
+array of named expression or count/sum rules. Describe responses include schema
+options, validation rules and the caller's applicable policies. Exports apply
+record read conditions and field projection to the authenticated caller.

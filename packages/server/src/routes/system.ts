@@ -51,6 +51,7 @@ export const systemRouter = new Hono<AppEnvironment>()
     const data = await exportData(
       context.get("services").prisma,
       context.get("orgId"),
+      context.get("userId"),
     );
     await context.get("audit")("export_data", "system", null);
     return context.json({ status: "ok" as const, ...data });

@@ -1,29 +1,9 @@
 import { cachedMetadata, policyCacheKey, invalidateMetadata } from "./cache";
 import type { Prisma, PrismaClient } from "@prisma/client";
-import { newEnforcer, newModel, Util, type Enforcer } from "casbin";
+import { type Enforcer } from "casbin";
 
-import {
-  encodeGrantOptions,
-  validateGrantOptions,
-  type GrantOptions,
-} from "./grant-options";
-
-const CASBIN_MODEL = `
-[request_definition]
-r = sub, obj, act
-
-[policy_definition]
-p = sub, obj, act
-
-[role_definition]
-g = _, _
-
-[policy_effect]
-e = some(where (p.eft == allow))
-
-[matchers]
-m = g(r.sub, p.sub) && keyMatch(r.obj, p.obj) && (r.act == p.act || p.act == "*")
-`;
+import { validatePolicyOptions, type PolicyOptions } from "./policy-options";
+import { conditionalEnforcer, applicablePolicies } from "./conditional-policy";
 
 interface StoredRule {
   ptype: "p" | "g";
@@ -31,6 +11,7 @@ interface StoredRule {
   v1: string;
   v2: string | null;
   v3?: string | null;
+  v4?: string | null;
 }
 
 async function addRule(
@@ -78,7 +59,7 @@ async function removeRule(
 }
 
 export function roleSubject(orgId: string, role: string): string {
-  return `org:${orgId}:user:${role}`;
+  return `org:${orgId}:role:${role}`;
 }
 
 export function getOrgRules(prisma: Prisma.TransactionClient, orgId: string) {
@@ -86,7 +67,7 @@ export function getOrgRules(prisma: Prisma.TransactionClient, orgId: string) {
     return prisma.casbinRule.findMany({
       where: { orgId, ptype: { in: ["p", "g"] } },
       orderBy: { id: "asc" },
-      select: { ptype: true, v0: true, v1: true, v2: true, v3: true },
+      select: { ptype: true, v0: true, v1: true, v2: true, v3: true, v4: true },
     });
   });
 }
@@ -95,25 +76,29 @@ export async function createOrgEnforcer(
   prisma: Prisma.TransactionClient,
   orgId: string,
 ): Promise<Enforcer> {
-  const model = newModel();
-  model.loadModelFromText(CASBIN_MODEL);
-  const enforcer = await newEnforcer(model);
   const rules = await getOrgRules(prisma, orgId);
-
-  for (const rule of rules) {
-    if (!rule.v0 || !rule.v1) continue;
-    if (rule.ptype === "p" && rule.v2 && !rule.v3) {
-      await enforcer.addPolicy(rule.v0, rule.v1, rule.v2);
-      if (rule.v2 === "write") {
-        await enforcer.addPolicy(rule.v0, rule.v1, "create");
-        await enforcer.addPolicy(rule.v0, rule.v1, "update");
-      }
-    } else if (rule.ptype === "g") {
-      await enforcer.addGroupingPolicy(rule.v0, rule.v1);
-    }
-  }
-
-  return enforcer;
+  return conditionalEnforcer(
+    rules
+      .filter(
+        (rule) =>
+          rule.ptype === "p" &&
+          rule.v0 &&
+          rule.v1 &&
+          rule.v2 &&
+          typeof rule.v3 === "string" &&
+          typeof rule.v4 === "string",
+      )
+      .map((rule) => ({
+        subject: rule.v0!,
+        resource: rule.v1!,
+        action: rule.v2!,
+        cond: rule.v3!,
+        msg: rule.v4!,
+      })),
+    rules
+      .filter((rule) => rule.ptype === "g" && rule.v0 && rule.v1)
+      .map((rule) => [rule.v0!, rule.v1!] as const),
+  );
 }
 
 export async function hasPermission(
@@ -124,7 +109,17 @@ export async function hasPermission(
   action: string,
 ): Promise<boolean> {
   const enforcer = await createOrgEnforcer(prisma, orgId);
-  return enforcer.enforce(subject, resource, action);
+  const user = await prisma.user.findUnique({
+    where: { id: subject },
+    select: { email: true },
+  });
+  return enforcer.enforce(
+    subject,
+    { path: resource, data: {}, refs: {} },
+    action,
+    { data: {}, refs: {} },
+    { id: subject, email: user?.email ?? "", org: orgId },
+  );
 }
 
 /** A resource-level check cannot authorize a particular record or field. */
@@ -136,27 +131,17 @@ export async function checkPermission(
   action: string,
 ): Promise<{ allowed: boolean; conditional?: boolean }> {
   const enforcer = await createOrgEnforcer(prisma, orgId);
-  if (await enforcer.enforce(subject, resource, action))
-    return { allowed: true };
-  const subjects = [
+  const policies = await applicablePolicies(
+    enforcer,
     subject,
-    ...(await enforcer.getImplicitRolesForUser(subject)),
-  ];
-  const rules = await getOrgRules(prisma, orgId);
-  const conditional = rules.some(
-    (rule) =>
-      rule.ptype === "p" &&
-      rule.v3 &&
-      rule.v0 &&
-      subjects.includes(rule.v0) &&
-      rule.v1 &&
-      Util.keyMatchFunc(resource, rule.v1) &&
-      (rule.v2 === action ||
-        (rule.v2 === "write" && ["create", "update"].includes(action))),
+    resource,
+    action,
   );
-  return conditional
-    ? { allowed: true, conditional: true }
-    : { allowed: false };
+  return policies.some((policy) => policy.cond.trim() === "true")
+    ? { allowed: true }
+    : policies.length
+      ? { allowed: true, conditional: true }
+      : { allowed: false };
 }
 
 export async function addPolicy(
@@ -165,15 +150,16 @@ export async function addPolicy(
   subject: string,
   resource: string,
   action: string,
-  options: GrantOptions = {},
+  options: PolicyOptions = {},
 ): Promise<boolean> {
-  await validateGrantOptions(prisma, orgId, resource, action, options);
+  await validatePolicyOptions(prisma, orgId, resource, action, options);
   return addRule(prisma, orgId, {
     ptype: "p",
     v0: subject,
     v1: resource,
     v2: action,
-    v3: encodeGrantOptions(options),
+    v3: options.cond ?? "true",
+    v4: options.msg ?? "",
   });
 }
 
@@ -183,14 +169,15 @@ export async function removePolicy(
   subject: string,
   resource: string,
   action: string,
-  options: GrantOptions = {},
+  options: PolicyOptions = {},
 ): Promise<boolean> {
   return removeRule(prisma, orgId, {
     ptype: "p",
     v0: subject,
     v1: resource,
     v2: action,
-    v3: encodeGrantOptions(options),
+    v3: options.cond ?? "true",
+    v4: options.msg ?? "",
   });
 }
 
@@ -257,7 +244,7 @@ export async function bootstrapOrgPolicies(
   try {
     const role = roleSubject(orgId, "admin");
     const policies: readonly StoredRule[] = [
-      { ptype: "p", v0: role, v1: "/*", v2: "*" },
+      { ptype: "p", v0: role, v1: "/*", v2: "*", v3: "true", v4: "" },
       { ptype: "g", v0: adminUserId, v1: role, v2: null },
     ];
 
@@ -275,4 +262,38 @@ export async function bootstrapOrgPolicies(
   } finally {
     await invalidateMetadata(prisma, policyCacheKey(orgId));
   }
+}
+
+/** Rules relevant to the caller, including independent field policies. */
+export async function describeCollectionPolicies(
+  db: Prisma.TransactionClient,
+  orgId: string,
+  subject: string,
+  name: string,
+) {
+  const enforcer = await createOrgEnforcer(db, orgId);
+  const collection = await db.collection.findFirstOrThrow({
+    where: { orgId, name },
+    select: { schema: true },
+  });
+  const paths = [
+    `/collections/${name}`,
+    ...Object.keys(collection.schema as object).map(
+      (field) => `/collections/${name}/fields/${field}`,
+    ),
+  ];
+  const policies = (
+    await Promise.all(
+      paths.flatMap((path) =>
+        ["read", "create", "update", "delete", "manage"].map((action) =>
+          applicablePolicies(enforcer, subject, path, action),
+        ),
+      ),
+    )
+  ).flat();
+  return [
+    ...new Map(
+      policies.map((policy) => [JSON.stringify(policy), policy]),
+    ).values(),
+  ];
 }

@@ -27,7 +27,7 @@ packages/
 │       ├── services.ts               Prisma, SQLite, auth, queue, scheduler
 │       ├── db/                        Collection, record, filter, audit, and export logic
 │       ├── lib/recurrence.ts          Timezone-aware bounded expansion
-│       ├── middleware/                Auth, organization, policy, row/field filters
+│       ├── middleware/                Auth, organization, record and field policies
 │       ├── notifications/             Queue, channels, preferences
 │       ├── scheduler/                 One-shot and recurring delivery planning
 │       ├── routes/                    Hono route families

@@ -84,6 +84,13 @@ async function fixture() {
       "/collections/tasks",
       action,
     );
+  await addPolicy(
+    prisma,
+    context.orgId,
+    context.userId,
+    "/collections/tasks/fields/*",
+    "*",
+  );
   await addPolicy(prisma, context.orgId, context.userId, "/triggers", "write");
   await addPolicy(
     prisma,

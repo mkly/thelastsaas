@@ -1,10 +1,5 @@
 import { invitationPermissionsSchema } from "../../invitation-permissions";
-import {
-  CollectionNotFoundError,
-  LastSaasError,
-  isPlainObject,
-  type Where,
-} from "@lastsaas/shared";
+import { LastSaasError } from "@lastsaas/shared";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { PrismaClient } from "@prisma/client";
@@ -23,23 +18,11 @@ import {
   syncMemberRole,
   unassignRole,
 } from "../../db/casbin";
-import { getCollection } from "../../db/collections";
 import { createServiceAccountSchema } from "../../db/service-accounts";
-import {
-  deleteFieldFilter,
-  listFieldFilters,
-  setFieldFilter,
-} from "../../db/fieldFilters";
-import { whereSchema } from "../../db/query/validation";
 import { issueServiceAccountTokenClaim } from "../../service-account-tokens";
-import {
-  deleteRowFilter,
-  listRowFilters,
-  setRowFilter,
-} from "../../db/rowFilters";
 import { requireOrganization, type McpToolContext } from "../context";
 
-import { decodeGrantOptions, grantOptionSchema } from "../../db/grant-options";
+import { policyOptionsSchema } from "../../db/policy-options";
 
 const policyActions = [
   "read",
@@ -50,19 +33,12 @@ const policyActions = [
   "manage",
   "*",
 ] as const;
-const filterActions = ["read", "write", "delete"] as const;
 const memberRoles = ["admin", "member"] as const;
 const roleName = z
   .string()
   .min(1)
   .max(64)
   .regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/);
-const fieldName = z
-  .string()
-  .min(1)
-  .max(128)
-  .regex(/^[a-zA-Z][a-zA-Z0-9_]*$/);
-
 class ToolError extends Error {
   constructor(
     readonly code: string,
@@ -264,7 +240,14 @@ function registerPermissionTools(
             ptype: { in: ["p", "g"] },
           },
           orderBy: { id: "asc" },
-          select: { ptype: true, v0: true, v1: true, v2: true, v3: true },
+          select: {
+            ptype: true,
+            v0: true,
+            v1: true,
+            v2: true,
+            v3: true,
+            v4: true,
+          },
         }),
         prisma.member.findMany({
           where: { organizationId: requireOrganization(context) },
@@ -288,7 +271,8 @@ function registerPermissionTools(
             subject: contractSubject(rule.v0!, requireOrganization(context)),
             resource: rule.v1!,
             action: rule.v2!,
-            ...decodeGrantOptions(rule.v3),
+            cond: rule.v3!,
+            msg: rule.v4!,
           })),
         role_assignments: rules
           .filter(
@@ -310,13 +294,13 @@ function registerPermissionTools(
     subject: z.string().min(1),
     resource: z.string().min(1).max(512).startsWith("/"),
     action: z.enum(policyActions),
-    ...grantOptionSchema,
+    ...policyOptionsSchema,
   };
   server.registerTool(
     "permissions_grant",
     {
       description:
-        'Add an additive permission grant for role:<name> or user:<id|email>. Optional where and fields apply to a specific /collections/<name> resource. Example: where: {"created_by":"$user.id"}, fields: ["title","status"]. Also supports $user.email and $org.id. create and update are separate; write allows both. Matching grants add access; an unrestricted grant still permits all rows/fields. Delete does not accept fields.',
+        "Grant a resource/action with an optional Casbin condition and denial message. Fields use /collections/<name>/fields/<field> policies.",
       inputSchema: policySchema,
     },
     (input) =>
@@ -330,7 +314,7 @@ function registerPermissionTools(
             subject,
             input.resource,
             input.action,
-            { where: input.where as Where | undefined, fields: input.fields },
+            { cond: input.cond, msg: input.msg },
           ))
         ) {
           throw new ToolError("Conflict", "Policy already exists");
@@ -349,7 +333,7 @@ function registerPermissionTools(
     "permissions_revoke",
     {
       description:
-        "Remove the exact grant, including its where and fields if present. Omitting them removes only the unrestricted grant.",
+        "Remove the exact policy, including its condition and message.",
       inputSchema: policySchema,
     },
     (input) =>
@@ -363,7 +347,7 @@ function registerPermissionTools(
             subject,
             input.resource,
             input.action,
-            { where: input.where as Where | undefined, fields: input.fields },
+            { cond: input.cond, msg: input.msg },
           ))
         ) {
           throw new ToolError("NotFound", "Policy not found");
@@ -462,246 +446,6 @@ function registerPermissionTools(
           resource: input.resource,
           action: input.action,
         };
-      })(),
-  );
-}
-
-function registerFilterTools(server: McpServer, context: McpToolContext): void {
-  server.registerTool(
-    "row_filter_set",
-    {
-      description:
-        "Legacy role row filter; prefer permissions_grant with where and optional fields for new rules. condition is a filter object, " +
-        'e.g. {"and": [{"status": "active"}, {"age": {"gt": 18}}]}; leaf operators: ' +
-        "eq, not, gt, lt, gte, lte, contains, in, is_null, between, occurs_between; " +
-        "boolean nodes: and, or, not (max 8 levels deep)",
-      inputSchema: {
-        collection: z.string().min(1),
-        role: roleName,
-        action: z.enum(filterActions),
-        // Loose at the wire so the advertised JSON Schema stays small
-        // (whereSchema serializes to ~10MB); strict parse happens below.
-        condition: z.record(z.string(), z.unknown()),
-      },
-    },
-    (input) =>
-      run(async () => {
-        await requirePermission(context, "/permissions");
-        const condition = whereSchema.parse(input.condition);
-        const collection = await getCollection(
-          context.services.prisma,
-          requireOrganization(context),
-          input.collection,
-        );
-        const row = await setRowFilter(
-          context.services.prisma,
-          requireOrganization(context),
-          collection.id,
-          input.role,
-          input.action,
-          condition as Where,
-        );
-        await audit(context, "set_row_filter", "permission", row.id, {
-          collection: input.collection,
-          role: input.role,
-          action: input.action,
-        });
-        return { status: "ok", id: row.id };
-      })(),
-  );
-  server.registerTool(
-    "row_filter_list",
-    {
-      description: "List row-level permission filters",
-      inputSchema: { collection: z.string().min(1).optional() },
-    },
-    (input) =>
-      run(async () => {
-        await requirePermission(context, "/permissions");
-        let collectionId: string | undefined;
-        if (input.collection) {
-          try {
-            collectionId = (
-              await getCollection(
-                context.services.prisma,
-                requireOrganization(context),
-                input.collection,
-              )
-            ).id;
-          } catch (error) {
-            if (error instanceof CollectionNotFoundError) {
-              return { status: "ok", row_filters: [] };
-            }
-            throw error;
-          }
-        }
-        const rows = await listRowFilters(
-          context.services.prisma,
-          requireOrganization(context),
-          collectionId,
-        );
-        return {
-          status: "ok",
-          row_filters: rows.map((row) => ({
-            id: row.id,
-            collection: row.collection.name,
-            collection_id: row.collectionId,
-            role: row.role,
-            action: row.action,
-            condition: row.condition,
-            created_at: row.createdAt.toISOString(),
-            updated_at: row.updatedAt.toISOString(),
-          })),
-        };
-      })(),
-  );
-  server.registerTool(
-    "row_filter_delete",
-    {
-      description: "Delete a row-level permission filter",
-      inputSchema: { id: z.string().min(1) },
-    },
-    ({ id }) =>
-      run(async () => {
-        await requirePermission(context, "/permissions");
-        if (
-          !(await deleteRowFilter(
-            context.services.prisma,
-            requireOrganization(context),
-            id,
-          ))
-        ) {
-          throw new ToolError("NotFound", "Row filter not found");
-        }
-        await audit(context, "delete_row_filter", "permission", id);
-        return { status: "ok" };
-      })(),
-  );
-
-  server.registerTool(
-    "field_filter_set",
-    {
-      description:
-        "Legacy role field filter; prefer permissions_grant with fields and optional where for new rules",
-      inputSchema: {
-        collection: z.string().min(1),
-        role: roleName,
-        action: z.enum(filterActions),
-        readable_fields: z.array(fieldName).max(512),
-        writable_fields: z.array(fieldName).max(512),
-      },
-    },
-    (input) =>
-      run(async () => {
-        await requirePermission(context, "/permissions");
-        const collection = await getCollection(
-          context.services.prisma,
-          requireOrganization(context),
-          input.collection,
-        );
-        const collectionSchema = collection.schema;
-        if (!isPlainObject(collectionSchema)) {
-          throw new ToolError("InvalidRequest", "Collection schema is corrupt");
-        }
-        const fields = new Set([
-          ...input.readable_fields,
-          ...input.writable_fields,
-        ]);
-        const unknown = [...fields].filter(
-          (field) => !(field in collectionSchema),
-        );
-        if (unknown.length > 0) {
-          throw new ToolError(
-            "InvalidRequest",
-            `Unknown collection field${unknown.length === 1 ? "" : "s"}: ${unknown
-              .map((field) => `'${field}'`)
-              .join(", ")}`,
-          );
-        }
-        const row = await setFieldFilter(
-          context.services.prisma,
-          requireOrganization(context),
-          collection.id,
-          input.role,
-          input.action,
-          [...new Set(input.readable_fields)],
-          [...new Set(input.writable_fields)],
-        );
-        await audit(context, "set_field_filter", "permission", row.id, {
-          collection: input.collection,
-          role: input.role,
-          action: input.action,
-        });
-        return { status: "ok", id: row.id };
-      })(),
-  );
-  server.registerTool(
-    "field_filter_list",
-    {
-      description: "List field-level permission filters",
-      inputSchema: { collection: z.string().min(1).optional() },
-    },
-    (input) =>
-      run(async () => {
-        await requirePermission(context, "/permissions");
-        let collectionId: string | undefined;
-        if (input.collection) {
-          try {
-            collectionId = (
-              await getCollection(
-                context.services.prisma,
-                requireOrganization(context),
-                input.collection,
-              )
-            ).id;
-          } catch (error) {
-            if (error instanceof CollectionNotFoundError) {
-              return { status: "ok", field_filters: [] };
-            }
-            throw error;
-          }
-        }
-        const rows = await listFieldFilters(
-          context.services.prisma,
-          requireOrganization(context),
-          collectionId,
-        );
-        return {
-          status: "ok",
-          field_filters: rows.map((row) => ({
-            id: row.id,
-            collection: row.collection.name,
-            collection_id: row.collectionId,
-            role: row.role,
-            action: row.action,
-            readable_fields: row.readableFields,
-            writable_fields: row.writableFields,
-            created_at: row.createdAt.toISOString(),
-            updated_at: row.updatedAt.toISOString(),
-          })),
-        };
-      })(),
-  );
-  server.registerTool(
-    "field_filter_delete",
-    {
-      description: "Delete a field-level permission filter",
-      inputSchema: { id: z.string().min(1) },
-    },
-    ({ id }) =>
-      run(async () => {
-        await requirePermission(context, "/permissions");
-        if (
-          !(await deleteFieldFilter(
-            context.services.prisma,
-            requireOrganization(context),
-            id,
-          ))
-        ) {
-          throw new ToolError("NotFound", "Field filter not found");
-        }
-        await audit(context, "delete_field_filter", "permission", id);
-        return { status: "ok" };
       })(),
   );
 }
@@ -1060,7 +804,6 @@ export function registerAccessTools(
   context: McpToolContext,
 ): void {
   registerPermissionTools(server, context);
-  registerFilterTools(server, context);
   registerInvitationTools(server, context);
   registerMemberTools(server, context);
   registerServiceAccountTools(server, context);

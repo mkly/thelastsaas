@@ -24,7 +24,6 @@ import { hasPermission } from "../db/casbin";
 import { invalidateMetadata, policyCacheKey } from "../db/cache";
 import { queryProvider } from "../db/provider";
 import { executeStatement, queryRows, sql } from "../db/query/kysely";
-import { resolveResourceGrants } from "../db/resource-grants";
 import { withUnitOfWork, type UnitOfWork } from "../db/unit-of-work";
 import { authorizeQueue } from "./permissions";
 
@@ -224,14 +223,13 @@ export function createQueueConfigService(
         const items: Queue[] = [];
         for (const row of scanned)
           if (
-            (
-              await resolveResourceGrants(
-                db,
-                context,
-                `/queues/${row.name}`,
-                "read",
-              )
-            ).length
+            await hasPermission(
+              db,
+              context.orgId,
+              context.userId,
+              `/queues/${row.name}`,
+              "read",
+            )
           )
             items.push(serializeQueue(row));
         return {
@@ -247,8 +245,13 @@ export function createQueueConfigService(
       return withUnitOfWork(source, async ({ db }) => {
         const row = await authorizeQueue(db, context, name);
         if (
-          !(await resolveResourceGrants(db, context, `/queues/${name}`, "read"))
-            .length
+          !(await hasPermission(
+            db,
+            context.orgId,
+            context.userId,
+            `/queues/${name}`,
+            "read",
+          ))
         )
           throw new PermissionDeniedError();
         return serializeQueue(row);

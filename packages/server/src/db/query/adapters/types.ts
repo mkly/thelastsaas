@@ -19,6 +19,4 @@ export interface QueryAdapter {
     fieldType?: string,
   ): SqlFragment;
   fieldExists(field: string): SqlFragment;
-  candidateJson(value: unknown): SqlFragment;
-  candidateTimestamp(value: Date): SqlFragment;
 }

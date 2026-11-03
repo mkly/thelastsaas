@@ -102,6 +102,8 @@ async function fixture() {
   await grant("/triggers", "write");
   for (const action of ["read", "create", "update", "delete"])
     await grant("/collections/tasks", action);
+  for (const action of ["read", "create", "update"])
+    await grant("/collections/tasks/fields/*", action);
   await grant("/queues/jobs", "create");
   const triggers = createTriggerService(prisma, "sqlite");
   const rule: TriggerCreate = {
@@ -230,8 +232,7 @@ describe("transactional collection trigger publication", () => {
       "read",
     );
     await f.grant("/collections/tasks", "read", {
-      where: { owner: "$user.id" },
-      fields: ["title"],
+      cond: "r.obj.data.owner == r.usr.id",
     });
     const trigger = await f.triggers.create(f.context, {
       ...f.rule,
@@ -267,13 +268,12 @@ describe("transactional collection trigger publication", () => {
       "read",
     );
     await f.grant("/collections/tasks", "read", {
-      where: { created_by: "$user.id" },
-      fields: ["title"],
+      cond: "r.obj.data.title == 'Owned'",
     });
     await f.triggers.create(f.context, {
       ...f.rule,
       events: ["create", "delete"],
-      where: { created_by: "$user.id" },
+      where: { created_by: f.context.userId },
       mapping: { event: { kind: "metadata", key: "event" } },
     });
     const foreign = await insertRecord(
@@ -348,11 +348,18 @@ describe("transactional collection trigger publication", () => {
           watched: "private",
           predicate: "owner",
         }[revocation as "mapped" | "watched" | "predicate"];
-        await f.grant("/collections/tasks", "read", {
-          fields: ["title", "private", "owner"].filter(
-            (field) => field !== excluded,
-          ),
-        });
+        await removePolicy(
+          f.prisma,
+          f.context.orgId,
+          f.context.userId,
+          "/collections/tasks/fields/*",
+          "read",
+        );
+        await f.grant("/collections/tasks", "read");
+        for (const field of ["title", "private", "owner"].filter(
+          (field) => field !== excluded,
+        ))
+          await f.grant(`/collections/tasks/fields/${field}`, "read");
       }
       if (revocation === "schema")
         await f.prisma.queue.update({

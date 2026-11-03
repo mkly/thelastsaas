@@ -6,12 +6,12 @@ import {
 } from "@lastsaas/shared";
 import { Prisma, type PrismaClient } from "@prisma/client";
 import type { MutationSnapshots } from "./record-mutations";
-import type { GrantRecord } from "./record-grants";
+import type { AccessRecord } from "./collection-access";
 import type { UnitOfWork } from "./unit-of-work";
 
 export const RECORD_HISTORY_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
-function snapshot(row: GrantRecord | null) {
+function snapshot(row: AccessRecord | null) {
   return row === null
     ? Prisma.DbNull
     : (JSON.parse(

@@ -1,8 +1,19 @@
+import type { CollectionValidation } from "./collection-rules";
 import type { PortableAutomationData } from "./portable-automation";
 import type { NotificationAudience } from "./notification-audience";
 
 export type FieldDef =
-  string | { type: string; description?: string; multiple?: boolean };
+  | string
+  | {
+      type: string;
+      description?: string;
+      multiple?: boolean;
+      required?: boolean;
+      unique?: boolean;
+      min?: number;
+      max?: number;
+      pattern?: string;
+    };
 export type Schema = Record<string, FieldDef>;
 
 export type Where =
@@ -52,6 +63,7 @@ export interface OkResponse {
 }
 
 export interface Collection {
+  validations: CollectionValidation[];
   id: string;
   name: string;
   schema: Schema;
@@ -84,27 +96,6 @@ export interface File {
   record_id: string | null;
   uploaded_by: string;
   created_at: string;
-}
-
-export interface RowFilter {
-  id: string;
-  collection: string;
-  role: string;
-  action: string;
-  where: Where;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface FieldFilter {
-  id: string;
-  collection: string;
-  role: string;
-  action: string;
-  readable_fields: string[];
-  writable_fields: string[];
-  created_at: string;
-  updated_at: string;
 }
 
 export type NotificationScheduleKind = "one_shot" | "recurring";
@@ -150,6 +141,7 @@ export interface ExportData extends PortableAutomationData {
     name: string;
     schema: Schema;
     description: string;
+    validations?: CollectionValidation[];
     records: Array<{
       id: string;
       data: Record<string, unknown>;
@@ -174,25 +166,12 @@ export interface ExportData extends PortableAutomationData {
     subject: string;
     resource: string;
     action: string;
-    where?: Where;
-    fields?: string[];
+    cond?: string;
+    msg?: string;
   }>;
   role_assignments: Array<{
     user_id: string;
     role: string;
-  }>;
-  row_filters: Array<{
-    collection: string;
-    role: string;
-    action: string;
-    condition: Where;
-  }>;
-  field_filters: Array<{
-    collection: string;
-    role: string;
-    action: string;
-    readable_fields: string[];
-    writable_fields: string[];
   }>;
   notification_schedules: Array<{
     id: string;
@@ -219,8 +198,6 @@ export interface ImportResult {
   imported_files: number;
   imported_policies: number;
   imported_role_assignments: number;
-  imported_row_filters: number;
-  imported_field_filters: number;
   imported_notification_schedules: number;
   imported_queues?: number;
   imported_queue_schedules?: number;

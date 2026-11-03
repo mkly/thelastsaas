@@ -77,6 +77,8 @@ async function createHarness() {
         v0: roleSubject("org_claim", "admin"),
         v1: "/*",
         v2: "*",
+        v3: "true",
+        v4: "",
       },
       {
         orgId: "org_claim",

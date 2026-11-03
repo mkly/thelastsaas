@@ -177,6 +177,7 @@ describe("trigger REST and MCP transports", () => {
   async function creatorGrants() {
     await grant("/triggers", "write");
     await grant(`/collections/${rule.collection}`, "read");
+    await grant(`/collections/${rule.collection}/fields/*`, "read");
     await grant("/queues/jobs", "create");
   }
 

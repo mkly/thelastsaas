@@ -10,7 +10,6 @@ import {
   compileWhere as buildWhere,
   substitute,
   validateField,
-  type Principal,
 } from "../src/db/query/compile";
 import { whereSchema } from "../src/db/query/validation";
 
@@ -500,38 +499,18 @@ describe("scope and Where composition", () => {
 });
 
 describe("substitute", () => {
-  const principal: Principal = {
-    userId: "u1",
-    userEmail: "a@example.com",
-    orgId: "org1",
-  };
-
-  test("substitutes the closed principal-variable set", () => {
-    expect(substitute({ name: "$user.id" }, principal)).toEqual({ name: "u1" });
-    expect(substitute({ name: "$user.email" }, principal)).toEqual({
-      name: "a@example.com",
-    });
-    expect(substitute({ name: "$org.id" }, principal)).toEqual({
-      name: "org1",
-    });
-    expect(substitute({ name: "literal" }, principal)).toEqual({
-      name: "literal",
-    });
-  });
-
-  test("walks nesting and rejects unrecognized variables", () => {
+  test("fills next-record values recursively and preserves values", () => {
     expect(
       substitute(
-        { and: [{ name: "$user.id" }, { region: "$org.id" }] } as Where,
-        principal,
+        { and: [{ amount: { gte: "$next.minimum" } }, { name: "$next.name" }] },
+        { minimum: 0, name: "Alice" },
       ),
-    ).toEqual({ and: [{ name: "u1" }, { region: "org1" }] });
-    expect(() => substitute({ name: "$user.password" }, principal)).toThrow(
-      /Unknown substitution/,
-    );
-    expect(() => substitute({ name: "$$" }, principal)).toThrow(
-      /Unknown substitution/,
-    );
+    ).toEqual({ and: [{ amount: { gte: 0 } }, { name: "Alice" }] });
+    expect(substitute({ name: "literal" }, {})).toEqual({ name: "literal" });
+  });
+  test("rejects unknown variables and missing fields", () => {
+    for (const value of ["$user.id", "$org.id", "$next.missing", "$$"])
+      expect(() => substitute({ name: value }, {})).toThrow();
   });
 });
 
@@ -972,4 +951,27 @@ describe("queue payload predicates", () => {
       ).toContain('"id"');
     });
   }
+});
+
+describe("native ID array scopes", () => {
+  test("binds a large permitted ID set once on both providers", () => {
+    const ids = Array.from({ length: 40000 }, (_, index) => `id-${index}`);
+    const sqlite = compileWhere({ id: { in: ids } }, schema, "sqlite");
+    expect(sqlite.sql).toContain("IN (SELECT value FROM json_each(?))");
+    expect(sqlite.params).toEqual([JSON.stringify(ids)]);
+    const postgres = compileWhere({ id: { in: ids } }, schema, "postgresql");
+    expect(postgres.sql).toContain("= ANY($1::text[])");
+    expect(postgres.params).toEqual([ids]);
+  });
+  test("does not reinterpret queue payload fields named id", () => {
+    const query = compileWhere(
+      { id: { in: [1, 2] } },
+      { id: "number" },
+      "sqlite",
+      { payloadOnly: true },
+    );
+    expect(query.sql).not.toContain("json_each");
+    expect(query.params).toContain(1);
+    expect(query.params).toContain(2);
+  });
 });

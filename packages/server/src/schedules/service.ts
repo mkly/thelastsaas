@@ -26,7 +26,7 @@ import { hasPermission } from "../db/casbin";
 import { queryProvider } from "../db/provider";
 import { lockOccurrenceSource } from "./occurrences";
 import { withUnitOfWork, type UnitOfWork } from "../db/unit-of-work";
-import { InvalidRecurrenceError, parseRecurrence } from "../lib/recurrence";
+import { InvalidRecurrenceError, parseRecurrence } from "@lastsaas/shared";
 import {
   auditQueueConfiguration,
   lockQueue,

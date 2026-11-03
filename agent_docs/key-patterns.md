@@ -14,29 +14,30 @@ validated before interpolation into SQLite JSON expressions.
 Boolean nodes contain exactly one of `and`, `or`, or `not`. Leaf fields accept
 a scalar equality value or `eq`, `not`, `gt`, `lt`, `gte`, `lte`, `contains`,
 `in`, `is_null`, `between`, and `occurs_between`. User predicates and applicable
-row filters are composed before querying.
+allowed record IDs are composed before querying.
 
 `contains` escapes SQL wildcard characters. Empty `in` lists are always false.
 Limits are bounded. Aggregate aliases may be used by `having` and `order_by`.
 
 ## Permission composition
 
-For each operation, reason through these layers in order:
+Casbin stores `cond` in `v3` and the denial `msg` in `v4`. The matcher checks
+roles, resource paths, exact actions (or `*`), and `eval(p.cond)` with the shared
+rule context. Read policies evaluate rows in a batch and pass allowed IDs as one
+SQL array parameter. A true policy avoids scanning rows. Writes recheck current
+policies against before/proposed data inside the UnitOfWork.
 
-1. Casbin policy for subject, resource, and action.
-2. Row filter for collection, role, and action, expressed as Where.
-3. Field filter for collection, role, and action, expressed as readable and
-   writable field-name arrays.
-
-If any granting role is unrestricted at a layer, that layer is unrestricted.
-Otherwise matching role filters are unioned appropriately. Substitutions in row
-filters are `$user.id`, `$user.email`, and `$org.id`.
+Field policies use `/collections/<name>/fields/<field>` (or `*`). Check each field
+once per request and project allowed fields; reject queries referencing hidden
+fields. Each changed field also needs create/update permission. Fields cannot
+have record-dependent conditions. Rules use `r.usr.id`, `r.usr.email`, `r.usr.org`,
+`r.obj.data`, `r.next.data` and lazily loaded `refs`. See [permissions](../docs/mcp.md#conditional-permissions).
 
 ## Recurrence
 
 Store local recurrence content with `DTSTART;TZID`, `RRULE`, and optional
 `EXDATE`. Expansion must have a bounded UTC window. Row filtering happens before
-expansion; pagination happens after expansion. A field hidden by a field filter
+expansion; pagination happens after expansion. A field without read permission
 cannot be referenced by `occurs_between`.
 
 To change one occurrence, exclude its original local start from the series and
@@ -78,7 +79,7 @@ the permanent audit log. See [record history](../docs/record-history.md).
 Queue payloads reject unknown fields and reuse collection field types, including
 omitted/null values. Schema changes
 require zero retained entries. Claim and settlement require whole-queue read/update permissions and an owned
-lease token. Authorized workers receive full payloads. Collection filters still apply.
+lease token. Authorized workers receive full payloads. Collection policies still apply.
 
 Keep outer transaction ownership in services. Pass `{db,provider}` through record
 mutation, enqueue, trigger publication and occurrence materialization; do not
@@ -117,3 +118,13 @@ snapshots; history cleanup releases pins. File deletion checks live/history pins
 before deleting metadata and then storage bytes. Library listings select only
 standalone files. See [relationships](../docs/relationships.md) and
 [attachments](../docs/attachments.md).
+
+## Collection validation
+
+Collection `validations` store named expressions or count/sum queries and safe failure messages. REST, MCP and CLI create/update accept replacement arrays. The database layer validates expressions and reference-field names when saving. Record create, batch, update and import evaluate applicable rules inside their UnitOfWork using the shared Casbin expression pipeline. Transition rules referencing `r.obj` skip creates. Rule references load full tenant-scoped target data only for evaluation; failures expose configured messages.
+
+Query rules fill `$next.<field>` values, then use countRecords/aggregateRecords in
+the same UnitOfWork, excluding the record being updated. Sums add the proposed
+value. Field uniqueness sees every row, as do query rules and reference checks.
+These application checks do not serialize simultaneous conflicting PostgreSQL
+writes. SQLite serializes writes. Validation always applies to administrators.

@@ -95,6 +95,41 @@ describe("data command registration", () => {
 });
 
 describe("collection commands", () => {
+  test("sends expression rules on create and replaces them without field edits", async () => {
+    const rules = [
+      {
+        name: "range",
+        rule: "r.next.data.end > r.next.data.start",
+        message: "Invalid range.",
+      },
+    ];
+    const program = createProgram([
+      (root) => registerCollections(root, dependencies),
+    ]);
+    await program.parseAsync([
+      "bun",
+      "saas",
+      "collections",
+      "create",
+      "ranges",
+      "--schema",
+      '{"start":"number","end":"number"}',
+      "--validations",
+      JSON.stringify(rules),
+    ]);
+    expect(await requests[0]!.json()).toMatchObject({ validations: rules });
+    await program.parseAsync([
+      "bun",
+      "saas",
+      "collections",
+      "update-schema",
+      "ranges",
+      "--validations",
+      "[]",
+    ]);
+    expect(await requests[1]!.json()).toEqual({ validations: [] });
+  });
+
   test("creates a collection in the selected organization", async () => {
     responseBodies.push({
       status: "ok",

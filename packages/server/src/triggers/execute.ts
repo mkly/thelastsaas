@@ -14,25 +14,25 @@ import {
   type TriggerCreate,
 } from "@lastsaas/shared";
 import type { MutationSnapshots } from "../db/record-mutations";
-import { substitute } from "../db/query/compile";
+import { compileWhere } from "../db/query/compile";
 import { executeStatement, queryRows, sql } from "../db/query/kysely";
 import {
-  evaluateGrants,
+  checkRecordAccess,
   metadataFields,
-  type GrantRecord,
-  type ResourceGrants,
-} from "../db/resource-grants";
+  type AccessRecord,
+  type CollectionAccess,
+} from "../db/collection-access";
 import type { UnitOfWork } from "../db/unit-of-work";
 import { enqueueQueueInTransaction } from "../queues/enqueue";
 import { validateTriggerConfiguration } from "./service";
 
 async function matches(
   unit: UnitOfWork,
-  row: GrantRecord,
+  row: AccessRecord,
   schema: Schema,
-  grants: ResourceGrants,
+  grants: CollectionAccess,
 ) {
-  const result = await evaluateGrants(
+  const result = await checkRecordAccess(
     unit.db,
     grants,
     row,
@@ -42,14 +42,10 @@ async function matches(
   return grants.filter((_, i) => result[i]);
 }
 
-function readable(grants: ResourceGrants, fields: Iterable<string>) {
+function readable(grants: CollectionAccess, fields: Iterable<string>) {
   return (
     grants.length > 0 &&
-    [...fields].every((field) =>
-      grants.some(
-        (g) => g.readable === undefined || g.readable.includes(field),
-      ),
-    )
+    [...fields].every((field) => grants.some((g) => g.readable.includes(field)))
   );
 }
 
@@ -163,17 +159,27 @@ export async function executeRecordTriggers(
         )
       )
         continue;
-      if (
-        !(
-          await matches(unit, source, schema, [
-            {
-              where: definition.where && substitute(definition.where, creator),
-              checkAfter: true,
-            },
-          ])
-        ).length
-      )
-        continue;
+      if (definition.where) {
+        const compiled = compileWhere(definition.where, schema, unit.provider);
+        const data =
+          unit.provider === "postgresql"
+            ? sql`CAST(${JSON.stringify(source.data)} AS jsonb)`
+            : sql`${JSON.stringify(source.data)}`;
+        const created =
+          unit.provider === "postgresql"
+            ? sql`CAST(${source.createdAt.toISOString()} AS timestamp)`
+            : sql`${source.createdAt.getTime()}`;
+        const updated =
+          unit.provider === "postgresql"
+            ? sql`CAST(${source.updatedAt.toISOString()} AS timestamp)`
+            : sql`${source.updatedAt.getTime()}`;
+        const selected = await queryRows<{ matched: number | boolean }>(
+          unit.db,
+          unit.provider,
+          sql`SELECT CASE WHEN ${compiled.expression ?? sql`1=1`} THEN 1 ELSE 0 END AS matched FROM (SELECT ${source.id} AS id, ${data} AS data, ${source.createdBy} AS created_by, ${created} AS created_at, ${updated} AS updated_at) AS snapshot`,
+        );
+        if (!selected[0]?.matched) continue;
+      }
 
       const beforeFields: string[] = [];
       const afterFields: string[] = [];

@@ -84,6 +84,8 @@ async function fixture() {
     addPolicy(prisma, orgId, userId, resource, action, options);
   for (const action of ["create", "update", "delete", "read"])
     await grant("/collections/tasks", action);
+  for (const action of ["read", "create", "update"])
+    await grant("/collections/tasks/fields/*", action);
   await grant("/queues/jobs", "create");
   await prisma.collection.create({
     data: {
@@ -95,6 +97,7 @@ async function fixture() {
   });
   await grant("/collections/notes", "create");
   await grant("/collections/notes", "read");
+  await grant("/collections/notes/fields/*", "*");
   const service = createTransactionService(prisma, provider);
   const execute = (input: TransactionRequest) =>
     service.execute(context, input);
@@ -204,9 +207,24 @@ describe(`bounded transactions (${provider})`, () => {
       "/collections/tasks",
       "update",
     );
+    await removePolicy(
+      prisma,
+      context.orgId,
+      context.userId,
+      "/collections/tasks/fields/*",
+      "update",
+    );
+    await removePolicy(
+      prisma,
+      context.orgId,
+      context.userId,
+      "/collections/tasks/fields/*",
+      "read",
+    );
+    await grant("/collections/tasks/fields/title", "read");
+    await grant("/collections/tasks/fields/title", "update");
     await grant("/collections/tasks", "update", {
-      where: { owner: "me" },
-      fields: ["title"],
+      cond: 'r.obj.data.owner == "me" && r.next.data.owner == "me"',
     });
     const updated = await execute({
       operations: [
@@ -259,14 +277,22 @@ describe(`bounded transactions (${provider})`, () => {
       "/collections/tasks",
       "create",
     );
+    await removePolicy(
+      prisma,
+      context.orgId,
+      context.userId,
+      "/collections/tasks/fields/*",
+      "create",
+    );
+    await grant("/collections/tasks/fields/title", "create");
+    await grant("/collections/tasks/fields/owner", "create");
     await grant("/collections/tasks", "create", {
-      where: { owner: "me" },
-      fields: ["title", "owner"],
+      cond: 'r.next.data.owner == "me"',
     });
     await expect(execute({ operations: [create] })).rejects.toThrow("secret");
     await expect(
       execute({ operations: [{ ...create, data: { owner: "other" } }] }),
-    ).rejects.toThrow("No grant");
+    ).rejects.toThrow("Permission denied");
     await removePolicy(
       prisma,
       context.orgId,
@@ -417,9 +443,16 @@ describe(`bounded transactions (${provider})`, () => {
       "/collections/tasks",
       "read",
     );
+    await removePolicy(
+      prisma,
+      context.orgId,
+      context.userId,
+      "/collections/tasks/fields/*",
+      "read",
+    );
+    await grant("/collections/tasks/fields/title", "read");
     await grant("/collections/tasks", "read", {
-      where: { owner: "me" },
-      fields: ["title"],
+      cond: 'r.obj.data.owner == "me"',
     });
     const replay = await execute(request);
     expect(replay.results[0]).toMatchObject({
@@ -429,11 +462,20 @@ describe(`bounded transactions (${provider})`, () => {
       prisma,
       context.orgId,
       context.userId,
+      "/collections/tasks/fields/title",
+      "read",
+    );
+    await removePolicy(
+      prisma,
+      context.orgId,
+      context.userId,
       "/collections/tasks",
       "read",
-      { where: { owner: "me" }, fields: ["title"] },
+      { cond: 'r.obj.data.owner == "me"' },
     );
-    await grant("/collections/tasks", "read", { where: { owner: "other" } });
+    await grant("/collections/tasks", "read", {
+      cond: 'r.obj.data.owner == "other"',
+    });
     await expect(execute(request)).rejects.toThrow("Permission denied");
     expect(await counts()).toEqual(before);
     await prisma.member.deleteMany({
@@ -459,7 +501,7 @@ describe(`bounded transactions (${provider})`, () => {
       "delete",
     );
     await grant("/collections/tasks", "delete", {
-      where: { created_by: context.userId },
+      cond: "r.usr.id == " + JSON.stringify(context.userId),
     });
     expect(await execute(request)).toEqual(result);
     await removePolicy(
@@ -468,7 +510,7 @@ describe(`bounded transactions (${provider})`, () => {
       context.userId,
       "/collections/tasks",
       "delete",
-      { where: { created_by: context.userId } },
+      { cond: "r.usr.id == " + JSON.stringify(context.userId) },
     );
     await expect(execute(request)).rejects.toThrow("Permission denied");
     expect(await counts()).toEqual(before);

@@ -13,20 +13,15 @@ import {
 } from "@lastsaas/shared";
 import type { Prisma, PrismaClient, RecordHistory } from "@prisma/client";
 import { parseRequest } from "../lib/transport";
-import {
-  getCollectionInTransaction,
-  validateCollectionRecordData,
-} from "./collections";
-import { filterReadableData } from "./fieldFilters";
+import { getCollectionInTransaction } from "./collections";
+import { filterReadableData } from "./field-access";
 import { queryProvider } from "./provider";
 import {
-  evaluateGrants,
-  grantFieldFilter,
-  metadataFields,
-  resolveRecordGrants,
-  type RecordGrants,
-} from "./record-grants";
-import { compileWhere } from "./query/compile";
+  checkRecordAccess,
+  projectAccess,
+  resolveCollectionAccess,
+  type CollectionAccess,
+} from "./collection-access";
 import { RECORD_HISTORY_RETENTION_MS } from "./record-history-storage";
 import type { DbProvider } from "./query/adapters/types";
 
@@ -38,8 +33,7 @@ interface Snapshot {
 }
 
 interface HistoryGrant {
-  grant: RecordGrants[number];
-  conditionSchema: Schema;
+  grant: CollectionAccess[number];
 }
 
 async function projectSnapshot(
@@ -52,24 +46,9 @@ async function projectSnapshot(
 ): Promise<JsonObject | null | undefined> {
   if (value === null) return null;
   const snapshot = value as unknown as Snapshot;
-  // A field name can be reused after its live records have been deleted. Old
-  // values must not acquire access through SQL casts to the new field type.
-  // Validate only predicate fields so independent grants retain additive access.
-  const grants = historyGrants
-    .filter(
-      ({ conditionSchema }) =>
-        validateCollectionRecordData(
-          Object.fromEntries(
-            Object.keys(conditionSchema).map((field) => [
-              field,
-              snapshot.data[field],
-            ]),
-          ),
-          conditionSchema,
-        ).length === 0,
-    )
-    .map(({ grant }) => grant);
-  const matches = await evaluateGrants(
+  // Evaluate each saved version against current policies, using its original data.
+  const grants = historyGrants.map(({ grant }) => grant);
+  const matches = await checkRecordAccess(
     prisma,
     grants,
     {
@@ -86,7 +65,7 @@ async function projectSnapshot(
   if (!allowed.length) return undefined;
   return filterReadableData(
     snapshot.data,
-    grantFieldFilter(allowed),
+    projectAccess(allowed),
   ) as JsonObject;
 }
 
@@ -172,7 +151,7 @@ export async function queryRecordHistory(
     collectionName,
   );
   const schema = collection.schema as Schema;
-  const grants = await resolveRecordGrants(
+  const grants = await resolveCollectionAccess(
     prisma,
     context,
     collection.id,
@@ -181,16 +160,7 @@ export async function queryRecordHistory(
   );
   if (!grants.length) throw new PermissionDeniedError();
   const provider = queryProvider(prisma);
-  const historyGrants = grants.map((grant) => {
-    const conditionSchema: Schema = {};
-    compileWhere(grant.where, schema, provider, {
-      isFieldAllowed: (field) => {
-        if (!metadataFields.has(field)) conditionSchema[field] = schema[field]!;
-        return true;
-      },
-    });
-    return { grant, conditionSchema };
-  });
+  const historyGrants = grants.map((grant) => ({ grant }));
   const cutoff = new Date(now.getTime() - RECORD_HISTORY_RETENTION_MS);
   const where: Prisma.RecordHistoryWhereInput = {
     orgId: context.orgId,
@@ -293,24 +263,14 @@ export async function canReadHistoryFile(
   for (const link of links) {
     const row = link.history;
     const schema = row.collection.schema as Schema;
-    const grants = await resolveRecordGrants(
+    const grants = await resolveCollectionAccess(
       db,
       context,
       row.collectionId,
       `/collections/${row.collection.name}`,
       "read",
     );
-    const historyGrants = grants.map((grant) => {
-      const conditionSchema: Schema = {};
-      compileWhere(grant.where, schema, provider, {
-        isFieldAllowed: (field) => {
-          if (!metadataFields.has(field))
-            conditionSchema[field] = schema[field]!;
-          return true;
-        },
-      });
-      return { grant, conditionSchema };
-    });
+    const historyGrants = grants.map((grant) => ({ grant }));
     for (const snapshot of [row.before, row.after]) {
       const visible = await projectSnapshot(
         db,

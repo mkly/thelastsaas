@@ -276,7 +276,7 @@ describe("end-to-end walkthrough", () => {
       );
     }
 
-    for (const action of ["read", "write"] as const) {
+    for (const action of ["read", "create", "update"] as const) {
       await json(
         await app.request(
           `/v1/orgs/${orgId}/permissions/policies`,
@@ -284,6 +284,9 @@ describe("end-to-end walkthrough", () => {
             subject: "role:submitter",
             resource: "/collections/events",
             action,
+            ...(action === "read"
+              ? { cond: "r.obj.data.title == 'Standup'" }
+              : {}),
           }),
         ),
         201,
@@ -299,31 +302,24 @@ describe("end-to-end walkthrough", () => {
       ),
       201,
     );
-    await json(
-      await app.request(
-        `/v1/orgs/${orgId}/permissions/row-filters`,
-        jsonRequest(admin.token, {
-          collection: "events",
-          role: "submitter",
-          action: "read",
-          condition: { created_by: "$user.id" },
-        }),
-      ),
-      200,
-    );
-    await json(
-      await app.request(
-        `/v1/orgs/${orgId}/permissions/field-filters`,
-        jsonRequest(admin.token, {
-          collection: "events",
-          role: "submitter",
-          action: "write",
-          readable_fields: ["title", "notes", "schedule"],
-          writable_fields: ["title", "schedule"],
-        }),
-      ),
-      200,
-    );
+    for (const [action, fields] of [
+      ["read", ["title", "notes", "schedule"]],
+      ["create", ["title", "schedule"]],
+      ["update", ["title", "schedule"]],
+    ] as const) {
+      for (const field of fields)
+        await json(
+          await app.request(
+            `/v1/orgs/${orgId}/permissions/policies`,
+            jsonRequest(admin.token, {
+              subject: "role:submitter",
+              resource: `/collections/events/fields/${field}`,
+              action,
+            }),
+          ),
+          201,
+        );
+    }
 
     const denied = await app.request(
       `/v1/orgs/${orgId}/collections/events/records`,
@@ -455,8 +451,6 @@ describe("end-to-end walkthrough", () => {
     expect(imported).toMatchObject({
       imported_collections: 1,
       imported_records: 2,
-      imported_row_filters: 1,
-      imported_field_filters: 1,
       imported_notification_schedules: 1,
     });
     const roundTrip = await json<{ records: unknown[] }>(
@@ -478,8 +472,6 @@ describe("end-to-end walkthrough", () => {
       "update_member_role",
       "add_policy",
       "assign_role",
-      "set_row_filter",
-      "set_field_filter",
       "insert_record",
       "notify",
       "export_data",
