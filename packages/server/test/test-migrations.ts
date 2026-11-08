@@ -1,14 +1,19 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { join } from "node:path";
 
-const migrationsDirectory = fileURLToPath(
-  new URL("../prisma/migrations", import.meta.url),
+// Tests create empty databases from the current schema; they never upgrade data.
+export const testMigrationSql = execFileSync(
+  process.execPath,
+  [
+    fileURLToPath(
+      new URL("../node_modules/prisma/build/index.js", import.meta.url),
+    ),
+    "migrate",
+    "diff",
+    "--from-empty",
+    "--to-schema-datamodel",
+    fileURLToPath(new URL("../prisma/schema.prisma", import.meta.url)),
+    "--script",
+  ],
+  { encoding: "utf8", env: { ...process.env, DATABASE_URL: "file:unused.db" } },
 );
-
-export const testMigrationSql = readdirSync(migrationsDirectory)
-  .sort()
-  .map((name) => join(migrationsDirectory, name, "migration.sql"))
-  .filter((path) => existsSync(path))
-  .map((path) => readFileSync(path, "utf8"))
-  .join("\n");

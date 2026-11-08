@@ -26,7 +26,7 @@ TEST_POSTGRES_URL=postgresql://… bun run smoke:built
 ```
 
 It builds the current-platform CLI once, then generates the matching Prisma
-client, applies SQLite migrations or the PostgreSQL schema, and builds/starts
+client, creates the current SQLite or PostgreSQL schema, and builds/starts
 the standalone server separately for each provider. It checks `/health`, signs
 up and verifies a disposable human through the public auth endpoints using
 console email, and runs the compiled CLI's `whoami`, organization creation,

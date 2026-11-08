@@ -14,7 +14,7 @@ bun install
 cd packages/server
 cp .env.example .env
 mkdir -p data
-DATABASE_URL=file:../data/lastsaas.db bunx prisma migrate deploy
+DATABASE_URL=file:../data/lastsaas.db bunx prisma db push
 bun run prisma:generate
 bun run dev
 ```
@@ -26,7 +26,7 @@ from the repository root with `bun run dev`.
 Bun loads `packages/server/.env` when starting the server. The example uses
 SQLite, local file storage, and console output for email. See the
 [configuration reference](agent_docs/config.md) for environment variables.
-The migration command uses a path relative to the Prisma schema directory;
+The schema command uses a path relative to the Prisma schema directory;
 the runtime SQLite path is relative to `packages/server`.
 
 ## Disable password authentication
@@ -96,11 +96,12 @@ The embedded operator guide is available through `dist/saas skills`.
 ## Database development
 
 `packages/server/prisma/schema.prisma` is the canonical SQLite schema.
-After pulling SQLite migrations, apply them and regenerate the client:
+For a fresh or disposable development database, apply the current schema and
+regenerate the client:
 
 ```sh
 cd packages/server
-DATABASE_URL=file:../data/lastsaas.db bunx prisma migrate deploy
+DATABASE_URL=file:../data/lastsaas.db bunx prisma db push
 bun run prisma:generate
 ```
 
@@ -112,6 +113,9 @@ bun run --cwd packages/server prisma:push:postgres
 bun run --cwd packages/server prisma:generate:postgres
 bun run dev
 ```
+
+Existing deployments require an operator-managed database update and backup;
+releases do not automatically convert stored data or permissions.
 
 These scripts generate `schema.postgres.prisma` from the canonical schema.
 Re-run them after schema changes; do not apply SQLite migrations to PostgreSQL.

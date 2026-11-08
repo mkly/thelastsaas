@@ -110,10 +110,11 @@ async function smoke(provider: "sqlite" | "postgres"): Promise<void> {
     provider === "sqlite"
       ? [
           prisma,
-          "migrate",
-          "deploy",
+          "db",
+          "push",
           "--schema",
           "packages/server/prisma/schema.prisma",
+          "--skip-generate",
         ]
       : ["bun", "run", "--cwd", "packages/server", "prisma:push:postgres"],
     env,
