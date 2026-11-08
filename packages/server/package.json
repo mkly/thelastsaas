@@ -1,6 +1,6 @@
 {
   "name": "@lastsaas/server",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "private": true,
   "type": "module",
   "exports": {
@@ -18,6 +18,7 @@
     "@better-auth/api-key": "1.7.1",
     "@better-auth/mcp": "1.7.1",
     "@better-auth/oauth-provider": "1.7.1",
+    "@casbin/expression-eval": "5.3.0",
     "@hono/mcp": "^0.3.2",
     "@hono/zod-validator": "0.9.1",
     "@lastsaas/shared": "workspace:*",
@@ -34,10 +35,10 @@
     "luxon": "^3.7.2",
     "nodemailer": "^7.0.6",
     "pg-boss": "12.37.1",
+    "pino": "^10.4.0",
     "rate-limiter-flexible": "^11.2.0",
     "rrule": "^2.8.1",
-    "zod": "^4.1.11",
-    "@casbin/expression-eval": "5.3.0"
+    "zod": "^4.1.11"
   },
   "optionalDependencies": {
     "@aws-sdk/client-s3": "3.1136.0",

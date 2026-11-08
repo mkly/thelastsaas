@@ -2,6 +2,7 @@ import { PgBoss, fromPrisma, type CommandResponse } from "pg-boss";
 import type { Prisma } from "@prisma/client";
 import type { JsonObject } from "@lastsaas/shared";
 import { AutomationConflictError } from "@lastsaas/shared";
+import { log } from "../logger";
 import type { JobBackend, JobMessage, JobPolicy, JobStatus } from "./types";
 
 export class PostgresJobs implements JobBackend {
@@ -11,7 +12,9 @@ export class PostgresJobs implements JobBackend {
 
   constructor(url: string, schema = "pgboss") {
     this.boss = new PgBoss({ connectionString: url, schema });
-    this.boss.on("error", (error) => console.error("Job backend error", error));
+    this.boss.on("error", (error) =>
+      log.error({ scope: "jobs:postgres", err: error }, "Job backend error"),
+    );
   }
   async start() {
     await (this.starting ??= this.boss.start());

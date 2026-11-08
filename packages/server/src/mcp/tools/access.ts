@@ -68,7 +68,7 @@ function failure(error: unknown): CallToolResult {
   } else {
     // Route handlers surface an unexpected fault as a bare 500; mirror that
     // here rather than echoing internal error text back to the MCP client.
-    log.error("mcp", "access tool execution failed", error);
+    log.error({ scope: "mcp", err: error }, "access tool execution failed");
     code = "InternalError";
     message = "Tool execution failed";
   }

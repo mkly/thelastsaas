@@ -54,7 +54,7 @@ export function transportError(error: unknown) {
       status: AUTOMATION_ERROR_STATUS[code],
     };
   }
-  log.error("api", `Operation failed (${errorKind(error)})`);
+  log.error({ scope: "api" }, `Operation failed (${errorKind(error)})`);
   return {
     body: errorResponse("InternalError", "Internal server error"),
     status: 500 as const,

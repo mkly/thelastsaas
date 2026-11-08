@@ -45,13 +45,19 @@ export function createAuthEmailSender(
 
   return async ({ type, to, url }) => {
     const template = TEMPLATES[type];
-    log.info("auth-email", `sending ${type} email to ${to} via ${channels[0]}`);
+    log.info(
+      { scope: "auth-email" },
+      `sending ${type} email to ${to} via ${channels[0]}`,
+    );
     const delivered = await notifications.send(
       { to, subject: template.subject, text: template.body(url) },
       channels,
     );
     if (!delivered) {
-      log.error("auth-email", `failed to send ${type} email to ${to}`);
+      log.error(
+        { scope: "auth-email" },
+        `failed to send ${type} email to ${to}`,
+      );
       throw new Error(`Failed to send ${type} email to ${to}`);
     }
   };

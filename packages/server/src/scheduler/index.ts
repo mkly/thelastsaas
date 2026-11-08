@@ -178,7 +178,7 @@ export class NotificationScheduleProcessor {
                 },
               });
               log.info(
-                "scheduler",
+                { scope: "scheduler" },
                 `Cancelled notification schedule ${id}: authority or audience invalid`,
               );
               return false;
@@ -266,7 +266,10 @@ abstract class BaseBackgroundScheduler implements BackgroundScheduler {
     const general = await this.materializer
       .materialize(now.toISOString())
       .catch(() => {
-        log.error(`scheduler:${this.name}`, "schedule materialization failed");
+        log.error(
+          { scope: `scheduler:${this.name}` },
+          "schedule materialization failed",
+        );
         return { enqueued: 0 };
       });
     const materialized = await this.schedules.processDue(now);
@@ -275,7 +278,10 @@ abstract class BaseBackgroundScheduler implements BackgroundScheduler {
   }
 
   protected logError(error: unknown): void {
-    log.error(`scheduler:${this.name}`, "background flush failed", error);
+    log.error(
+      { scope: `scheduler:${this.name}`, err: error },
+      "background flush failed",
+    );
   }
 }
 

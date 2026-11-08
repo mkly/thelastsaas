@@ -92,6 +92,7 @@ async function smoke(provider: "sqlite" | "postgres"): Promise<void> {
     PASSWORD_AUTH_ENABLED: "true",
     SMTP_HOST: "",
     LOG_LEVEL: "info",
+    LOG_FILE: "",
     STORAGE_TYPE: "local",
     STORAGE_PATH: join(fixture, provider),
     SAAS_API_TOKEN: "",
@@ -207,9 +208,17 @@ async function smoke(provider: "sqlite" | "postgres"): Promise<void> {
     });
     let verificationUrl: string | undefined;
     await waitFor(async () => {
-      verificationUrl = logs.match(
-        /http:\/\/[^\s]+\/api\/auth\/verify-email\?[^\s]+/,
-      )?.[0];
+      const messages = logs.split("\n").flatMap((line) => {
+        try {
+          const entry = JSON.parse(line);
+          return typeof entry.msg === "string" ? [entry.msg] : [];
+        } catch {
+          return []; // A streamed JSON line may still be incomplete.
+        }
+      });
+      verificationUrl = messages
+        .join("\n")
+        .match(/http:\/\/[^\s]+\/api\/auth\/verify-email\?[^\s]+/)?.[0];
       return Boolean(verificationUrl);
     }, "console verification email");
     await request(verificationUrl!);

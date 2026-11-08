@@ -1,3 +1,4 @@
+import { log as logger } from "../src/logger";
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import type {
   TransactionOperation,
@@ -455,7 +456,7 @@ for (const transport of ["REST", "MCP"] as const) {
       }
     });
     test("validation and internal failure responses and request logs omit private inputs", async () => {
-      const logs = [spyOn(console, "log"), spyOn(console, "error")];
+      const logs = [spyOn(logger, "info"), spyOn(logger, "error")];
       const original = services.prisma;
       try {
         const invalid = await call({

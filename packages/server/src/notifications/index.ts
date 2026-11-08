@@ -34,7 +34,7 @@ export function createNotificationServices(
   }
   if (!channels) {
     log.info(
-      "notifications",
+      { scope: "notifications" },
       config.smtpHost
         ? `email channel enabled via ${config.smtpHost}:${config.smtpPort}, from ${config.smtpFrom}`
         : "SMTP not configured (SMTP_HOST unset) — notifications and auth emails only reach the console channel",

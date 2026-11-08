@@ -115,8 +115,9 @@ async function withToolErrors(
     }
     // Route handlers surface an unexpected fault as a bare 500; mirror that
     // here rather than echoing internal error text back to the MCP client.
-    if (sensitive) log.error("mcp", "Sensitive tool execution failed");
-    else log.error("mcp", "tool execution failed", error);
+    if (sensitive)
+      log.error({ scope: "mcp" }, "Sensitive tool execution failed");
+    else log.error({ scope: "mcp", err: error }, "tool execution failed");
     return toolError("InternalError", "Tool execution failed");
   }
 }

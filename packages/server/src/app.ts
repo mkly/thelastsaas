@@ -27,7 +27,7 @@ import type { AppServices } from "./services";
 export interface CreateAppOptions {
   config: AppConfig;
   services: AppServices;
-  /* Request logging to stdout (journald in production). Off by default so
+  /* Request logging through the configured logger. Off by default so
      tests stay quiet; the server entry point turns it on. */
   logRequests?: boolean;
 }
@@ -47,8 +47,13 @@ export function createApp({
     app.use("*", async (context, next) => {
       await next();
       log.info(
-        "http",
-        `${context.req.method} ${context.req.routePath} ${context.res.status}`,
+        {
+          scope: "http",
+          method: context.req.method,
+          route: context.req.routePath,
+          status: context.res.status,
+        },
+        "Request completed",
       );
     });
   app.onError((error, context) => {
@@ -61,8 +66,13 @@ export function createApp({
       return error.getResponse();
     }
     log.error(
-      "http",
-      `${context.req.method} ${context.req.routePath}: ${errorKind(error)}`,
+      {
+        scope: "http",
+        method: context.req.method,
+        route: context.req.routePath,
+        errorKind: errorKind(error),
+      },
+      "Request failed",
     );
     return context.text("Internal Server Error", 500);
   });

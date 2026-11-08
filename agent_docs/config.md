@@ -58,6 +58,27 @@ The CLI stores `server`, `session_token`, and optional default `org` in
 `~/.lastsaas/config.json`. `--org` overrides the saved organization for one
 command. Production should use HTTPS so BetterAuth can issue secure cookies.
 
+## Logging
+
+The server uses Pino to emit newline-delimited JSON. `LOG_LEVEL` defaults to
+`info` and accepts `trace`, `debug`, `info`, `warn`, `error`, `fatal`, or `silent`.
+By default all levels go to stdout. Set `LOG_FILE` to a file path to append there
+instead; relative paths resolve against the process working directory. The
+parent directory must exist and be writable by the service user. File rotation
+and retention are managed by the host; restart the service after renaming a log
+file so it opens the new path.
+
+Each entry carries Pino's numeric `level`, timestamp, process and host metadata,
+plus a `scope` field. HTTP logs include the method, route template, and status;
+they omit request bodies, headers, and query values. Existing sensitive error
+paths continue to log only the error kind or a fixed message.
+
+Containers and systemd can collect stdout; external collectors can read JSON
+logs from the host's logging system or a file. OTel is configured outside the
+application. Journald captures the JSON as a message, without mapping Pino's
+numeric level to journal priority, so use JSON `level` filtering rather than
+`journalctl -p` to select application severities.
+
 ## Metadata cache
 
 MCP and CLI/API requests share an in-memory cache of collection definitions and

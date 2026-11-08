@@ -71,11 +71,11 @@ export class ConsoleChannel implements NotificationChannel {
 
   async send(message: NotificationMessage): Promise<boolean> {
     log.info(
-      "notifications",
+      { scope: "notifications" },
       `console delivery to ${message.to} | ${message.subject}`,
     );
     if (process.env.NODE_ENV !== "production") {
-      log.info("notifications", message.text);
+      log.info({ scope: "notifications" }, message.text);
     }
     return true;
   }
@@ -114,7 +114,7 @@ export class EmailChannel implements NotificationChannel {
       html: normalized.html,
     });
     log.info(
-      "notifications",
+      { scope: "notifications" },
       `email sent to ${normalized.to} (${normalized.subject}) id=${info.messageId}`,
     );
     return true;
@@ -126,12 +126,14 @@ export class EmailChannel implements NotificationChannel {
     const target = `${this.options.host}:${this.options.port}`;
     try {
       await this.transporter.verify();
-      log.info("notifications", `SMTP connection to ${target} verified`);
+      log.info(
+        { scope: "notifications" },
+        `SMTP connection to ${target} verified`,
+      );
     } catch (error) {
       log.error(
-        "notifications",
+        { scope: "notifications", err: error },
         `SMTP verification failed for ${target}`,
-        error,
       );
     }
   }
@@ -158,7 +160,7 @@ export class NotificationDispatcher {
 
     if (channels.length === 0 || channels.some((channel) => !channel)) {
       log.error(
-        "notifications",
+        { scope: "notifications" },
         `no usable channel for ${message.to}: requested [${
           requestedChannels?.join(", ") ?? ""
         }], registered [${[...this.channels.keys()].join(", ")}]`,
@@ -175,14 +177,13 @@ export class NotificationDispatcher {
       if (result.status === "rejected") {
         delivered = false;
         log.error(
-          "notifications",
+          { scope: "notifications", err: result.reason },
           `${name} channel failed for ${message.to} (${message.subject})`,
-          result.reason,
         );
       } else if (!result.value) {
         delivered = false;
         log.error(
-          "notifications",
+          { scope: "notifications" },
           `${name} channel reported failure for ${message.to} (${message.subject})`,
         );
       }
@@ -214,7 +215,10 @@ export class NotificationDispatcher {
       if (result.status === "fulfilled" && result.value) succeeded.push(name);
       else {
         failed.push(name);
-        log.error("notifications", `channel ${name} delivery failed`);
+        log.error(
+          { scope: "notifications" },
+          `channel ${name} delivery failed`,
+        );
       }
     }
     return { succeeded, failed };

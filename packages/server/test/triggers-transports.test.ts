@@ -1,3 +1,4 @@
+import { log as logger } from "../src/logger";
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import type { CollectionTrigger, TriggerCreate } from "@lastsaas/shared";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -231,7 +232,7 @@ describe("trigger REST and MCP transports", () => {
   test("HTTP service-account MCP calls keep safe envelopes, no-store and value-free errors/logs", async () => {
     await creatorGrants();
     app = createApp({ config, services, logRequests: true });
-    const logs = [spyOn(console, "log"), spyOn(console, "error")];
+    const logs = [spyOn(logger, "info"), spyOn(logger, "error")];
     async function httpCall(
       name: string,
       args: Record<string, unknown>,

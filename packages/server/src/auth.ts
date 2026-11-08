@@ -40,7 +40,7 @@ export interface AuthEmail {
 export type AuthEmailSender = (email: AuthEmail) => Promise<void>;
 
 const logAuthEmail: AuthEmailSender = async ({ type, to, url }) => {
-  log.info(`auth:${type}`, `${to}: ${url}`);
+  log.info({ scope: `auth:${type}` }, `${to}: ${url}`);
 };
 
 export function createAuth(
