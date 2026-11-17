@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { copyFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { buildAuthBrowser } from "../packages/server/src/browser-bundle";
 
 const root = resolve(import.meta.dir, "..");
 const currentPlatformOnly = process.argv.includes("--current-platform");
@@ -45,12 +46,16 @@ const build = { commit, builtAt: new Date().toISOString() };
 const buildDir = mkdtempSync(join(tmpdir(), "lastsaas-server-build-"));
 let exitCode: number;
 try {
+  const authAsset = join(buildDir, "auth.js");
+  await Bun.write(authAsset, await buildAuthBrowser());
   const entrypoint = join(buildDir, "server.ts");
   // Prisma discovers its engine dynamically, so explicitly embed it and set
   // its path before importing the server or constructing a Prisma client.
   writeFileSync(
     entrypoint,
     `import engine from ${JSON.stringify(join(clientDir, engines[0]!))} with { type: "file" };
+import authAsset from ${JSON.stringify(authAsset)} with { type: "file" };
+globalThis.__LASTSAAS_AUTH_ASSET__ = authAsset;
 process.env.PRISMA_QUERY_ENGINE_LIBRARY = engine;
 await import(${JSON.stringify(join(root, "packages/server/src/index.ts"))});
 `,

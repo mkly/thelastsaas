@@ -130,20 +130,20 @@ async function createHarness(createInitialOrganization = true) {
     consentLocation!,
     origin,
   ).searchParams.toString();
-  const consent = await app.request(`${origin}/auth/mcp/consent`, {
+  const consent = await app.request(`${origin}/api/auth/oauth2/consent`, {
     method: "POST",
     headers: {
       cookie,
-      "content-type": "application/x-www-form-urlencoded",
+      "content-type": "application/json",
       origin,
     },
-    body: new URLSearchParams({
-      decision: "allow",
+    body: JSON.stringify({
+      accept: true,
       oauth_query: consentQuery,
-    }).toString(),
+    }),
   });
-  expect(consent.status).toBe(303);
-  const callback = new URL(consent.headers.get("location")!);
+  expect(consent.status).toBe(200);
+  const callback = new URL((await consent.json()).url);
   const code = callback.searchParams.get("code");
   if (!code) throw new Error("OAuth authorization did not return a code");
   const tokenResponse = await app.request("/api/auth/oauth2/token", {
@@ -162,6 +162,8 @@ async function createHarness(createInitialOrganization = true) {
   const tokens = (await tokenResponse.json()) as {
     access_token: string;
     refresh_token: string;
+    token_type: string;
+    scope: string;
   };
 
   return {
@@ -170,11 +172,10 @@ async function createHarness(createInitialOrganization = true) {
     config,
     origin,
     clientId: client.client_id,
-    refreshToken: tokens.refresh_token,
+    tokens,
     endpoint: "/v1/mcp",
     removedEndpointPath: `/v1/orgs/${organizationBody.organization.id}/mcp`,
     cookie,
-    token: tokens.access_token,
     orgId: organizationBody.organization.id,
     userId: user.id,
   };
@@ -226,8 +227,16 @@ async function callTool(
 
 describe("MCP end-to-end walkthrough", () => {
   test("lists the complete tool surface and runs a representative workflow", async () => {
-    const { app, endpoint, removedEndpointPath, cookie, token, orgId, userId } =
-      await createHarness();
+    const {
+      app,
+      endpoint,
+      removedEndpointPath,
+      cookie,
+      tokens,
+      orgId,
+      userId,
+    } = await createHarness();
+    const token = tokens.access_token;
 
     const removedEndpoint = await app.request(removedEndpointPath, {
       method: "POST",
@@ -376,16 +385,18 @@ describe("MCP end-to-end walkthrough", () => {
 });
 
 test("connects without organizations, creates and switches, and retains selection after refresh", async () => {
-  const {
-    app,
-    endpoint,
-    token,
-    services,
-    userId,
-    clientId,
-    refreshToken,
-    origin,
-  } = await createHarness(false);
+  const { app, endpoint, tokens, services, userId, clientId, origin } =
+    await createHarness(false);
+  expect(tokens.token_type).toBe("Bearer");
+  expect(tokens.scope).toContain("mcp:tools");
+  expect(tokens.refresh_token).toBeTruthy();
+  const token = tokens.access_token;
+  const claims = JSON.parse(
+    Buffer.from(token.split(".")[1]!, "base64url").toString(),
+  );
+  expect(claims.aud).toContain(`${origin}${endpoint}`);
+  expect(claims["https://thelastsaas.com/claims/account_access"]).toBe(true);
+
   let id = 100;
   const call = (name: string, args = {}) =>
     callTool(app, endpoint, token, id++, name, args);
@@ -442,7 +453,7 @@ test("connects without organizations, creates and switches, and retains selectio
     body: new URLSearchParams({
       grant_type: "refresh_token",
       client_id: clientId,
-      refresh_token: refreshToken,
+      refresh_token: tokens.refresh_token,
       resource: `${origin}/v1/mcp`,
     }),
   });
@@ -463,8 +474,9 @@ test("connects without organizations, creates and switches, and retains selectio
 test("does not guess among several organizations and keeps client selections separate", async () => {
   const { resolveActiveOrganization } = await import("../src/mcp/context");
   const { createOrganizationForUser } = await import("../src/organizations");
-  const { app, endpoint, token, services, userId, clientId, orgId } =
+  const { app, endpoint, tokens, services, userId, clientId, orgId } =
     await createHarness();
+  const token = tokens.access_token;
   const second = await createOrganizationForUser(services, userId, {
     name: "Other",
   });
@@ -498,7 +510,7 @@ test("does not guess among several organizations and keeps client selections sep
 });
 
 test("organization-specific refresh grants cannot upgrade to account access", async () => {
-  const { app, services, clientId, refreshToken, origin, orgId } =
+  const { app, services, clientId, tokens, origin, orgId } =
     await createHarness();
   await services.prisma.oauthRefreshToken.updateMany({
     where: { clientId },
@@ -510,7 +522,7 @@ test("organization-specific refresh grants cannot upgrade to account access", as
     body: new URLSearchParams({
       grant_type: "refresh_token",
       client_id: clientId,
-      refresh_token: refreshToken,
+      refresh_token: tokens.refresh_token,
       resource: `${origin}/v1/mcp`,
     }),
   });

@@ -7,6 +7,7 @@ import { APIError, createAuthMiddleware } from "better-auth/api";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import {
   bearer,
+  captcha,
   deviceAuthorization,
   jwt,
   magicLink,
@@ -60,6 +61,7 @@ export function createAuth(
   return betterAuth({
     secret: config.betterAuthSecret,
     baseURL: config.betterAuthUrl,
+    rateLimit: { enabled: config.authRateLimitEnabled },
     database: prismaAdapter(prisma, {
       provider: databaseProvider(config.databaseUrl),
     }),
@@ -147,6 +149,23 @@ export function createAuth(
           }
         : {},
     plugins: [
+      ...(config.turnstileSecretKey
+        ? [
+            captcha({
+              provider: "cloudflare-turnstile",
+              secretKey: config.turnstileSecretKey,
+              expectedAction: "auth",
+              allowedHostnames: [new URL(config.betterAuthUrl).hostname],
+              endpoints: [
+                "/sign-in/magic-link",
+                "/sign-in/email",
+                "/sign-up/email",
+                "/request-password-reset",
+                "/send-verification-email",
+              ],
+            }),
+          ]
+        : []),
       apiKey({
         enableMetadata: true,
         enableSessionForAPIKeys: true,
@@ -170,30 +189,8 @@ export function createAuth(
         schema: {},
       }),
       magicLink({
-        sendMagicLink: async ({ email, url }) => {
-          const link = new URL(url);
-          // TODO: Once https://github.com/better-auth/better-auth/pull/11174
-          // is merged and released, upgrade Better Auth and remove this extra
-          // encoding together. Keep the magic-link MCP OAuth regression test.
-          // Better Auth 1.7.1 decodes these values again after query parsing
-          // (https://github.com/better-auth/better-auth/issues/10916).
-          // Preserve nested OAuth parameters (including their signature) through
-          // that extra decode. Origin validation still checks the original URL.
-          for (const key of [
-            "callbackURL",
-            "newUserCallbackURL",
-            "errorCallbackURL",
-          ]) {
-            const callback = link.searchParams.get(key);
-            if (callback)
-              link.searchParams.set(key, encodeURIComponent(callback));
-          }
-          await sendAuthEmail({
-            type: "magic-link",
-            to: email,
-            url: link.toString(),
-          });
-        },
+        sendMagicLink: ({ email, url }) =>
+          sendAuthEmail({ type: "magic-link", to: email, url }),
       }),
       organization({
         allowUserToCreateOrganization: true,
@@ -264,6 +261,11 @@ export function createAuth(
       }),
     ],
     advanced: {
+      ipAddress: {
+        ipAddressHeaders: [
+          config.authTrustedIpHeader || "x-lastsaas-client-ip",
+        ],
+      },
       database: {
         generateId: () => genId(),
       },

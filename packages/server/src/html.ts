@@ -93,7 +93,7 @@ const ICON_OPEN = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" st
  * links that are actually navigation. The label survives in aria-label and
  * title, so it is still announced and still nameable on hover.
  */
-const LOGOUT_LINK = `<a class="icon-link" href="/auth/logout" aria-label="Log Out" title="Log Out">${ICON_OPEN}<path d="M15 16.5v2a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v2"/><path d="M19.5 12h-11m8-3.5 3.5 3.5-3.5 3.5"/></svg></a>`;
+const LOGOUT_LINK = `<form method="post" data-auth="logout"><button disabled type="submit" class="icon-link" aria-label="Log Out" title="Log Out">${ICON_OPEN}<path d="M15 16.5v2a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v2"/><path d="M19.5 12h-11m8-3.5 3.5 3.5-3.5 3.5"/></svg></button><p data-auth-message hidden aria-live="polite"></p></form>`;
 
 const THEME_OPTIONS: ReadonlyArray<{
   readonly value: "system" | Theme;
@@ -169,6 +169,7 @@ ${root}<head>
 <link rel="preload" href="/assets/switzer.woff2" as="font" type="font/woff2" crossorigin>
 <title>${escapeHtml(title)} - The Last SaaS</title>
 <style>${STYLESHEET}</style>
+<script type="module" src="/assets/auth.js"></script>
 </head>
 <body class="shell">
 <a class="skip-link" href="#main">Skip to content</a>

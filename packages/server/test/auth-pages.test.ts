@@ -22,7 +22,11 @@ afterEach(async () => {
 });
 
 async function createAuthPageApp(
-  options: { google?: boolean; passwordAuth?: boolean } = {},
+  options: {
+    google?: boolean;
+    passwordAuth?: boolean;
+    environment?: Record<string, string>;
+  } = {},
 ) {
   const directory = mkdtempSync(join(tmpdir(), "lastsaas-auth-pages-"));
   const emails: AuthEmail[] = [];
@@ -35,6 +39,7 @@ async function createAuthPageApp(
     BETTER_AUTH_URL: "http://localhost:3000",
     GOOGLE_CLIENT_ID: options.google ? "google-client-id" : "",
     GOOGLE_CLIENT_SECRET: options.google ? "google-client-secret" : "",
+    ...options.environment,
   });
   const services = await createServices(config, async (email) => {
     emails.push(email);
@@ -74,18 +79,77 @@ function formBody(fields: Record<string, string>): URLSearchParams {
   return new URLSearchParams(fields);
 }
 
+function postAuth(
+  app: Awaited<ReturnType<typeof createAuthPageApp>>["app"],
+  path: string,
+  body: Record<string, unknown>,
+  cookie = "",
+) {
+  return app.request(`http://localhost:3000/api/auth/${path}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Origin: "http://localhost:3000",
+      Cookie: cookie,
+    },
+    body: JSON.stringify(body),
+  });
+}
+
+function formAttribute(
+  html: string,
+  action: string,
+  attribute: string,
+): string {
+  const form = html.match(
+    new RegExp(`<form [^>]*data-auth="${action}"[^>]*>`),
+  )?.[0];
+  const value = form?.match(new RegExp(` ${attribute}="([^"]*)"`))?.[1];
+  if (!value) throw new Error(`Missing ${attribute} on the ${action} form`);
+  return value.replaceAll("&amp;", "&");
+}
+
+function responseCookies(response: Response): string {
+  return response.headers
+    .getSetCookie()
+    .map((cookie) => cookie.split(";", 1)[0])
+    .join("; ");
+}
+
+async function cancelGoogle(
+  app: Awaited<ReturnType<typeof createAuthPageApp>>["app"],
+  html: string,
+  oauthQuery?: string,
+) {
+  const start = await postAuth(app, "sign-in/social", {
+    provider: "google",
+    callbackURL: formAttribute(html, "google", "data-next"),
+    errorCallbackURL: formAttribute(html, "google", "data-error-callback"),
+    oauth_query: oauthQuery,
+  });
+  expect(start.status).toBe(200);
+  const google = new URL((await start.json()).url);
+  expect(google.origin).toBe("https://accounts.google.com");
+  const callback = new URL(google.searchParams.get("redirect_uri")!);
+  callback.searchParams.set("state", google.searchParams.get("state")!);
+  callback.searchParams.set("error", "access_denied");
+  const cancelled = await app.request(callback, {
+    headers: {
+      Cookie: responseCookies(start),
+    },
+  });
+  expect(cancelled.status).toBe(302);
+  return new URL(cancelled.headers.get("location")!, callback);
+}
+
 async function signUp(
   app: Awaited<ReturnType<typeof createAuthPageApp>>["app"],
   password = "initial-password",
 ) {
-  return app.request("http://localhost:3000/auth/signup", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: formBody({
-      name: "Auth User",
-      email: "auth-user@example.com",
-      password,
-    }),
+  return postAuth(app, "sign-up/email", {
+    name: "Auth User",
+    email: "auth-user@example.com",
+    password,
   });
 }
 
@@ -93,10 +157,9 @@ async function login(
   app: Awaited<ReturnType<typeof createAuthPageApp>>["app"],
   password: string,
 ) {
-  return app.request("http://localhost:3000/auth/login", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: formBody({ email: "auth-user@example.com", password }),
+  return postAuth(app, "sign-in/email", {
+    email: "auth-user@example.com",
+    password,
   });
 }
 
@@ -113,7 +176,7 @@ describe("browser auth pages", () => {
     expect(html).not.toContain('<input type="password"');
     expect(html).not.toContain("/auth/forgot-password");
     expect(html).toContain("Continue with Google");
-    expect(html).toContain('action="/auth/magic-link?next=%2Fauth%2Fdevice"');
+    expect(html).toContain('data-auth="magic-link" data-next="/auth/device"');
     const signupPage = await app.request(
       "http://localhost:3000/auth/signup?next=%2Fauth%2Fdevice&email=new%40example.com",
     );
@@ -121,7 +184,7 @@ describe("browser auth pages", () => {
     const signupHtml = await signupPage.text();
     expect(signupHtml).not.toContain('<input type="password"');
     expect(signupHtml).toContain(
-      'action="/auth/magic-link?next=%2Fauth%2Fdevice"',
+      'data-auth="magic-link" data-next="/auth/device"',
     );
     expect(signupHtml).toContain('value="new@example.com"');
     expect(signupHtml.indexOf("Continue with email")).toBeLessThan(
@@ -138,21 +201,6 @@ describe("browser auth pages", () => {
       expect(page.headers.get("location")).toBe(
         "/auth/login?next=%2Fauth%2Fdevice",
       );
-    }
-    for (const path of [
-      "login",
-      "signup",
-      "forgot-password",
-      "reset-password",
-    ]) {
-      const response = await app.request(`http://localhost:3000/auth/${path}`, {
-        method: "POST",
-        body: formBody({
-          email: "disabled@example.com",
-          password: "initial-password",
-        }),
-      });
-      expect(response.status).toBe(403);
     }
     for (const [path, body] of [
       [
@@ -202,26 +250,22 @@ describe("browser auth pages", () => {
     expect(await services.prisma.user.count()).toBe(0);
     expect(emails).toHaveLength(0);
 
-    const google = await app.request("http://localhost:3000/auth/google");
-    expect(google.status).toBe(302);
-    expect(google.headers.get("location")).toContain("accounts.google.com");
+    const google = await postAuth(app, "sign-in/social", {
+      provider: "google",
+      callbackURL: "/auth/dashboard",
+    });
+    expect(google.status).toBe(200);
+    expect((await google.json()).url).toContain("accounts.google.com");
     const magicPage = await app.request(
       "http://localhost:3000/auth/magic-link?next=%2Fauth%2Fdevice",
     );
     expect(await magicPage.text()).toContain(
-      'action="/auth/magic-link?next=%2Fauth%2Fdevice"',
+      'data-auth="magic-link" data-next="/auth/device"',
     );
-    await app.request(
-      "http://localhost:3000/auth/magic-link?next=%2Fauth%2Fdevice",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          Origin: "http://localhost:3000",
-        },
-        body: formBody({ email: "magic-only@example.com" }),
-      },
-    );
+    await postAuth(app, "sign-in/magic-link", {
+      email: "magic-only@example.com",
+      callbackURL: "/auth/device",
+    });
     const email = emails.find((email) => email.type === "magic-link");
     expect(email).toBeDefined();
     const verified = await app.request(email!.url);
@@ -252,7 +296,7 @@ describe("browser auth pages", () => {
     expect(await dashboard.text()).toContain("auth-user@example.com");
     expect((await login(disabledApp, "initial-password")).status).toBe(403);
     // Re-enabling uses the existing credentials; no migration or reset is needed.
-    expect((await login(app, "initial-password")).status).toBe(302);
+    expect((await login(app, "initial-password")).status).toBe(200);
   });
 
   test("redirects the root and renders auth forms before protected routes", async () => {
@@ -288,21 +332,16 @@ describe("browser auth pages", () => {
     const { app, services } = await createAuthPageApp();
 
     const signup = await signUp(app);
-    expect(signup.status).toBe(302);
-    expect(signup.headers.get("location")).toBe(
-      "/auth/login?message=Account+created.+Check+your+email+to+verify+your+address+before+logging+in.",
-    );
-
+    expect(signup.status).toBe(200);
     const unverifiedLogin = await login(app, "initial-password");
-    expect(unverifiedLogin.status).toBe(302);
-    expect(unverifiedLogin.headers.get("location")).toBe(
-      "/auth/login?error=Email+not+verified.+Check+your+email+for+a+new+verification+link.",
-    );
+    expect(unverifiedLogin.status).toBe(403);
+    expect(await unverifiedLogin.json()).toMatchObject({
+      code: "EMAIL_NOT_VERIFIED",
+    });
 
     await verifyTestUser(services, "auth-user@example.com");
     const loginResponse = await login(app, "initial-password");
-    expect(loginResponse.status).toBe(302);
-    expect(loginResponse.headers.get("location")).toBe("/auth/dashboard");
+    expect(loginResponse.status).toBe(200);
     const cookie = loginResponse.headers.get("set-cookie")?.split(";")[0];
     expect(cookie).toBeTruthy();
 
@@ -314,9 +353,7 @@ describe("browser auth pages", () => {
     const dashboardHtml = await dashboard.text();
     expect(dashboardHtml).toContain('<a href="/install">Install</a>');
     /* Log out is an icon in the header, so the name is only in the label. */
-    expect(dashboardHtml).toContain(
-      '<a class="icon-link" href="/auth/logout" aria-label="Log Out"',
-    );
+    expect(dashboardHtml).toContain('data-auth="logout"');
     expect(dashboardHtml).not.toContain('<a href="/auth/login">');
     expect(dashboardHtml).not.toContain('<a href="/auth/signup">');
     expect(dashboardHtml).toContain("auth-user@example.com");
@@ -371,9 +408,7 @@ describe("browser auth pages", () => {
       headers: { Cookie: cookie! },
     });
     const installHtml = await install.text();
-    expect(installHtml).toContain(
-      '<a class="icon-link" href="/auth/logout" aria-label="Log Out"',
-    );
+    expect(installHtml).toContain('data-auth="logout"');
     expect(installHtml).not.toContain('<a href="/auth/login">');
     expect(installHtml).not.toContain('<a href="/auth/signup">');
 
@@ -383,10 +418,8 @@ describe("browser auth pages", () => {
     expect(authenticatedRoot.status).toBe(302);
     expect(authenticatedRoot.headers.get("location")).toBe("/auth/dashboard");
 
-    const logout = await app.request("http://localhost:3000/auth/logout", {
-      headers: { Cookie: cookie! },
-    });
-    expect(logout.status).toBe(302);
+    const logout = await postAuth(app, "sign-out", {}, cookie!);
+    expect(logout.status).toBe(200);
     expect(logout.headers.get("set-cookie")).toContain("Max-Age=0");
   });
 
@@ -429,11 +462,43 @@ describe("browser auth pages", () => {
     expect(html).toContain('aria-current="page">Install</a>');
   });
 
-  test.each(["password", "magic-link"] as const)(
-    "completes MCP OAuth discovery, consent, token, and refresh with %s",
+  test("advertises the MCP resource and authorization server to unauthenticated clients", async () => {
+    const { app } = await createAuthPageApp();
+    const challengeResponse = await app.request(
+      "http://localhost:3000/v1/mcp",
+      { method: "POST" },
+    );
+    expect(challengeResponse.status).toBe(401);
+    expect(challengeResponse.headers.get("www-authenticate")).toContain(
+      "resource_metadata=",
+    );
+
+    const protectedMetadata = await app.request(
+      "http://localhost:3000/.well-known/oauth-protected-resource/v1/mcp",
+    );
+    expect(protectedMetadata.status).toBe(200);
+    expect(await protectedMetadata.json()).toMatchObject({
+      resource: "http://localhost:3000/v1/mcp",
+      authorization_servers: ["http://localhost:3000/api/auth"],
+    });
+    const authMetadata = await app.request(
+      "http://localhost:3000/.well-known/oauth-authorization-server/api/auth",
+    );
+    expect(authMetadata.status).toBe(200);
+    expect(await authMetadata.json()).toMatchObject({
+      issuer: "http://localhost:3000/api/auth",
+      authorization_endpoint: "http://localhost:3000/api/auth/oauth2/authorize",
+      token_endpoint: "http://localhost:3000/api/auth/oauth2/token",
+      registration_endpoint: "http://localhost:3000/api/auth/oauth2/register",
+    });
+  });
+
+  test.each(["password", "magic-link", "signup"] as const)(
+    "returns an MCP authorization code after %s sign-in and consent",
     async (method) => {
       const { app, services, emails } = await createAuthPageApp({
-        passwordAuth: method === "password",
+        passwordAuth: method !== "magic-link",
+        google: method !== "magic-link",
       });
       let cookie: string | undefined;
       if (method === "password") {
@@ -443,26 +508,6 @@ describe("browser auth pages", () => {
         cookie = loginResponse.headers.get("set-cookie")?.split(";")[0];
         expect(cookie).toBeTruthy();
       }
-
-      const protectedMetadata = await app.request(
-        "http://localhost:3000/.well-known/oauth-protected-resource/v1/mcp",
-      );
-      expect(protectedMetadata.status).toBe(200);
-      expect(await protectedMetadata.json()).toMatchObject({
-        resource: "http://localhost:3000/v1/mcp",
-        authorization_servers: ["http://localhost:3000/api/auth"],
-      });
-      const authMetadata = await app.request(
-        "http://localhost:3000/.well-known/oauth-authorization-server/api/auth",
-      );
-      expect(authMetadata.status).toBe(200);
-      expect(await authMetadata.json()).toMatchObject({
-        issuer: "http://localhost:3000/api/auth",
-        authorization_endpoint:
-          "http://localhost:3000/api/auth/oauth2/authorize",
-        token_endpoint: "http://localhost:3000/api/auth/oauth2/token",
-        registration_endpoint: "http://localhost:3000/api/auth/oauth2/register",
-      });
 
       const registration = await app.request(
         "http://localhost:3000/api/auth/oauth2/register",
@@ -500,166 +545,224 @@ describe("browser auth pages", () => {
         code_challenge_method: "S256",
       }).toString();
 
-      const unauthenticatedAuthorize = await app.request(authorize);
-      expect(unauthenticatedAuthorize.status).toBe(302);
-      expect(unauthenticatedAuthorize.headers.get("location")).toStartWith(
-        "/auth/login?",
-      );
-
-      let continuation = authorize.toString();
       if (method === "magic-link") {
-        const loginPage = await app.request(
-          new URL(
-            unauthenticatedAuthorize.headers.get("location")!,
-            "http://localhost:3000",
-          ),
-        );
-        const html = await loginPage.text();
-        const action = html
-          .match(/action="([^"]*\/auth\/magic-link[^"]*)"/)?.[1]
-          ?.replaceAll("&amp;", "&");
-        expect(action).toBeTruthy();
-        const actionUrl = new URL(action!, "http://localhost:3000");
-        continuation = new URL(
-          actionUrl.searchParams.get("next")!,
-          "http://localhost:3000",
-        ).toString();
-        expect(new URL(continuation).searchParams.get("sig")).toBeTruthy();
-        const sent = await app.request(actionUrl, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/x-www-form-urlencoded",
-            Origin: "http://localhost:3000",
-          },
-          body: formBody({ email: "magic-oauth@example.com" }),
+        for (const [name, value] of [
+          ["prompt", "login"],
+          ["max_age", "0"],
+        ] as const) {
+          const fresh = new URL(authorize);
+          fresh.searchParams.set(name, value);
+          const challenged = await app.request(fresh);
+          expect(challenged.status).toBe(302);
+          const login = new URL(challenged.headers.get("location")!, fresh);
+          const page = await app.request(login);
+          const html = await page.text();
+          expect(html).toContain("This client requires a fresh sign-in");
+          expect(html).not.toContain('data-auth="magic-link"');
+          expect(html).not.toContain('data-auth="google"');
+          expect(emails).toHaveLength(0);
+        }
+      }
+      if (method !== "magic-link")
+        authorize.searchParams.set("prompt", "login");
+      const start = await app.request(authorize, {
+        headers: { Cookie: cookie ?? "" },
+      });
+      expect(start.status).toBe(302);
+      const loginUrl = new URL(start.headers.get("location")!, authorize);
+      expect(loginUrl.pathname).toBe("/auth/login");
+      const loginPage = await app.request(loginUrl, {
+        headers: { Cookie: cookie ?? "" },
+      });
+      expect(loginPage.status).toBe(200);
+      const loginHtml = await loginPage.text();
+      const callbackURL = formAttribute(
+        loginHtml,
+        method === "magic-link" ? "magic-link" : "login",
+        "data-next",
+      );
+      const oauthQuery = loginUrl.searchParams.toString();
+      expect(loginUrl.searchParams.get("sig")).toBeTruthy();
+      let consentLocation: string;
+      if (method === "password") {
+        // A cancellation must leave the signed request usable for another sign-in method.
+        const retry = await cancelGoogle(app, loginHtml, oauthQuery);
+        expect(retry.pathname).toBe("/auth/login");
+        expect(retry.searchParams.get("error")).toBe("access_denied");
+        const retryPage = await app.request(retry, {
+          headers: { Cookie: cookie! },
         });
-        expect(sent.status).toBe(200);
-        const email = emails.find(
-          (candidate) => candidate.type === "magic-link",
+        expect(retryPage.status).toBe(200);
+        expect(
+          formAttribute(await retryPage.text(), "login", "data-next"),
+        ).toBe(callbackURL);
+        const signedIn = await postAuth(
+          app,
+          "sign-in/email",
+          {
+            email: "auth-user@example.com",
+            password: "initial-password",
+            callbackURL,
+            oauth_query: oauthQuery,
+          },
+          cookie,
         );
-        expect(email).toBeDefined();
-        // Better Auth skips origin validation by default under bun test.
+        expect(signedIn.status).toBe(200);
+        const result = await signedIn.json();
+        expect(result.redirect).toBe(true);
+        consentLocation = result.url;
+        cookie = responseCookies(signedIn);
+      } else {
+        const email = "magic-oauth@example.com";
+        if (method === "magic-link") {
+          const sent = await postAuth(app, "sign-in/magic-link", {
+            email,
+            callbackURL,
+            oauth_query: oauthQuery,
+          });
+          expect(sent.status).toBe(200);
+        } else {
+          const signupPath = loginHtml
+            .match(/href="([^"]+)">Sign up</)?.[1]
+            ?.replaceAll("&amp;", "&");
+          const signup = new URL(signupPath!, loginUrl);
+          expect(signup.search).toBe(loginUrl.search);
+          const signupPage = await app.request(signup);
+          expect(
+            formAttribute(await signupPage.text(), "signup", "data-next"),
+          ).toBe(callbackURL);
+          const signedUp = await postAuth(app, "sign-up/email", {
+            email,
+            name: "OAuth Signup",
+            password: "initial-password",
+            callbackURL,
+            oauth_query: oauthQuery,
+          });
+          expect(signedUp.status).toBe(200);
+        }
+        const mail = emails.find((mail) => mail.to === email)!;
+        expect(mail.type).toBe(
+          method === "magic-link" ? "magic-link" : "email-verification",
+        );
         const authContext = await services.auth.$context;
         authContext.skipOriginCheck = false;
-        const externalCallback = new URL(email!.url);
-        externalCallback.searchParams.set(
-          "callbackURL",
-          encodeURIComponent("https://untrusted.example/callback"),
-        );
-        const rejected = await app.request(externalCallback);
-        expect(rejected.status).toBe(403);
-        expect(await rejected.json()).toMatchObject({
-          code: "INVALID_CALLBACK_URL",
+        if (method === "magic-link") {
+          const externalCallback = new URL(mail.url);
+          expect(externalCallback.searchParams.get("callbackURL")).toBe(
+            callbackURL,
+          );
+          externalCallback.searchParams.set(
+            "callbackURL",
+            "https://untrusted.example/callback",
+          );
+          const rejected = await app.request(externalCallback);
+          expect(rejected.status).toBe(403);
+          expect(await rejected.json()).toMatchObject({
+            code: "INVALID_CALLBACK_URL",
+          });
+        }
+        // The verification link opens as a navigation in a fresh browser.
+        const verified = await app.request(mail.url, {
+          headers: { Accept: "text/html" },
         });
-        // Simulate opening the email in a fresh browser, without the popup's cookies.
-        const verified = await app.request(email!.url);
         expect(verified.status).toBe(302);
-        expect(verified.headers.get("location")).toBe(continuation);
-        cookie = verified.headers
-          .getSetCookie()
-          .map((value) => value.split(";", 1)[0])
-          .join("; ");
-        expect(cookie).toBeTruthy();
+        cookie = responseCookies(verified);
+        const continuation = new URL(
+          verified.headers.get("location")!,
+          loginUrl,
+        );
+        expect(continuation.href).toBe(new URL(callbackURL, loginUrl).href);
+        const resumed = await app.request(continuation, {
+          headers: { Cookie: cookie },
+        });
+        expect(resumed.status).toBe(302);
+        consentLocation = resumed.headers.get("location")!;
+        if (method === "signup") {
+          // Verification completed signup. The client still requires a password sign-in.
+          const freshLogin = new URL(consentLocation, loginUrl);
+          expect(freshLogin.pathname).toBe("/auth/login");
+          const page = await app.request(freshLogin, {
+            headers: { Cookie: cookie },
+          });
+          expect(page.status).toBe(200);
+          const signedIn = await postAuth(
+            app,
+            "sign-in/email",
+            {
+              email,
+              password: "initial-password",
+              callbackURL: formAttribute(
+                await page.text(),
+                "login",
+                "data-next",
+              ),
+              oauth_query: freshLogin.searchParams.toString(),
+            },
+            cookie,
+          );
+          expect(signedIn.status).toBe(200);
+          consentLocation = (await signedIn.json()).url;
+          cookie = responseCookies(signedIn);
+        }
       }
+      expect(cookie).toContain("session_token");
       const created = await app.request("http://localhost:3000/v1/orgs", {
         method: "POST",
         headers: { Cookie: cookie!, "Content-Type": "application/json" },
         body: JSON.stringify({ name: "OAuth Org", slug: "oauth-org" }),
       });
       expect(created.status).toBe(201);
-      const authorized = await app.request(continuation, {
-        headers: { Cookie: cookie! },
-      });
-      expect(authorized.status).toBe(302);
-      const consentLocation = authorized.headers.get("location");
       expect(consentLocation).toStartWith("/auth/mcp/consent?");
       const consentQuery = new URL(
         consentLocation!,
         "http://localhost:3000",
       ).searchParams.toString();
 
-      const consentPage = await app.request(
-        new URL(consentLocation!, "http://localhost:3000"),
-        { headers: { Cookie: cookie! } },
-      );
+      const consentUrl = new URL(consentLocation!, "http://localhost:3000");
+      consentUrl.searchParams.set("page", "test");
+      const consentPage = await app.request(consentUrl, {
+        headers: { Cookie: cookie! },
+      });
       expect(consentPage.status).toBe(200);
-      expect(await consentPage.text()).toContain("OAuth Test Client");
+      const consentHtml = await consentPage.text();
+      expect(consentHtml).toContain("OAuth Test Client");
+      expect(consentHtml).toContain("client.example");
 
-      const consent = await app.request(
-        "http://localhost:3000/auth/mcp/consent",
+      const changedRequest = new URLSearchParams(consentQuery);
+      changedRequest.set("state", "changed-after-signing");
+      consentUrl.search = changedRequest.toString();
+      const invalidPage = await app.request(consentUrl, {
+        headers: { Cookie: cookie! },
+      });
+      expect(invalidPage.status).toBe(400);
+      expect(await invalidPage.text()).not.toContain('data-auth="consent"');
+      const invalid = await postAuth(
+        app,
+        "oauth2/consent",
         {
-          method: "POST",
-          headers: {
-            Cookie: cookie!,
-            "Content-Type": "application/x-www-form-urlencoded",
-            Origin: "http://localhost:3000",
-          },
-          body: formBody({ decision: "allow", oauth_query: consentQuery }),
+          accept: true,
+          oauth_query: changedRequest.toString(),
         },
+        cookie,
       );
-      expect(consent.status).toBe(303);
-      const callback = new URL(consent.headers.get("location")!);
+      expect(invalid.status).toBe(400);
+      expect(await invalid.json()).toMatchObject({
+        error: "invalid_signature",
+      });
+
+      const consent = await postAuth(
+        app,
+        "oauth2/consent",
+        { accept: true, oauth_query: consentQuery },
+        cookie!,
+      );
+      expect(consent.status).toBe(200);
+      const grant = await consent.json();
+      expect(grant.redirect).toBe(true);
+      const callback = new URL(grant.url);
       expect(callback.origin).toBe("https://client.example");
       expect(callback.searchParams.get("state")).toBe("oauth-test-state");
       expect(callback.searchParams.get("code")).toBeTruthy();
-
-      const token = await app.request(
-        "http://localhost:3000/api/auth/oauth2/token",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: new URLSearchParams({
-            grant_type: "authorization_code",
-            client_id: client.client_id,
-            redirect_uri: "https://client.example/callback",
-            code: callback.searchParams.get("code")!,
-            code_verifier: verifier,
-            resource: "http://localhost:3000/v1/mcp",
-          }),
-        },
-      );
-      expect(token.status).toBe(200);
-      const tokens = (await token.json()) as {
-        access_token: string;
-        refresh_token: string;
-        scope: string;
-        token_type: string;
-      };
-      expect(tokens.token_type).toBe("Bearer");
-      expect(tokens.refresh_token).toBeTruthy();
-      expect(tokens.scope).toContain("mcp:tools");
-      const claims = JSON.parse(
-        Buffer.from(tokens.access_token.split(".")[1]!, "base64url").toString(),
-      ) as Record<string, unknown>;
-      expect(claims.aud).toContain("http://localhost:3000/v1/mcp");
-      expect(claims["https://thelastsaas.com/claims/account_access"]).toBe(
-        true,
-      );
-
-      const refreshed = await app.request(
-        "http://localhost:3000/api/auth/oauth2/token",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: new URLSearchParams({
-            grant_type: "refresh_token",
-            client_id: client.client_id,
-            refresh_token: tokens.refresh_token,
-            resource: "http://localhost:3000/v1/mcp",
-          }),
-        },
-      );
-      expect(refreshed.status).toBe(200);
-      expect((await refreshed.json()).access_token).toBeTruthy();
-
-      const challengeResponse = await app.request(
-        "http://localhost:3000/v1/mcp",
-        { method: "POST" },
-      );
-      expect(challengeResponse.status).toBe(401);
-      expect(challengeResponse.headers.get("www-authenticate")).toContain(
-        "resource_metadata=",
-      );
     },
   );
 
@@ -667,13 +770,11 @@ describe("browser auth pages", () => {
     const { app, emails } = await createAuthPageApp();
     await signUp(app);
 
-    const sent = await app.request("http://localhost:3000/auth/magic-link", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: formBody({ email: "auth-user@example.com" }),
+    const sent = await postAuth(app, "sign-in/magic-link", {
+      email: "auth-user@example.com",
+      callbackURL: "/auth/dashboard",
     });
     expect(sent.status).toBe(200);
-    expect(await sent.text()).toContain("for a sign-in link.");
     const email = emails.find((candidate) => candidate.type === "magic-link");
     expect(email?.to).toBe("auth-user@example.com");
 
@@ -688,14 +789,10 @@ describe("browser auth pages", () => {
     await signUp(app);
     await verifyTestUser(services, "auth-user@example.com");
 
-    const requested = await app.request(
-      "http://localhost:3000/auth/forgot-password",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: formBody({ email: "auth-user@example.com" }),
-      },
-    );
+    const requested = await postAuth(app, "request-password-reset", {
+      email: "auth-user@example.com",
+      redirectTo: "/auth/reset-password",
+    });
     expect(requested.status).toBe(200);
     const email = emails.find(
       (candidate) => candidate.type === "password-reset",
@@ -712,21 +809,13 @@ describe("browser auth pages", () => {
     ).searchParams.get("token");
     expect(token).toBeTruthy();
 
-    const reset = await app.request(
-      "http://localhost:3000/auth/reset-password",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: formBody({ token: token!, newPassword: "replacement-password" }),
-      },
-    );
-    expect(reset.status).toBe(302);
-    expect(
-      (await login(app, "initial-password")).headers.get("location"),
-    ).toContain("error=Invalid+credentials");
-    expect(
-      (await login(app, "replacement-password")).headers.get("location"),
-    ).toBe("/auth/dashboard");
+    const reset = await postAuth(app, "reset-password", {
+      token: token!,
+      newPassword: "replacement-password",
+    });
+    expect(reset.status).toBe(200);
+    expect((await login(app, "initial-password")).status).toBe(401);
+    expect((await login(app, "replacement-password")).status).toBe(200);
   });
 
   test("renders configured Google OAuth links and preserves a safe auth next path", async () => {
@@ -738,8 +827,20 @@ describe("browser auth pages", () => {
     const signupPage = await app.request(
       "http://localhost:3000/auth/signup?next=%2Fauth%2Fdevice%2Fauthorize%3Fstate%3Dcli",
     );
-    expect(await signupPage.text()).toContain(
-      'href="/auth/google?next=%2Fauth%2Fdevice%2Fauthorize%3Fstate%3Dcli"',
+    const signupHtml = await signupPage.text();
+    expect(signupHtml).toContain(
+      'data-auth="google" data-next="/auth/device/authorize?state=cli"',
+    );
+
+    const retry = await cancelGoogle(app, signupHtml);
+    expect(retry.pathname).toBe("/auth/login");
+    expect(retry.searchParams.get("error")).toBe("access_denied");
+    expect(retry.searchParams.get("next")).toBe(
+      "/auth/device/authorize?state=cli",
+    );
+    const retryHtml = await (await app.request(retry)).text();
+    expect(formAttribute(retryHtml, "google", "data-next")).toBe(
+      "/auth/device/authorize?state=cli",
     );
 
     const { app: appWithoutGoogle } = await createAuthPageApp();
@@ -757,25 +858,11 @@ describe("browser auth pages", () => {
     expect(signupWithoutGoogleHtml).not.toContain("Continue with Google");
     expect(signupWithoutGoogleHtml).not.toContain('<div class="stack"');
 
-    const unavailable = await appWithoutGoogle.request(
-      "http://localhost:3000/auth/google",
-    );
-    expect(unavailable.status).toBe(302);
-    const unavailablePage = await appWithoutGoogle.request(
-      new URL(unavailable.headers.get("location")!, "http://localhost:3000"),
-    );
-    expect(await unavailablePage.text()).toContain(
-      "Google login is not configured",
-    );
-
-    const response = await app.request(
-      "http://localhost:3000/auth/google?next=%2Fauth%2Fdevice%2Fauthorize%3Fstate%3Dcli",
-    );
-    expect(response.status).toBe(302);
-    expect(response.headers.get("location")).toStartWith(
-      "https://accounts.google.com/",
-    );
-    expect(response.headers.get("set-cookie")).toBeTruthy();
+    const unavailable = await postAuth(appWithoutGoogle, "sign-in/social", {
+      provider: "google",
+      callbackURL: "/auth/dashboard",
+    });
+    expect(unavailable.ok).toBe(false);
   });
 
   test("links Google sign-in to an existing verified password user", async () => {
@@ -789,10 +876,11 @@ describe("browser auth pages", () => {
       data: { emailVerified: true },
     });
 
-    const authorization = await app.request(
-      "http://localhost:3000/auth/google",
-    );
-    const authorizationUrl = new URL(authorization.headers.get("location")!);
+    const authorization = await postAuth(app, "sign-in/social", {
+      provider: "google",
+      callbackURL: "/auth/dashboard",
+    });
+    const authorizationUrl = new URL((await authorization.json()).url);
     const state = authorizationUrl.searchParams.get("state");
     const cookie = authorization.headers.get("set-cookie")?.split(";")[0];
     expect(state).toBeTruthy();
@@ -865,7 +953,7 @@ describe("browser auth pages", () => {
     expect(html).not.toContain("<script>");
     expect(html).not.toContain("<b>bad</b>");
     expect(html).toContain("&lt;script&gt;bad&lt;/script&gt;");
-    expect(html).toContain('action="/auth/signup"');
+    expect(html).toContain('data-auth="signup" data-next="/auth/dashboard"');
   });
 
   test("pins the theme through a cookie and refuses off-site returns", async () => {
@@ -902,5 +990,172 @@ describe("browser auth pages", () => {
     });
     expect(offSite.headers.get("location")).toBe("/");
     expect(offSite.headers.get("set-cookie")).toContain("theme=;");
+  });
+});
+
+describe("public authentication protections", () => {
+  test("rejects cross-origin email requests before delivery", async () => {
+    const { app, services, emails } = await createAuthPageApp();
+    const context = await services.auth.$context;
+    context.skipOriginCheck = false;
+    const response = await app.request(
+      "http://localhost:3000/api/auth/sign-in/magic-link",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Origin: "https://untrusted.example",
+        },
+        body: JSON.stringify({ email: "target@example.com" }),
+      },
+    );
+    expect(response.status).toBe(403);
+    expect(emails).toHaveLength(0);
+  });
+
+  test("removes every legacy submission path without sending email or creating accounts", async () => {
+    const { app, emails, services } = await createAuthPageApp();
+    for (const path of [
+      "login",
+      "signup",
+      "magic-link",
+      "forgot-password",
+      "reset-password",
+      "device/approve",
+      "device/deny",
+      "mcp/consent",
+      "invitations/test",
+    ]) {
+      const response = await app.request(`http://localhost:3000/auth/${path}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Origin: "http://localhost:3000",
+        },
+        body: formBody({
+          email: "bypass@example.com",
+          name: "Bypass",
+          password: "test-password",
+        }),
+      });
+      expect(response.status).toBe(404);
+    }
+    expect(
+      (await app.request("http://localhost:3000/auth/google")).status,
+    ).toBe(404);
+    expect(
+      (await app.request("http://localhost:3000/auth/logout")).status,
+    ).toBe(404);
+    expect(emails).toHaveLength(0);
+    expect(await services.prisma.user.count()).toBe(0);
+  });
+
+  test("enforces Better Auth's per-IP magic-link limit before email delivery", async () => {
+    const { app, emails } = await createAuthPageApp({
+      environment: { AUTH_RATE_LIMIT_ENABLED: "true" },
+    });
+    const send = (ip: string, spoofed = "198.51.100.1") =>
+      app.request("http://localhost:3000/api/auth/sign-in/magic-link", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Origin: "http://localhost:3000",
+          "x-lastsaas-client-ip": ip,
+          "x-forwarded-for": spoofed,
+        },
+        body: JSON.stringify({ email: "limit@example.com" }),
+      });
+    for (let i = 0; i < 5; i++)
+      expect((await send("192.0.2.71")).status).toBe(200);
+    const limited = await send("192.0.2.71", "198.51.100.2");
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get("x-retry-after")).toBeTruthy();
+    expect(emails).toHaveLength(5);
+    expect((await send("192.0.2.72")).status).toBe(200);
+    expect(emails).toHaveLength(6);
+  });
+
+  test("checks CAPTCHA on all public email send endpoints and fails closed", async () => {
+    const { app, emails, services } = await createAuthPageApp({
+      environment: {
+        TURNSTILE_SITE_KEY: "public-widget-key",
+        TURNSTILE_SECRET_KEY: "private-widget-key",
+      },
+    });
+    const page = await (
+      await app.request("http://localhost:3000/auth/login")
+    ).text();
+    expect(page).toContain('data-captcha-site-key="public-widget-key"');
+    expect(page).not.toContain("private-widget-key");
+    expect(page).toContain("/assets/auth.js");
+    for (const path of [
+      "sign-in/magic-link",
+      "sign-up/email",
+      "sign-in/email",
+      "request-password-reset",
+      "send-verification-email",
+    ]) {
+      const response = await postAuth(app, path, {
+        email: "protected@example.com",
+        name: "Protected",
+        password: "test-password",
+      });
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ code: "MISSING_RESPONSE" });
+    }
+    expect(emails).toHaveLength(0);
+    expect(await services.prisma.user.count()).toBe(0);
+
+    const originalFetch = globalThis.fetch;
+    let verification: Record<string, unknown> = { success: false };
+    let unavailable = false;
+    globalThis.fetch = (async (input, init) => {
+      expect(String(input)).toBe(
+        "https://challenges.cloudflare.com/turnstile/v0/siteverify",
+      );
+      expect(JSON.parse(String(init?.body))).toMatchObject({
+        secret: "private-widget-key",
+        response: "widget-response",
+      });
+      if (unavailable) return new Response("unavailable", { status: 503 });
+      return Response.json(verification);
+    }) as typeof fetch;
+    const send = () =>
+      app.request("http://localhost:3000/api/auth/sign-in/magic-link", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Origin: "http://localhost:3000",
+          "x-captcha-response": "widget-response",
+        },
+        body: JSON.stringify({
+          email: "protected@example.com",
+          callbackURL: "/auth/dashboard",
+        }),
+      });
+    try {
+      expect((await send()).status).toBe(403);
+      verification = { success: true, action: "wrong", hostname: "localhost" };
+      expect((await send()).status).toBe(403);
+      verification = {
+        success: true,
+        action: "auth",
+        hostname: "wrong.example",
+      };
+      expect((await send()).status).toBe(403);
+      unavailable = true;
+      expect((await send()).status).toBe(500);
+      expect(emails).toHaveLength(0);
+      unavailable = false;
+      verification = { success: true, action: "auth", hostname: "localhost" };
+      expect((await send()).status).toBe(200);
+      expect(emails).toHaveLength(1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    // Opening a valid emailed link needs no second CAPTCHA challenge.
+    const verified = await app.request(emails[0]!.url);
+    expect(verified.status).toBe(302);
+    expect(verified.headers.get("set-cookie")).toContain("session_token");
   });
 });

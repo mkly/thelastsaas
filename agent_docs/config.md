@@ -36,6 +36,16 @@ production.
 | `S3_SECRET_KEY`        | empty                                     | Optional explicit S3 credential                    |
 | `S3_FORCE_PATH_STYLE`  | `false`                                   | Use path-style S3 URLs                             |
 
+## Browser authentication
+
+The browser uses Better Auth's client and `/api/auth/*` handler. Optional
+`TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` enable its CAPTCHA plugin;
+both must be configured together. `AUTH_RATE_LIMIT_ENABLED` defaults to true
+in production and false otherwise. `AUTH_TRUSTED_IP_HEADER` selects a header
+overwritten by a trusted reverse proxy; leave empty for socket IP detection.
+See [authentication](../docs/authentication.md) for proxy requirements,
+protected endpoints, browser bundle packaging, and existing-account behavior.
+
 ## PostgreSQL
 
 Setting `DATABASE_URL` to a `postgres://` URL switches the database provider,

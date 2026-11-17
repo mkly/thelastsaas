@@ -19,6 +19,8 @@ packages/
 │   └── src/
 │       ├── app.ts                    Hono composition and ApiType
 │       ├── auth.ts                   BetterAuth and rolling sessions
+│       ├── browser/auth.ts           Shared Better Auth browser client and forms
+│       ├── browser-bundle.ts         Browser build and standalone asset loading
 │       ├── config.ts                 Environment parsing and storage creation
 │       ├── queues/                    Enqueue, claim, settlement, grants, maintenance
 │       ├── schedules/                 Producer CRUD and durable occurrences

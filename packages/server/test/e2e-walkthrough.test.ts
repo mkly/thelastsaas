@@ -135,17 +135,16 @@ async function issueDeviceToken(
   );
   expect(approvalPage.status).toBe(200);
   expect(await approvalPage.text()).toContain(device.user_code);
-  const approval = await app.request("/auth/device/approve", {
+  const approval = await app.request("/api/auth/device/approve", {
     method: "POST",
     headers: {
       cookie: browserCookie,
-      "content-type": "application/x-www-form-urlencoded",
+      "content-type": "application/json",
       origin: "http://localhost",
     },
-    body: new URLSearchParams({ user_code: device.user_code }).toString(),
+    body: JSON.stringify({ userCode: device.user_code }),
   });
   expect(approval.status).toBe(200);
-  expect(await approval.text()).toContain("Device Authorized");
   const token = await json<{ access_token: string; token_type: string }>(
     await app.request(
       "/api/auth/device/token",

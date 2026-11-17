@@ -30,6 +30,34 @@ describe("auth configuration", () => {
     expect(() => loadConfig({ PASSWORD_AUTH_ENABLED: "maybe" })).toThrow();
   });
 
+  test("requires both Turnstile keys and enables auth rate limiting in production", () => {
+    for (const environment of [
+      { TURNSTILE_SITE_KEY: "public" },
+      { TURNSTILE_SECRET_KEY: "private" },
+    ]) {
+      expect(() => loadConfig(environment)).toThrow(
+        "must be provided together",
+      );
+    }
+    const config = loadConfig({
+      NODE_ENV: "production",
+      BETTER_AUTH_SECRET: productionSecret,
+      BETTER_AUTH_URL: "https://app.example.com",
+      TURNSTILE_SITE_KEY: "public",
+      TURNSTILE_SECRET_KEY: "private",
+      AUTH_TRUSTED_IP_HEADER: "X-Forwarded-For",
+    });
+    expect(config.authRateLimitEnabled).toBe(true);
+    expect(config.authTrustedIpHeader).toBe("x-forwarded-for");
+    expect(loadConfig({}).authRateLimitEnabled).toBe(false);
+    expect(
+      loadConfig({ AUTH_RATE_LIMIT_ENABLED: "true" }).authRateLimitEnabled,
+    ).toBe(true);
+    expect(() =>
+      loadConfig({ AUTH_TRUSTED_IP_HEADER: "bad header" }),
+    ).toThrow();
+  });
+
   test("requires a BetterAuth secret in production", () => {
     expect(() =>
       loadConfig({

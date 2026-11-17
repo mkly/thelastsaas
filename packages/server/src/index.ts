@@ -16,7 +16,14 @@ const server = Bun.serve({
   hostname: "0.0.0.0",
   port: config.port,
   maxRequestBodySize: config.maxUploadSize + MULTIPART_OVERHEAD_ALLOWANCE,
-  fetch: app.fetch,
+  fetch(request, server) {
+    // Always overwrite the private header: a direct client cannot choose its
+    // rate-limit identity. Proxy deployments explicitly select their own header.
+    request.headers.delete("x-lastsaas-client-ip");
+    const address = server.requestIP(request)?.address;
+    if (address) request.headers.set("x-lastsaas-client-ip", address);
+    return app.fetch(request, server);
+  },
 });
 
 let shuttingDown = false;

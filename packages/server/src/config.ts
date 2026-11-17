@@ -18,6 +18,13 @@ const environmentSchema = z.object({
     .default(32 * 1024 * 1024),
   CACHE_TTL_SECONDS: z.coerce.number().int().min(1).max(3600).default(3600),
   PASSWORD_AUTH_ENABLED: z.stringbool().default(true),
+  AUTH_RATE_LIMIT_ENABLED: z.stringbool().optional(),
+  AUTH_TRUSTED_IP_HEADER: z
+    .string()
+    .regex(/^[a-zA-Z0-9-]*$/)
+    .default(""),
+  TURNSTILE_SITE_KEY: z.string().default(""),
+  TURNSTILE_SECRET_KEY: z.string().default(""),
   GOOGLE_CLIENT_ID: z.string().default(""),
   GOOGLE_CLIENT_SECRET: z.string().default(""),
   SMTP_HOST: z.string().default(""),
@@ -50,6 +57,10 @@ export interface AppConfig {
   betterAuthSecret: string;
   betterAuthUrl: string;
   passwordAuthEnabled: boolean;
+  authRateLimitEnabled: boolean;
+  authTrustedIpHeader: string;
+  turnstileSiteKey: string;
+  turnstileSecretKey: string;
   cacheMaxBytes: number;
   cacheTtlSeconds: number;
   googleClientId: string;
@@ -93,6 +104,13 @@ export function loadConfig(
 ): AppConfig {
   const parsed = environmentSchema.parse(environment);
   if (
+    Boolean(parsed.TURNSTILE_SITE_KEY) !== Boolean(parsed.TURNSTILE_SECRET_KEY)
+  ) {
+    throw new Error(
+      "TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY must be provided together",
+    );
+  }
+  if (
     Boolean(parsed.GOOGLE_CLIENT_ID) !== Boolean(parsed.GOOGLE_CLIENT_SECRET)
   ) {
     throw new Error(
@@ -113,6 +131,11 @@ export function loadConfig(
       parsed.BETTER_AUTH_SECRET ?? "development-only-change-before-production",
     betterAuthUrl: parsed.BETTER_AUTH_URL ?? `http://localhost:${parsed.PORT}`,
     passwordAuthEnabled: parsed.PASSWORD_AUTH_ENABLED,
+    authRateLimitEnabled:
+      parsed.AUTH_RATE_LIMIT_ENABLED ?? parsed.NODE_ENV === "production",
+    authTrustedIpHeader: parsed.AUTH_TRUSTED_IP_HEADER.toLowerCase(),
+    turnstileSiteKey: parsed.TURNSTILE_SITE_KEY,
+    turnstileSecretKey: parsed.TURNSTILE_SECRET_KEY,
     cacheMaxBytes: parsed.CACHE_MAX_BYTES,
     cacheTtlSeconds: parsed.CACHE_TTL_SECONDS,
     googleClientId: parsed.GOOGLE_CLIENT_ID,

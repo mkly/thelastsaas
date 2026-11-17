@@ -10,8 +10,20 @@ import switzerPath from "../assets/Switzer-Variable.woff2" with { type: "file" }
 import faviconPath from "../assets/favicon.ico" with { type: "file" };
 import faviconPngPath from "../assets/icon-96.png" with { type: "file" };
 import type { AppEnvironment } from "../env";
+import { authBrowserBundle } from "../browser-bundle";
 
 export const assetsRouter = new Hono<AppEnvironment>();
+
+assetsRouter.get(
+  "/assets/auth.js",
+  async () =>
+    new Response(await authBrowserBundle(), {
+      headers: {
+        "Content-Type": "text/javascript; charset=utf-8",
+        "Cache-Control": "no-cache",
+      },
+    }),
+);
 
 for (const [url, path, contentType] of [
   ["/favicon.ico", faviconPath, "image/x-icon"],

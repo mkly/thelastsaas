@@ -294,6 +294,9 @@ body {
    thing in the header and the last one that should catch the eye at rest. */
 .icon-link {
   display: grid;
+  padding: 0;
+  border: 0;
+  background: transparent;
   flex: none;
   place-items: center;
   /* Pulled toward the theme switch: closer to it than to the nav, so the two

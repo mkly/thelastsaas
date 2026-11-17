@@ -1,8 +1,10 @@
+import { verifyOAuthQueryParams } from "@better-auth/oauth-provider";
 import { Hono, type Context } from "hono";
 import { deleteCookie, setCookie } from "hono/cookie";
 import { csrf } from "hono/csrf";
 
 import type { AppEnvironment } from "../env";
+import { authForm, oauthAuthorizePath, signInPagePath } from "../auth-ui";
 import { THEME_COOKIE, escapeHtml, htmlPage, parseTheme } from "../html";
 import {
   createOrganizationForUser,
@@ -12,21 +14,16 @@ import {
 
 export const authPagesRouter = new Hono<AppEnvironment>();
 
-// Keep password-only pages and form submissions unavailable when disabled.
+// Password recovery pages follow the same feature flag as Better Auth.
 authPagesRouter.use("*", async (context, next) => {
-  if (!context.get("config").passwordAuthEnabled) {
-    const path = context.req.path;
-    if (
-      ["/auth/forgot-password", "/auth/reset-password"].includes(path) ||
-      (["/auth/login", "/auth/signup"].includes(path) &&
-        context.req.method === "POST")
-    ) {
-      if (context.req.method !== "GET")
-        return context.text("Password authentication is disabled", 403);
-      return context.redirect(
-        authPath("/auth/login", { next: authNext(context) }),
-      );
-    }
+  if (
+    !context.get("config").passwordAuthEnabled &&
+    context.req.method === "GET" &&
+    ["/auth/forgot-password", "/auth/reset-password"].includes(context.req.path)
+  ) {
+    return context.redirect(
+      authPath("/auth/login", { next: authNext(context) }),
+    );
   }
   await next();
 });
@@ -73,20 +70,32 @@ function messageBanner(context: Context<AppEnvironment>): string {
 function authNext(context: Context<AppEnvironment>): string | undefined {
   const next = context.req.query("next");
   return next &&
-    !next.startsWith("//") &&
+    sameSitePath(next) === next &&
     (next.startsWith("/auth/") ||
       next.startsWith("/tokens/claim/") ||
-      next.startsWith("/api/auth/oauth2/authorize?"))
+      next.startsWith(oauthAuthorizePath + "?"))
     ? next
     : undefined;
+}
+
+function signedOAuthParams(context: Context<AppEnvironment>): URLSearchParams {
+  const parameters = new URL(context.req.url).searchParams;
+  const signedNames = new Set([
+    "sig",
+    "ba_param",
+    ...parameters.getAll("ba_param"),
+  ]);
+  return new URLSearchParams(
+    [...parameters].filter(([key]) => signedNames.has(key)),
+  );
 }
 
 function oauthContinuation(
   context: Context<AppEnvironment>,
 ): string | undefined {
-  const parameters = new URL(context.req.url).searchParams;
-  return parameters.has("client_id") && parameters.has("sig")
-    ? `/api/auth/oauth2/authorize?${parameters.toString()}`
+  const signed = signedOAuthParams(context);
+  return signed.has("sig") && signed.has("client_id")
+    ? `${oauthAuthorizePath}?${signed}`
     : undefined;
 }
 
@@ -101,27 +110,6 @@ function authPath(
   return `${url.pathname}${url.search}`;
 }
 
-function copySetCookies(from: Response, to: Response): void {
-  for (const cookie of from.headers.getSetCookie()) {
-    to.headers.append("Set-Cookie", cookie);
-  }
-}
-
-function authRequest(
-  context: Context<AppEnvironment>,
-  path: string,
-  body?: unknown,
-): Request {
-  const config = context.get("config");
-  const headers = new Headers(context.req.raw.headers);
-  if (body !== undefined) headers.set("Content-Type", "application/json");
-  return new Request(new URL(path, config.betterAuthUrl), {
-    method: body === undefined ? "GET" : "POST",
-    headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-}
-
 async function isAuthenticated(
   context: Context<AppEnvironment>,
 ): Promise<boolean> {
@@ -132,193 +120,133 @@ async function isAuthenticated(
   return Boolean(session?.user);
 }
 
-authPagesRouter.get("/login", async (context) => {
-  if (await isAuthenticated(context))
-    return context.redirect("/auth/dashboard");
-  const next = authNext(context) ?? oauthContinuation(context);
-  const action = authPath("/auth/login", { next });
-  const signupHref = authPath("/auth/signup", { next });
-  const googleHref = authPath("/auth/google", { next });
-  const { googleClientId, googleClientSecret, passwordAuthEnabled } =
-    context.get("config");
-  const googleLogin =
-    googleClientId && googleClientSecret
-      ? `<a class="button secondary" href="${escapeHtml(googleHref)}">Continue with Google</a>`
-      : "";
-  const magicLogin = `<div class="card">
-    <form method="POST" action="${escapeHtml(authPath("/auth/magic-link", { next }))}">
-      <label>Email<br><input type="email" name="email" required autocomplete="email"></label><br><br>
-      <button type="submit">Continue with email</button>
-    </form>
-  </div>`;
+function googleForm(context: Context<AppEnvironment>, next?: string): string {
+  const { googleClientId, googleClientSecret } = context.get("config");
+  return googleClientId && googleClientSecret
+    ? authForm(
+        context,
+        "google",
+        '<button class="secondary" type="submit">Continue with Google</button>',
+        next,
+      )
+    : "";
+}
 
+function emailField(email = ""): string {
+  return `<label>Email<br><input type="email" name="email" required autocomplete="email" value="${escapeHtml(email)}"></label><br><br>`;
+}
+
+function magicForm(
+  context: Context<AppEnvironment>,
+  next?: string,
+  email = "",
+  introduction = "",
+): string {
+  if (next?.startsWith(oauthAuthorizePath + "?")) {
+    const query = new URLSearchParams(next.slice(oauthAuthorizePath.length));
+    // An emailed link resumes at authorize. These parameters require another
+    // login on every visit, even immediately after email verification.
+    if (
+      query.get("prompt")?.split(" ").includes("login") ||
+      (query.has("max_age") && Number(query.get("max_age")) === 0)
+    ) {
+      const config = context.get("config");
+      const hasAlternative =
+        config.passwordAuthEnabled ||
+        Boolean(config.googleClientId && config.googleClientSecret);
+      return hasAlternative
+        ? "<p>This client requires a fresh sign-in. Use another sign-in method on this page.</p>"
+        : "<p>This client requires a fresh sign-in. Contact the site administrator to enable Google or password sign-in for this connection.</p>";
+    }
+  }
+  return (
+    introduction +
+    authForm(
+      context,
+      "magic-link",
+      `${emailField(email)}<button type="submit">Continue with email</button>`,
+      next,
+    )
+  );
+}
+
+authPagesRouter.get("/login", async (context) => {
+  const oauth = oauthContinuation(context);
+  const next = oauth ?? authNext(context);
+  if (!oauth && (await isAuthenticated(context)))
+    return context.redirect(next ?? "/auth/dashboard");
+  const { passwordAuthEnabled } = context.get("config");
+  const passwordForm = passwordAuthEnabled
+    ? `<div class="card">${authForm(
+        context,
+        "login",
+        `${emailField()}
+        <label>Password<br><input type="password" name="password" required autocomplete="current-password"></label><br><br>
+        <button type="submit">Log In</button>`,
+        next,
+      )}</div>`
+    : "";
   return context.html(
     htmlPage(
       "Log In",
       `${messageBanner(context)}
-    ${
-      passwordAuthEnabled
-        ? `<div class="card">
-      <form method="POST" action="${escapeHtml(action)}">
-        <label>Email<br><input type="email" name="email" required autocomplete="email"></label><br><br>
-        <label>Password<br><input type="password" name="password" required autocomplete="current-password"></label><br><br>
-        <button type="submit">Log In</button>
-      </form>
-    </div>`
-        : ""
-    }
+    ${passwordForm}
     <div class="stack" style="margin-block-start:1rem">
-      ${magicLogin}
-      ${googleLogin}
+      <div class="card">${magicForm(context, next)}</div>
+      ${googleForm(context, next)}
     </div>
-    ${
-      passwordAuthEnabled
-        ? `<p class="small muted" style="margin-block-start:1.25rem;text-align:center">
-      Don't have an account? <a href="${escapeHtml(signupHref)}">Sign up</a> ·
-      <a href="/auth/forgot-password">Forgot password?</a>
-    </p>`
-        : `<p class="small muted" style="margin-block-start:1.25rem;text-align:center">Don't have an account? <a href="${escapeHtml(signupHref)}">Sign up</a></p>`
-    }`,
+    <p class="small muted" style="margin-block-start:1.25rem;text-align:center">
+      Don't have an account? <a href="${escapeHtml(signInPagePath("/auth/signup", next))}">Sign up</a>
+      ${passwordAuthEnabled ? ' · <a href="/auth/forgot-password">Forgot password?</a>' : ""}
+    </p>`,
       { narrow: true, description: "Sign in to The Last SaaS." },
     ),
   );
 });
 
-authPagesRouter.post("/login", async (context) => {
-  const form = await context.req.parseBody();
-  const authResponse = await context.get("services").auth.handler(
-    authRequest(context, "/api/auth/sign-in/email", {
-      email: String(form.email ?? ""),
-      password: String(form.password ?? ""),
-    }),
-  );
-
-  const next = authNext(context);
-  if (!authResponse.ok) {
-    const authError =
-      authResponse.status === 403
-        ? ((await authResponse.json().catch(() => null)) as {
-            code?: unknown;
-          } | null)
-        : null;
-    const error =
-      authError?.code === "EMAIL_NOT_VERIFIED"
-        ? "Email not verified. Check your email for a new verification link."
-        : "Invalid credentials";
-    return context.redirect(authPath("/auth/login", { next, error }));
-  }
-
-  const redirect = context.redirect(next ?? "/auth/dashboard");
-  copySetCookies(authResponse, redirect);
-  return redirect;
-});
-
 authPagesRouter.get("/signup", async (context) => {
-  if (await isAuthenticated(context))
-    return context.redirect("/auth/dashboard");
-  const next = authNext(context);
-  const action = authPath("/auth/signup", { next });
-  const googleHref = authPath("/auth/google", { next });
-  const { googleClientId, googleClientSecret, passwordAuthEnabled } =
-    context.get("config");
-  const googleLogin =
-    googleClientId && googleClientSecret
-      ? `<div class="stack" style="margin-block-start:1rem">
-      <a class="button secondary" href="${escapeHtml(googleHref)}">Continue with Google</a>
-    </div>`
-      : "";
-  const prefillEmail = context.req.query("email") ?? "";
-  const emailAttributes = prefillEmail
-    ? ` value="${escapeHtml(prefillEmail)}" readonly`
-    : "";
-
-  if (!passwordAuthEnabled) {
-    return context.html(
-      htmlPage(
-        "Sign Up",
-        `${messageBanner(context)}
-      <div class="card">
-        <p>Enter your email to create an account. We'll send you a link to verify your email and sign in.</p>
-        <form method="POST" action="${escapeHtml(authPath("/auth/magic-link", { next }))}">
-          <label>Email<br><input type="email" name="email" required autocomplete="email"${emailAttributes}></label><br><br>
-          <button type="submit">Continue with email</button>
-        </form>
-      </div>
-      ${googleLogin}
-      <p class="small muted" style="margin-block-start:1.25rem;text-align:center">Already have an account? <a href="${escapeHtml(authPath("/auth/login", { next }))}">Log in</a></p>`,
-        {
-          narrow: true,
-          description: "Create your account.",
-        },
-      ),
-    );
-  }
-
+  const oauth = oauthContinuation(context);
+  const next = oauth ?? authNext(context);
+  if (!oauth && (await isAuthenticated(context)))
+    return context.redirect(next ?? "/auth/dashboard");
+  const email = context.req.query("email") ?? "";
+  const { passwordAuthEnabled } = context.get("config");
+  const form = passwordAuthEnabled
+    ? authForm(
+        context,
+        "signup",
+        `
+        <label>Name<br><input type="text" name="name" required autocomplete="name"></label><br><br>
+        ${emailField(email)}
+        <label>Password<br><input type="password" name="password" required minlength="8" autocomplete="new-password"></label><br><br>
+        <button type="submit">Create Account</button>`,
+        next,
+      )
+    : magicForm(
+        context,
+        next,
+        email,
+        "<p>Enter your email to create an account. We'll send you a link to verify your email and sign in.</p>",
+      );
   return context.html(
     htmlPage(
       "Sign Up",
       `${messageBanner(context)}
-    <div class="card">
-      <form method="POST" action="${escapeHtml(action)}">
-        <label>Name<br><input type="text" name="name" required autocomplete="name"></label><br><br>
-        <label>Email<br><input type="email" name="email" required autocomplete="email"${emailAttributes}></label><br><br>
-        <label>Password<br><input type="password" name="password" required minlength="8" autocomplete="new-password"></label><br><br>
-        <button type="submit">Create Account</button>
-      </form>
-    </div>
-    ${googleLogin}
+    <div class="card">${form}</div>
+    ${googleForm(context, next)}
     <p class="small muted" style="margin-block-start:1.25rem;text-align:center">
-      Next, connecting your assistant is one paste. Then you just ask.
-    </p>
-    <p class="small muted" style="margin-block-start:0.5rem;text-align:center">
-      Already have an account? <a href="/auth/login">Log in</a>
+      Already have an account? <a href="${escapeHtml(signInPagePath("/auth/login", next))}">Log in</a>
     </p>`,
-      {
-        narrow: true,
-        description: "One account, then your assistant does the rest.",
-      },
+      { narrow: true, description: "Create your account." },
     ),
   );
-});
-
-authPagesRouter.post("/signup", async (context) => {
-  const form = await context.req.parseBody();
-  const name = String(form.name ?? "");
-  const email = String(form.email ?? "");
-  const password = String(form.password ?? "");
-  const next = authNext(context);
-
-  try {
-    await context.get("services").auth.api.signUpEmail({
-      body: { name, email, password },
-      headers: context.req.raw.headers,
-    });
-    return context.redirect(
-      authPath("/auth/login", {
-        next,
-        message:
-          "Account created. Check your email to verify your address before logging in.",
-      }),
-    );
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Signup failed";
-    return context.redirect(
-      authPath("/auth/signup", { next, email, error: message }),
-    );
-  }
 });
 
 authPagesRouter.get("/magic-link", (context) =>
   context.html(
     htmlPage(
       "Magic Link",
-      `${messageBanner(context)}
-    <div class="card">
-      <form method="POST" action="${escapeHtml(authPath("/auth/magic-link", { next: authNext(context) }))}">
-        <label>Email<br><input type="email" name="email" required autocomplete="email"></label><br><br>
-        <button type="submit">Continue with email</button>
-      </form>
-    </div>`,
+      `${messageBanner(context)}<div class="card">${magicForm(context, authNext(context))}</div>`,
       {
         narrow: true,
         description: "We'll email you a link that signs you in.",
@@ -327,44 +255,13 @@ authPagesRouter.get("/magic-link", (context) =>
   ),
 );
 
-authPagesRouter.post("/magic-link", async (context) => {
-  const form = await context.req.parseBody();
-  const email = String(form.email ?? "");
-
-  try {
-    await context.get("services").auth.api.signInMagicLink({
-      body: { email, callbackURL: authNext(context) ?? "/auth/dashboard" },
-      headers: context.req.raw.headers,
-    });
-  } catch {
-    // Do not reveal whether an account exists.
-  }
-
-  return context.html(
-    htmlPage(
-      "Check Your Email",
-      `<div class="card">
-        <p>Check <strong>${escapeHtml(email)}</strong> for a sign-in link.</p>
-      </div>`,
-      { narrow: true },
-    ),
-  );
-});
-
 authPagesRouter.get("/forgot-password", (context) =>
   context.html(
     htmlPage(
       "Forgot Password",
       `${messageBanner(context)}
-    <div class="card">
-      <form method="POST" action="/auth/forgot-password">
-        <label>Email<br><input type="email" name="email" required autocomplete="email"></label><br><br>
-        <button type="submit">Send Reset Link</button>
-      </form>
-    </div>
-    <p class="small muted" style="margin-block-start:1.25rem;text-align:center">
-      <a href="/auth/login">Back to log in</a>
-    </p>`,
+    <div class="card">${authForm(context, "forgot-password", `${emailField()}<button type="submit">Send Reset Link</button>`)}</div>
+    <p class="small muted" style="margin-block-start:1.25rem;text-align:center"><a href="/auth/login">Back to log in</a></p>`,
       {
         narrow: true,
         description: "Enter your email and we'll send a reset link.",
@@ -373,130 +270,25 @@ authPagesRouter.get("/forgot-password", (context) =>
   ),
 );
 
-authPagesRouter.post("/forgot-password", async (context) => {
-  const form = await context.req.parseBody();
-  const email = String(form.email ?? "");
-
-  try {
-    await context.get("services").auth.api.requestPasswordReset({
-      body: { email, redirectTo: "/auth/reset-password" },
-      headers: context.req.raw.headers,
-    });
-  } catch {
-    // Do not reveal whether an account exists.
-  }
-
-  return context.html(
-    htmlPage(
-      "Check Your Email",
-      `<div class="card">
-        <p>If an account exists for <strong>${escapeHtml(email)}</strong>, a password reset link has been sent.</p>
-      </div>`,
-      { narrow: true },
-    ),
-  );
-});
-
-authPagesRouter.get("/reset-password", (context) => {
-  const token = context.req.query("token") ?? "";
-  return context.html(
+authPagesRouter.get("/reset-password", (context) =>
+  context.html(
     htmlPage(
       "Reset Password",
-      `${messageBanner(context)}
-    <div class="card">
-      <form method="POST" action="/auth/reset-password">
-        <input type="hidden" name="token" value="${escapeHtml(token)}">
-        <label>New Password<br><input type="password" name="newPassword" required minlength="8" autocomplete="new-password"></label><br><br>
-        <button type="submit">Reset Password</button>
-      </form>
-    </div>`,
+      `${messageBanner(context)}<div class="card">${authForm(
+        context,
+        "reset-password",
+        `
+    <input type="hidden" name="token" value="${escapeHtml(context.req.query("token") ?? "")}">
+    <label>New Password<br><input type="password" name="newPassword" required minlength="8" autocomplete="new-password"></label><br><br>
+    <button type="submit">Reset Password</button>`,
+      )}</div>`,
       {
         narrow: true,
         description: "Choose a new password of at least 8 characters.",
       },
     ),
-  );
-});
-
-authPagesRouter.post("/reset-password", async (context) => {
-  const form = await context.req.parseBody();
-  const token = String(form.token ?? "");
-  const newPassword = String(form.newPassword ?? "");
-
-  try {
-    await context.get("services").auth.api.resetPassword({
-      body: { token, newPassword },
-      headers: context.req.raw.headers,
-    });
-    return context.redirect(
-      authPath("/auth/login", {
-        message: "Password reset successfully. Please log in.",
-      }),
-    );
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Reset failed";
-    return context.redirect(
-      authPath("/auth/reset-password", { token, error: message }),
-    );
-  }
-});
-
-authPagesRouter.get("/google", async (context) => {
-  const config = context.get("config");
-  const next = authNext(context);
-  if (!config.googleClientId || !config.googleClientSecret) {
-    return context.redirect(
-      authPath("/auth/login", {
-        next,
-        error: "Google login is not configured",
-      }),
-    );
-  }
-
-  const authResponse = await context.get("services").auth.handler(
-    authRequest(context, "/api/auth/sign-in/social", {
-      provider: "google",
-      callbackURL: next ?? "/auth/dashboard",
-      errorCallbackURL: authPath("/auth/login", {
-        next,
-        error: "Google login failed",
-      }),
-    }),
-  );
-
-  if (!authResponse.ok) {
-    return context.redirect(
-      authPath("/auth/login", { next, error: "Google login failed" }),
-    );
-  }
-
-  const result = (await authResponse.json()) as { url?: string };
-  if (!result.url) {
-    return context.redirect(
-      authPath("/auth/login", { next, error: "Google login failed" }),
-    );
-  }
-
-  const redirect = context.redirect(result.url);
-  copySetCookies(authResponse, redirect);
-  return redirect;
-});
-
-authPagesRouter.get("/logout", async (context) => {
-  const next = authNext(context);
-  const redirect = context.redirect(authPath("/auth/login", { next }));
-
-  try {
-    const authResponse = await context
-      .get("services")
-      .auth.handler(authRequest(context, "/api/auth/sign-out", {}));
-    copySetCookies(authResponse, redirect);
-  } catch {
-    // An already-expired session is still successfully logged out.
-  }
-
-  return redirect;
-});
+  ),
+);
 
 authPagesRouter.get("/dashboard", async (context) => {
   const { auth, prisma } = context.get("services");
@@ -649,66 +441,35 @@ function initial(name: string, email: string): string {
   return (name.trim() || email).charAt(0);
 }
 
-function oauthQuery(context: Context<AppEnvironment>): string {
-  return new URL(context.req.url).searchParams.toString();
-}
-
-function redirectFromOAuthResult(
-  context: Context<AppEnvironment>,
-  result: { url?: string },
-): Response {
-  if (!result.url) {
-    return context.html(
-      htmlPage(
-        "Connection Failed",
-        '<p class="alert alert--error">The authorization server did not provide a return URL. Start the connection again from your MCP client.</p>',
-        { authenticated: true, narrow: true },
-      ),
-      400,
-    );
-  }
-  return context.redirect(result.url, 303);
-}
-
-async function runOAuthAction(
-  context: Context<AppEnvironment>,
-  path: string,
-  body: Record<string, unknown>,
-): Promise<{ url?: string }> {
-  const response = await context
-    .get("services")
-    .auth.handler(authRequest(context, path, body));
-  if (!response.ok) {
-    throw new Error(`OAuth action failed with status ${response.status}`);
-  }
-  return (await response.json()) as { url?: string };
-}
-
 authPagesRouter.get("/mcp/consent", async (context) => {
   const { auth } = context.get("services");
   const session = await auth.api.getSession({
     headers: context.req.raw.headers,
   });
   if (!session?.user) return context.redirect("/auth/login");
-  const clientId = context.req.query("client_id") ?? "";
-  const client = await auth.api
-    .getOAuthClientPublic({
-      query: { client_id: clientId },
-      headers: context.req.raw.headers,
-    })
-    .catch(() => null);
+  const query = signedOAuthParams(context);
+  const { secret } = await auth.$context;
+  const client = (await verifyOAuthQueryParams(query.toString(), secret))
+    ? await auth.api
+        .getOAuthClientPublic({
+          query: { client_id: query.get("client_id") ?? "" },
+          headers: context.req.raw.headers,
+        })
+        .catch(() => null)
+    : null;
   if (!client) {
     return context.html(
       htmlPage(
         "Authorize Connection",
-        '<p class="alert alert--error">The requesting MCP client is unknown or the authorization request has expired.</p>',
+        '<p class="alert alert--error">This authorization request is invalid or has expired. Restart the connection from your MCP client.</p>',
         { authenticated: true, narrow: true },
       ),
       400,
     );
   }
   const clientName = client.client_name || "MCP client";
-  const scopes = (context.req.query("scope") ?? "")
+  const redirect = new URL(query.get("redirect_uri")!);
+  const scopes = (query.get("scope") ?? "")
     .split(" ")
     .filter(Boolean)
     .map((scope) => `<li><code>${escapeHtml(scope)}</code></li>`)
@@ -719,17 +480,20 @@ authPagesRouter.get("/mcp/consent", async (context) => {
       "Authorize Connection",
       `<div class="card">
         <p><strong>${escapeHtml(clientName)}</strong> is requesting access to your Last SaaS account.</p>
+        <p>After approval, you’ll return to <strong>${escapeHtml(redirect.host || redirect.protocol)}</strong>.</p>
         <p class="small muted">Requested access:</p>
         <ul>${scopes}</ul>
         <p>The client will be able to list and create organizations, select an active organization, and use Last SaaS tools with your existing permissions.</p>
       </div>
-      <form method="POST" action="/auth/mcp/consent" style="margin-block-start:1rem">
-        <input type="hidden" name="oauth_query" value="${escapeHtml(oauthQuery(context))}">
-        <div class="button-row">
+      ${authForm(
+        context,
+        "consent",
+        `<div class="button-row">
           <button type="submit" name="decision" value="allow">Allow access</button>
           <button class="secondary" type="submit" name="decision" value="deny">Deny</button>
         </div>
-      </form>`,
+      `,
+      )}`,
       {
         authenticated: true,
         narrow: true,
@@ -738,15 +502,6 @@ authPagesRouter.get("/mcp/consent", async (context) => {
       },
     ),
   );
-});
-
-authPagesRouter.post("/mcp/consent", csrf(), async (context) => {
-  const form = await context.req.parseBody();
-  const result = await runOAuthAction(context, "/api/auth/oauth2/consent", {
-    accept: form.decision === "allow",
-    oauth_query: String(form.oauth_query ?? ""),
-  });
-  return redirectFromOAuthResult(context, result);
 });
 
 authPagesRouter.get("/device", async (context) => {
@@ -764,15 +519,26 @@ authPagesRouter.get("/device", async (context) => {
   }
 
   try {
-    const response = await context
-      .get("services")
-      .auth.handler(
-        authRequest(
-          context,
+    // Device-code lookup has its own guessing limit. Keep the HTTP checks even
+    // for this server-rendered read; approval and denial use the browser client.
+    const response = await context.get("services").auth.handler(
+      new Request(
+        new URL(
           `/api/auth/device?user_code=${encodeURIComponent(userCode)}`,
+          context.get("config").betterAuthUrl,
         ),
+        {
+          headers: context.req.raw.headers,
+        },
+      ),
+    );
+    if (response.status === 429) {
+      return context.text(
+        "Too many device checks. Please try again later.",
+        429,
       );
-    if (!response.ok) throw new Error(`Device verification failed`);
+    }
+    if (!response.ok) throw new Error("Invalid device code");
     const result = (await response.json()) as { status: string };
     if (result.status !== "pending") {
       return context.html(
@@ -802,14 +568,14 @@ authPagesRouter.get("/device", async (context) => {
         <p>Confirm that this code matches the one shown in your terminal:</p>
         <p style="text-align:center"><span class="code-verify">${escapeHtml(userCode)}</span></p>
         <div class="button-row" style="justify-content:center">
-          <form method="POST" action="/auth/device/approve">
+          ${authForm(
+            context,
+            "device",
+            `
             <input type="hidden" name="user_code" value="${escapeHtml(userCode)}">
-            <button type="submit">Authorize</button>
-          </form>
-          <form method="POST" action="/auth/device/deny">
-            <input type="hidden" name="user_code" value="${escapeHtml(userCode)}">
-            <button class="secondary" type="submit">Deny</button>
-          </form>
+            <button type="submit" name="decision" value="approve">Authorize</button>
+            <button class="secondary" type="submit" name="decision" value="deny">Deny</button>`,
+          )}
         </div>
       </div>`,
       {
@@ -820,70 +586,6 @@ authPagesRouter.get("/device", async (context) => {
       },
     ),
   );
-});
-
-authPagesRouter.post("/device/approve", csrf(), async (context) => {
-  const form = await context.req.parseBody();
-  const userCode = String(form.user_code ?? "");
-  if (!(await isAuthenticated(context))) {
-    const next = authPath("/auth/device", { user_code: userCode });
-    return context.redirect(authPath("/auth/login", { next }));
-  }
-
-  try {
-    await context.get("services").auth.api.deviceApprove({
-      body: { userCode },
-      headers: context.req.raw.headers,
-    });
-    return context.html(
-      htmlPage(
-        "Device Authorized",
-        "<p>The device is authorized. You can close this tab and return to the CLI.</p>",
-        { authenticated: true },
-      ),
-    );
-  } catch {
-    return context.html(
-      htmlPage(
-        "Authorize Device",
-        "<p>This device request could not be authorized. It may have expired or already been processed.</p>",
-        { authenticated: true },
-      ),
-      400,
-    );
-  }
-});
-
-authPagesRouter.post("/device/deny", csrf(), async (context) => {
-  const form = await context.req.parseBody();
-  const userCode = String(form.user_code ?? "");
-  if (!(await isAuthenticated(context))) {
-    const next = authPath("/auth/device", { user_code: userCode });
-    return context.redirect(authPath("/auth/login", { next }));
-  }
-
-  try {
-    await context.get("services").auth.api.deviceDeny({
-      body: { userCode },
-      headers: context.req.raw.headers,
-    });
-    return context.html(
-      htmlPage(
-        "Device Denied",
-        "<p>The device request was denied. You can close this tab.</p>",
-        { authenticated: true },
-      ),
-    );
-  } catch {
-    return context.html(
-      htmlPage(
-        "Authorize Device",
-        "<p>This device request could not be denied. It may have expired or already been processed.</p>",
-        { authenticated: true },
-      ),
-      400,
-    );
-  }
 });
 
 authPagesRouter.get("/invitations/:invitationId", async (context) => {
@@ -910,9 +612,13 @@ authPagesRouter.get("/invitations/:invitationId", async (context) => {
             </div>
             <span class="badge badge--accent" style="margin-inline-start:auto">${escapeHtml(invitation.role)}</span>
           </div>
-          <form method="POST" action="${escapeHtml(next)}">
-            <button type="submit">Accept Invitation</button>
-          </form>
+          ${authForm(
+            context,
+            "invitation",
+            `
+            <input type="hidden" name="invitation_id" value="${escapeHtml(invitationId)}">
+            <button type="submit">Accept Invitation</button>`,
+          )}
         </div>`,
         { authenticated: true, narrow: true },
       ),
@@ -922,35 +628,6 @@ authPagesRouter.get("/invitations/:invitationId", async (context) => {
       htmlPage(
         "Organization Invitation",
         "<p>This invitation is invalid, expired, or belongs to another account.</p>",
-        { authenticated: true },
-      ),
-      400,
-    );
-  }
-});
-
-authPagesRouter.post("/invitations/:invitationId", csrf(), async (context) => {
-  const invitationId = context.req.param("invitationId");
-  const next = `/auth/invitations/${encodeURIComponent(invitationId)}`;
-  if (!(await isAuthenticated(context))) {
-    return context.redirect(authPath("/auth/login", { next }));
-  }
-
-  try {
-    await context.get("services").auth.api.acceptInvitation({
-      body: { invitationId },
-      headers: context.req.raw.headers,
-    });
-    return context.redirect(
-      authPath("/auth/dashboard", {
-        message: "Invitation accepted.",
-      }),
-    );
-  } catch {
-    return context.html(
-      htmlPage(
-        "Organization Invitation",
-        "<p>This invitation could not be accepted. It may be invalid, expired, or belong to another account.</p>",
         { authenticated: true },
       ),
       400,

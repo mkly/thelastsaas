@@ -17,20 +17,13 @@ GET    /health
 *      /api/auth/**
 GET    /v1/me
 GET    /auth/login
-POST   /auth/login
 GET    /auth/signup
-POST   /auth/signup
 GET    /auth/invitations/:invitationId
-POST   /auth/invitations/:invitationId
 GET    /v1/orgs
 POST   /v1/orgs
 GET    /auth/magic-link
-POST   /auth/magic-link
 GET    /auth/forgot-password
-POST   /auth/forgot-password
 GET    /auth/reset-password
-POST   /auth/reset-password
-GET    /auth/logout
 GET    /auth/dashboard
 POST   /api/auth/device/code
 GET    /api/auth/device?user_code=...
@@ -38,8 +31,9 @@ POST   /api/auth/device/approve
 POST   /api/auth/device/deny
 POST   /api/auth/device/token
 GET    /auth/device?user_code=...
-POST   /auth/device/approve
-POST   /auth/device/deny
+
+# Browser auth forms submit via Better Auth at /api/auth/* using its client.
+# See docs/authentication.md for CAPTCHA and rate-limit configuration.
 
 # Collections (required permission)
 POST   /v1/orgs/:orgId/collections                    /collections:write

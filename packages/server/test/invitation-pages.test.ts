@@ -174,18 +174,18 @@ describe("browser organization invitations", () => {
     expect(wrongRecipientHtml).not.toContain("Origin");
 
     const login = await app.request(
-      `http://localhost:3000/auth/login?next=${encodeURIComponent(invitationPath)}`,
+      "http://localhost:3000/api/auth/sign-in/email",
       {
         method: "POST",
-        headers: { "content-type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
           email: "invitee@example.com",
           password: "invitation-password",
+          callbackURL: invitationPath,
         }),
       },
     );
-    expect(login.status).toBe(302);
-    expect(login.headers.get("location")).toBe(invitationPath);
+    expect(login.status).toBe(200);
     const inviteeCookie = login.headers
       .getSetCookie()
       .map((value) => value.split(";", 1)[0])
@@ -202,21 +202,18 @@ describe("browser organization invitations", () => {
     expect(pageHtml).toContain("Accept Invitation");
 
     const accepted = await app.request(
-      `http://localhost:3000${invitationPath}`,
+      "http://localhost:3000/api/auth/organization/accept-invitation",
       {
         method: "POST",
         headers: {
           cookie: inviteeCookie,
-          "content-type": "application/x-www-form-urlencoded",
+          "content-type": "application/json",
           origin: "http://localhost:3000",
         },
-        body: "",
+        body: JSON.stringify({ invitationId }),
       },
     );
-    expect(accepted.status).toBe(302);
-    expect(accepted.headers.get("location")).toBe(
-      "/auth/dashboard?message=Invitation+accepted.",
-    );
+    expect(accepted.status).toBe(200);
 
     const invitee = await services.prisma.user.findUniqueOrThrow({
       where: { email: "invitee@example.com" },

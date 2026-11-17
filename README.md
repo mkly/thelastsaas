@@ -116,6 +116,7 @@ bun run dev
 
 Existing deployments require an operator-managed database update and backup;
 releases do not automatically convert stored data or permissions.
+For the Better Auth 1.7.25 upgrade, follow the [account database migration](docs/authentication.md#upgrading-from-better-auth-171-to-1725).
 
 These scripts generate `schema.postgres.prisma` from the canonical schema.
 Re-run them after schema changes; do not apply SQLite migrations to PostgreSQL.

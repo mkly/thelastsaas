@@ -30,20 +30,20 @@ async function createHarness(realSignup = false) {
   });
 
   if (realSignup) {
-    await app.request("http://localhost/auth/signup", {
+    await app.request("http://localhost/api/auth/sign-up/email", {
       method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
         name: "Organization User",
         email: "org-user@example.com",
         password: "organization-password",
       }),
     });
     await verifyTestUser(services, "org-user@example.com");
-    const login = await app.request("http://localhost/auth/login", {
+    const login = await app.request("http://localhost/api/auth/sign-in/email", {
       method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
         email: "org-user@example.com",
         password: "organization-password",
       }),
