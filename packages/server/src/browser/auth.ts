@@ -20,6 +20,7 @@ interface Turnstile {
     container: HTMLElement,
     options: {
       sitekey: string;
+      size: "flexible";
       action: string;
       callback: (token: string) => void;
       "expired-callback": () => void;
@@ -98,6 +99,7 @@ for (const form of document.querySelectorAll<HTMLFormElement>(
           form.querySelector<HTMLElement>("[data-captcha]")!,
           {
             sitekey,
+            size: "flexible",
             action: "auth",
             callback: (value) => {
               token = value;

@@ -434,7 +434,8 @@ hr { margin-block: 2rem; border: 0; border-block-start: 1px solid var(--border);
   background: var(--surface);
 }
 
-.card + .card { margin-block-start: 0.75rem; }
+.card + .card,
+.card + form[data-auth="google"] { margin-block-start: 0.75rem; }
 
 .card__header {
   display: flex;
@@ -452,8 +453,6 @@ hr { margin-block: 2rem; border: 0; border-block-start: 1px solid var(--border);
   gap: 0.75rem;
   grid-template-columns: repeat(auto-fill, minmax(min(17rem, 100%), 1fr));
 }
-
-.stack { display: grid; gap: 0.625rem; }
 
 /* An identity/summary row: avatar-ish initial block plus stacked text. */
 .identity { display: flex; align-items: center; gap: 0.75rem; }
@@ -869,6 +868,13 @@ pre > code { padding: 0; border: 0; background: none; font-size: var(--text-sm);
 }
 
 @media (max-width: 34rem) {
+  /* Turnstile's flexible widget needs 300px inside the form. */
+  .page:has(> .card--auth) {
+    padding-inline: clamp(0px, 50% - 150px, var(--gutter));
+  }
+  .card--auth { padding: 0; border: 0; border-radius: 0; background: transparent; }
+  .card--auth + .card--auth { margin-block-start: 2rem; }
+
   .topbar__inner { flex-wrap: wrap; row-gap: 0.375rem; }
   /* The switch rides up beside the brand; the links take the second row. */
   .nav { inline-size: 100%; overflow-x: auto; order: 1; }

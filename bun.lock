@@ -29,7 +29,7 @@
     },
     "packages/server": {
       "name": "@lastsaas/server",
-      "version": "0.4.2",
+      "version": "0.4.3",
       "dependencies": {
         "@better-auth/api-key": "1.7.25",
         "@better-auth/mcp": "1.7.25",

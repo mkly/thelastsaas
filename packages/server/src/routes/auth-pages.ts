@@ -177,7 +177,7 @@ authPagesRouter.get("/login", async (context) => {
     return context.redirect(next ?? "/auth/dashboard");
   const { passwordAuthEnabled } = context.get("config");
   const passwordForm = passwordAuthEnabled
-    ? `<div class="card">${authForm(
+    ? `<div class="card card--auth">${authForm(
         context,
         "login",
         `${emailField()}
@@ -191,10 +191,8 @@ authPagesRouter.get("/login", async (context) => {
       "Log In",
       `${messageBanner(context)}
     ${passwordForm}
-    <div class="stack" style="margin-block-start:1rem">
-      <div class="card">${magicForm(context, next)}</div>
-      ${googleForm(context, next)}
-    </div>
+    <div class="card card--auth">${magicForm(context, next)}</div>
+    ${googleForm(context, next)}
     <p class="small muted" style="margin-block-start:1.25rem;text-align:center">
       Don't have an account? <a href="${escapeHtml(signInPagePath("/auth/signup", next))}">Sign up</a>
       ${passwordAuthEnabled ? ' · <a href="/auth/forgot-password">Forgot password?</a>' : ""}
@@ -226,13 +224,13 @@ authPagesRouter.get("/signup", async (context) => {
         context,
         next,
         email,
-        "<p>Enter your email to create an account. We'll send you a link to verify your email and sign in.</p>",
+        "<p>Enter your email to create an account.</p>",
       );
   return context.html(
     htmlPage(
       "Sign Up",
       `${messageBanner(context)}
-    <div class="card">${form}</div>
+    <div class="card card--auth">${form}</div>
     ${googleForm(context, next)}
     <p class="small muted" style="margin-block-start:1.25rem;text-align:center">
       Already have an account? <a href="${escapeHtml(signInPagePath("/auth/login", next))}">Log in</a>
@@ -246,7 +244,7 @@ authPagesRouter.get("/magic-link", (context) =>
   context.html(
     htmlPage(
       "Magic Link",
-      `${messageBanner(context)}<div class="card">${magicForm(context, authNext(context))}</div>`,
+      `${messageBanner(context)}<div class="card card--auth">${magicForm(context, authNext(context))}</div>`,
       {
         narrow: true,
         description: "We'll email you a link that signs you in.",
@@ -260,7 +258,7 @@ authPagesRouter.get("/forgot-password", (context) =>
     htmlPage(
       "Forgot Password",
       `${messageBanner(context)}
-    <div class="card">${authForm(context, "forgot-password", `${emailField()}<button type="submit">Send Reset Link</button>`)}</div>
+    <div class="card card--auth">${authForm(context, "forgot-password", `${emailField()}<button type="submit">Send Reset Link</button>`)}</div>
     <p class="small muted" style="margin-block-start:1.25rem;text-align:center"><a href="/auth/login">Back to log in</a></p>`,
       {
         narrow: true,

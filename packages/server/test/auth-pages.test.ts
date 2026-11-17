@@ -184,6 +184,9 @@ describe("browser auth pages", () => {
     const signupHtml = await signupPage.text();
     expect(signupHtml).not.toContain('<input type="password"');
     expect(signupHtml).toContain(
+      "<p>Enter your email to create an account.</p>",
+    );
+    expect(signupHtml).toContain(
       'data-auth="magic-link" data-next="/auth/device"',
     );
     expect(signupHtml).toContain('value="new@example.com"');
@@ -559,7 +562,7 @@ describe("browser auth pages", () => {
           const html = await page.text();
           expect(html).toContain("This client requires a fresh sign-in");
           expect(html).not.toContain('data-auth="magic-link"');
-          expect(html).not.toContain('data-auth="google"');
+          expect(html).not.toContain('<form method="post" data-auth="google"');
           expect(emails).toHaveLength(0);
         }
       }
@@ -856,7 +859,9 @@ describe("browser auth pages", () => {
     );
     const signupWithoutGoogleHtml = await signupWithoutGoogle.text();
     expect(signupWithoutGoogleHtml).not.toContain("Continue with Google");
-    expect(signupWithoutGoogleHtml).not.toContain('<div class="stack"');
+    expect(signupWithoutGoogleHtml).not.toContain(
+      '<form method="post" data-auth="google"',
+    );
 
     const unavailable = await postAuth(appWithoutGoogle, "sign-in/social", {
       provider: "google",
